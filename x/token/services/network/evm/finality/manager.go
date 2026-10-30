@@ -38,9 +38,10 @@ type StateReader interface {
 //     is dropped.
 //   - By anchor, only success is observable. applyStateDelta records the anchor as its last step, so
 //     a recorded anchor proves the transaction succeeded; but a failure REVERTS, leaving no trace at
-//     all, so a missing anchor is indistinguishable from one still pending. Failure is therefore
-//     reachable only through the timeout, which is why the timeout is a correctness parameter here
-//     rather than a convenience.
+//     all, so a missing anchor is indistinguishable from one still pending. A missing anchor is
+//     therefore never a verdict, however long it lasts: the transaction can still be mined, by its
+//     sender or by any party holding the endorsed delta, since applyStateDelta does not check who
+//     submits it.
 //
 // A restart needs no persisted state: both resolutions re-read from the chain.
 type Manager struct {
@@ -141,9 +142,9 @@ func (m *Manager) StatusByAnchor(ctx context.Context, anchor [32]byte) (driver.V
 // AddListener watches an anchor until it is applied or the timeout expires, then notifies listener
 // exactly once. If the anchor is already final it notifies immediately, matching the driver contract.
 //
-// Because failure is not observable by anchor, an anchor that has not appeared by the timeout is
-// reported Invalid: at that point the transaction either reverted or was never submitted, and either
-// way the caller must stop waiting for it.
+// Because failure is not observable by anchor, an anchor that has not appeared by the timeout gets
+// OnError, not Invalid: the transaction may still be mined, and an Invalid would have the token layer
+// discard a transfer that can land later. The record stays Pending for the recovery sweep.
 func (m *Manager) AddListener(ctx context.Context, anchor [32]byte, anchorID string, listener driver.FinalityListener) error {
 	if listener == nil {
 		return errors.New("finality: nil listener")
@@ -213,9 +214,8 @@ func (m *Manager) watch(anchor [32]byte, anchorID string) {
 	defer ticker.Stop()
 
 	// observed becomes true the moment any poll actually reaches the chain, whether or not the anchor
-	// was found. It is what separates "checked repeatedly and it is genuinely absent" from "the chain
-	// was unreachable for the whole window": only the first is evidence the transaction is invalid, and
-	// conflating them would let a persistent connectivity failure masquerade as a revert.
+	// was found. Neither outcome at the timeout is a verdict, but the two errors say different things
+	// to an operator: "absent" versus "never reached the chain".
 	observed := false
 
 	// Poll once before waiting for the first tick. Without this, a poll interval at or above the
@@ -258,10 +258,11 @@ func (m *Manager) watch(anchor [32]byte, anchorID string) {
 
 				return
 			}
-			// The anchor never appeared, and at least one read genuinely confirmed its absence. A
-			// reverted apply emits nothing, so this is the only failure signal available by anchor.
+			// The anchor never appeared. That is not evidence of a revert: the transaction may still
+			// be in a mempool, or be submitted later by another party holding the delta.
 			for _, l := range m.take(anchorID) {
-				l.OnStatus(context.Background(), anchorID, driver.Invalid, "finality timeout", nil)
+				l.OnError(context.Background(), anchorID,
+					errors.New("finality: the anchor was not applied before the timeout; the transaction may still land"))
 			}
 
 			return

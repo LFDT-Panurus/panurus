@@ -22,7 +22,6 @@ import (
 	ttxfinality "github.com/LFDT-Panurus/panurus/token/services/ttx/finality"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/keys"
-	cdriver "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 )
 
 // recoveryStore is what recovering a transaction needs of a store: the sweep that finds the ones
@@ -34,13 +33,6 @@ type recoveryStore interface {
 	NewTransaction() (dbdriver.TransactionStoreTransaction, error)
 	GetTokenRequest(ctx context.Context, txID string) ([]byte, error)
 	NotifyStatus(ctx context.Context, txID string, status storage.TxStatus, message string)
-	// Transactions is how settledNetwork reads a row's age. Both stores alias the same record and
-	// pagination types, so one signature serves both.
-	Transactions(
-		ctx context.Context,
-		params dbdriver.QueryTransactionsParams,
-		pagination cdriver.Pagination,
-	) (*cdriver.PageIterator[*dbdriver.TransactionRecord], error)
 }
 
 // selectorManagerProvider is what releasing a recovered transaction's selection locks needs: a way
@@ -199,50 +191,38 @@ type spentReader interface {
 	GetTransactionStatus(ctx context.Context, namespace, txID string) (int, []byte, string, error)
 }
 
-// settledNetwork answers "still unknown" as "invalid" for the recovery path only, along two
-// independent paths: elapsed time, and evidence that the transaction can never apply.
+// settledNetwork answers "still unknown" as "invalid" for the recovery path only, and only on evidence
+// that the transaction can never apply.
 //
 // A failed applyStateDelta reverts, so it emits no StateCommitted event and stores no token request
 // hash. Nothing about a rejected transaction is ever written to the chain, which means an absent
 // anchor is indistinguishable from one that was never submitted, and StatusByAnchor can only answer
 // Unknown for both.
 //
-// Time is one signal: unknown, then invalid after the configured timeout, the same asymmetry a
-// recipient resolving finality by anchor already lives with. The finality listener already
-// implements that escalation, because it knows when it started waiting. The status path did not, and
-// the two disagreeing is the defect that fixed first: the shared recovery handler reads Unknown as
-// "transient, look again next sweep", so a rejected transaction was swept every few seconds forever
-// while its record stayed Pending and the holding it reserved was never released.
+// Elapsed time is deliberately not a signal. A transaction absent past the finality timeout can still
+// be mined: it may be waiting in a mempool, and applyStateDelta does not check who submits it, so any
+// party holding the endorsed delta can land it later. Condemning it on age would mark Deleted a
+// transfer the chain then applies, and recovery only sweeps Pending rows, so nothing would correct it.
+// An absent transaction therefore stays Unknown and Pending, as on Fabric and FabricX; the lease
+// sweep frees the tokens it reserved.
 //
-// Evidence is the other, faster signal, and the reason this type exists rather than a bare timeout.
-// An anchor absent from the chain plus an input already spent by some other, already-applied
-// transaction proves this transaction can never apply: a spent token is deleted and never written
-// back (contracts/src/TokenState.sol), so the input cannot become unspent, and _applyTransfer reverts
-// on any spent input every time it is tried. Since a token that was never stored reads as spent too,
-// an input only counts once the transaction that created it is applied. The verdict does not need to wait for the timeout because
-// nothing about waiting longer could change it. This is also what makes the auditor recover on its
-// own: startRecovery sweeps the audit store through the same settledNetwork, so an auditor that never
-// saw the broadcaster's rejection reaches Invalid by reading the chain, not by being told.
+// Evidence is what licenses the verdict. An anchor absent from the chain plus an input already spent
+// by some other, already-applied transaction proves this transaction can never apply: a spent token is
+// deleted and never written back (contracts/src/TokenState.sol), so the input cannot become unspent,
+// and _applyTransfer reverts on any spent input every time it is tried, whoever submits it. Since a
+// token that was never stored reads as spent too, an input only counts once the transaction that
+// created it is applied. This is also what makes the auditor recover on its own: startRecovery sweeps
+// the audit store through the same settledNetwork, so an auditor that never saw the broadcaster's
+// rejection reaches Invalid by reading the chain, not by being told.
 //
 // Evidence needs a grace window rather than firing the moment it appears - see
 // FinalityConfig.ConflictGrace - and it needs the anchor re-read after a positive spent check, because
 // the two eth_calls read a moving block tag and the transaction under suspicion could have applied in
-// between them.
+// between them. The grace clock is in memory, deliberately: a restart losing a few seconds of
+// accumulated grace only ever delays a permanent verdict, never reverses one.
 //
-// Neither signal touches the finality listener (finality/manager.go), which has no store and so
-// cannot enumerate a transaction's inputs; it keeps its own, slower, time-only escalation. A
-// transaction's owner therefore still notices a permanent rejection through the listener no sooner
-// than the timeout, while its own or its auditor's recovery sweep notices it in roughly ConflictGrace.
-//
-// The age comes from the store rather than from the sweep schedule. Those are two different
-// questions and answering both with the recovery TTL gets one of them wrong: raising the TTL to the
-// finality timeout does license the verdict, but it also stops recovery from rescuing a *committed*
-// transaction until that timeout has passed, and the committed case is the one where the answer was
-// available immediately. Reading the row's own timestamp keeps the sweep frequent and the verdict
-// patient. It is also a column rather than a field, so it survives the restart recovery exists for,
-// which an in-memory timer would not - unlike the conflict grace clock, which is exactly that in-memory
-// timer, deliberately, because a restart losing a few seconds of accumulated grace only ever delays a
-// permanent verdict, never reverses one.
+// The finality listener (finality/manager.go) has no store and so cannot enumerate a transaction's
+// inputs. At its timeout it reports an error, never a verdict, and leaves the record to this sweep.
 type settledNetwork struct {
 	*Network
 	store   recoveryStore
@@ -313,9 +293,9 @@ func (w *conflictWatch) pruneLocked(maxAge time.Duration) {
 	}
 }
 
-// GetTransactionStatus resolves an Unknown status to Invalid either once the transaction is older
-// than the finality timeout, or sooner, once its inputs are proven already spent - see
-// settledNetwork's own doc for why both exist and how they interact.
+// GetTransactionStatus resolves an Unknown status to Invalid once the transaction's inputs are proven
+// already spent, and otherwise leaves it Unknown - see settledNetwork's own doc for why age alone is
+// never enough.
 func (n settledNetwork) GetTransactionStatus(
 	ctx context.Context,
 	namespace, txID string,
@@ -325,7 +305,7 @@ func (n settledNetwork) GetTransactionStatus(
 		return status, hash, message, err
 	}
 
-	doomed, pending, condemnMessage := n.condemnedByConflict(ctx, namespace, txID)
+	doomed, condemnMessage := n.condemnedByConflict(ctx, namespace, txID)
 	if doomed {
 		// The anchor and spent reads are two eth_calls against a moving block tag; between them, the
 		// very transaction under suspicion may have applied. Re-reading closes that gap: the re-read
@@ -348,47 +328,20 @@ func (n settledNetwork) GetTransactionStatus(
 
 		return recheckStatus, recheckHash, recheckMessage, nil
 	}
-	if pending {
-		// A conflict has been observed but has not yet held for the full grace window. This must not
-		// fall through to the age gate below: the store row backing a transaction that is merely
-		// prepared-but-not-yet-broadcast is already older than the finality timeout by the time its
-		// competing transaction lands (see FinalityConfig.ConflictGrace), so the age gate would condemn
-		// it immediately on a timeout that has nothing to do with this transaction's own history,
-		// defeating the entire point of waiting out the grace window first.
-		return status, hash, message, nil
-	}
 
-	age, known, err := n.age(ctx, txID)
-	if err != nil {
-		// The chain says nothing and the store could not say when we started asking. Leaving it
-		// Unknown keeps it in the sweep, which is the safe direction: the alternative is condemning a
-		// transaction on the strength of a failed database read.
-		logger.Debugf("could not read the age of [%s]; leaving it for the next sweep: %v", txID, err)
-
-		return status, hash, message, nil
-	}
-	if !known || age <= n.timeout {
-		return status, hash, message, nil
-	}
-
-	logger.Debugf("transaction [%s] has been absent from the chain for %s; recording it as invalid", txID, age)
-
-	return driver.Invalid, hash, "transaction was not applied within the finality timeout", nil
+	// No evidence, or a conflict that has not yet held for the grace window: still Unknown.
+	return status, hash, message, nil
 }
 
 // condemnedByConflict reports whether txID has an input token already spent by some other
-// transaction. It returns two independent booleans, not one: doomed means the conflict has held for
-// at least the configured grace window and the caller should condemn (subject to the anchor
-// re-read); pending means a conflict was observed but has not yet held that long, and the caller
-// must treat the transaction as still Unknown rather than falling through to the age gate - see the
-// call site in GetTransactionStatus for why that fallthrough would defeat the grace window.
+// transaction, for at least the configured grace window, in which case the caller should condemn it
+// (subject to the anchor re-read). A conflict seen for less than the grace window is not yet doomed.
 //
-// An error reading the store or the chain is never treated as evidence: both results come back
-// false, so a transient failure can only ever leave the timeout in charge, never manufacture a
-// verdict.
-func (n settledNetwork) condemnedByConflict(ctx context.Context, namespace, txID string) (doomed, pending bool, message string) {
+// An error reading the store or the chain is never treated as evidence: it reports not doomed, so a
+// transient failure leaves the transaction Unknown, never manufactures a verdict.
+func (n settledNetwork) condemnedByConflict(ctx context.Context, namespace, txID string) (doomed bool, message string) {
 	if n.conflicts == nil || n.parser == nil || n.spent == nil || n.grace <= 0 {
-		return false, false, ""
+		return false, ""
 	}
 
 	// Pruned unconditionally, before candidateInputs, rather than only on the anySpent path further
@@ -401,7 +354,7 @@ func (n settledNetwork) condemnedByConflict(ctx context.Context, namespace, txID
 
 	inputs, ok := n.candidateInputs(ctx, txID)
 	if !ok {
-		return false, false, ""
+		return false, ""
 	}
 
 	spent, err := n.spent.AreTokensSpent(ctx, namespace, inputs, nil)
@@ -412,7 +365,7 @@ func (n settledNetwork) condemnedByConflict(ctx context.Context, namespace, txID
 		logger.Debugf("could not check whether the inputs of [%s] are already spent; leaving it for the "+
 			"next sweep: %v", txID, err)
 
-		return false, false, ""
+		return false, ""
 	}
 
 	anySpent := false
@@ -435,27 +388,27 @@ func (n settledNetwork) condemnedByConflict(ctx context.Context, namespace, txID
 		entry.firstSeen = time.Time{}
 		n.conflicts.entries[txID] = entry
 
-		return false, false, ""
+		return false, ""
 	}
 	if entry.firstSeen.IsZero() {
 		entry.firstSeen = entry.touched
 		n.conflicts.entries[txID] = entry
 
-		return false, true, ""
+		return false, ""
 	}
 
-	// Clamped rather than validated at load time: FinalityConfig.ConflictGrace documents why a grace
-	// above the timeout is effectively dead code rather than a configuration error, since Timeout can
-	// legitimately be edited after Config is loaded without ConflictGrace being re-derived from it.
+	// Clamped rather than validated at load time, so the evidence verdict never takes longer than the
+	// finality timeout: Timeout can legitimately be edited after Config is loaded without
+	// ConflictGrace being re-derived from it.
 	grace := n.grace
 	if n.timeout > 0 && n.timeout < grace {
 		grace = n.timeout
 	}
 	if time.Since(entry.firstSeen) < grace {
-		return false, true, ""
+		return false, ""
 	}
 
-	return true, false, "transaction inputs were already spent by another transaction; it can never be applied"
+	return true, "transaction inputs were already spent by another transaction; it can never be applied"
 }
 
 // created reports whether the transaction that created id has been applied. AreTokensSpent reads a
@@ -573,37 +526,6 @@ func (n settledNetwork) spentTokenIDsOf(ctx context.Context, txID string) ([]*to
 	}
 
 	return usable, nil
-}
-
-// age returns how long ago the transaction was written to the store.
-func (n settledNetwork) age(ctx context.Context, txID string) (time.Duration, bool, error) {
-	it, err := n.store.Transactions(ctx, dbdriver.QueryTransactionsParams{IDs: []string{txID}}, nil)
-	if err != nil {
-		return 0, false, err
-	}
-	if it == nil || it.Items == nil {
-		// A store bug that returns success with nothing to read from is treated the same as a failed
-		// read: not known, left for the next sweep, rather than dereferenced.
-		return 0, false, nil
-	}
-	defer it.Items.Close()
-
-	record, err := it.Items.Next()
-	if err != nil {
-		return 0, false, err
-	}
-	if record == nil {
-		return 0, false, nil
-	}
-	// An unset timestamp would read as an age of two thousand years and condemn the transaction on the
-	// very first sweep. "Not known" is the honest answer and the safe one: the caller leaves the
-	// transaction Unknown and looks again, which is what it already does when the store cannot be read
-	// at all.
-	if record.Timestamp.IsZero() {
-		return 0, false, nil
-	}
-
-	return time.Since(record.Timestamp), true, nil
 }
 
 // stopAll stops a set of managers, used to unwind a partially started TMS.

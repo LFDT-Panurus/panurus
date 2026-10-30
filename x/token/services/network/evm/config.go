@@ -87,8 +87,9 @@ type FinalityConfig struct {
 	BlockTag string `yaml:"blockTag"`
 	// PollInterval is the delay between status polls.
 	PollInterval time.Duration `yaml:"pollInterval"`
-	// Timeout bounds how long a transaction is awaited. It is also a recipient's only failure signal:
-	// a failed apply reverts and emits no log, so "no event by the timeout" is what makes it Invalid.
+	// Timeout bounds how long a finality listener waits for the anchor. It is not a failure signal: a
+	// failed apply reverts and emits no log, so an anchor missing at the timeout may still land, and
+	// the listener gets an error rather than Invalid.
 	Timeout time.Duration `yaml:"timeout"`
 	// ConflictGrace is how long recovery waits, after it first observes that a transaction's inputs
 	// have already been spent by someone else, before recording it as invalid. Absence plus a spent
@@ -108,8 +109,8 @@ type FinalityConfig struct {
 	// Thirty seconds sits in that window with margin on both sides. Like every other duration in this
 	// struct, an unset or non-positive value defaults rather than disabling the behaviour it controls.
 	// A value above Timeout is not rejected - Timeout can legitimately be edited after load without
-	// this being re-derived - but it is effectively dead: the age gate always condemns first, so the
-	// consumer of this field clamps the value it actually waits to min(ConflictGrace, Timeout).
+	// this being re-derived - but the consumer of this field clamps the value it actually waits to
+	// min(ConflictGrace, Timeout).
 	ConflictGrace time.Duration `yaml:"conflictGrace"`
 	// FromBlock is where log searches start when resolving an anchor to its transaction hash. It
 	// defaults to zero, the whole chain, which is right for a freshly bootstrapped network; on a chain

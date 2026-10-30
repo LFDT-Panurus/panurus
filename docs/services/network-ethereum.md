@@ -630,9 +630,12 @@ A revert emits no `StateCommitted` event. Since a recipient who only saw the tok
 anchor and nothing else, and finds the transaction by scanning for that event, **log scanning can only
 ever discover success**. There is no failure event to find, because the failed transaction wrote nothing.
 
-A recipient must therefore treat "no event by the timeout" as failure. This asymmetry is a consequence of
-identifying transactions by anchor rather than by transaction hash, and it is why the finality timeout is a
-correctness setting rather than a tuning knob.
+"No event by the timeout" is not failure either. The transaction may still be in a mempool, and
+`applyStateDelta` does not check who submits it, so any party holding the endorsed delta and signatures
+(every party receives them in the envelope) can land it later. An absent anchor is therefore never a
+verdict: the finality listener reports an error at the timeout, and the record stays `Pending` until the
+anchor lands or there is evidence it never can (see "Condemning on evidence" below). This is how Fabric and
+FabricX treat a transaction they have not seen yet.
 
 ### Smart Contract Interface
 
@@ -835,8 +838,8 @@ mainnet), which takes reorg handling out of scope for v1.
 are not the same numbering, which is easy to conflate since both use small integers: a receipt status of
 `1` maps to `driver.Valid` (`1`), and status `0` maps to `driver.Invalid` (`2`) — those two happen to line
 up at `1` and diverge at `0`/`2`. A transaction the node has seen but not yet mined maps to `driver.Busy`
-(`3`); one the node has never seen maps to `driver.Unknown` (`4`), which escalates to `driver.Invalid` once
-it has been absent past `finality.timeout` (see "Transaction recovery across restarts" below).
+(`3`); one the node has never seen maps to `driver.Unknown` (`4`), which stays `Unknown` however long it lasts
+(see "Transaction recovery across restarts" below).
 
 **Two resolution paths, deliberately.** `getTokenRequestHash(anchor)` is the cheap check for "is this
 anchor committed at all": one `eth_call`, no block range to search, works at any block tag. Recipient-side
@@ -847,11 +850,10 @@ other source. Log scanning needs a block range, and log retention varies by node
 committed" case is built on the cheap call and does not depend on it.
 
 This produces a real asymmetry, the same one noted above: a failed `applyStateDelta` reverts, so it never
-emits `StateCommitted`, and log scanning by anchor can only ever discover success. A recipient must treat
-"no event by the configured timeout" as failure, which makes `finality.timeout` a correctness setting,
-not a tuning knob. It has to exceed both the chain's real time-to-finality at the configured block tag
-and the longest gap an application leaves between preparing a transaction and broadcasting it — otherwise
-recovery condemns transactions that were merely slow to submit, not ones that were rejected.
+emits `StateCommitted`, and log scanning by anchor can only ever discover success. "No event by the
+configured timeout" is not treated as failure: the listener gets an error, not `driver.Invalid`, and the
+record stays `Pending`. `finality.timeout` only bounds how long a listener waits, and it should still
+exceed the chain's real time-to-finality at the configured block tag so a listener sees the anchor land.
 
 The ttx finality views (`NewFinalityView`, `NewOrderingAndFinalityView`) wait 5 and 10 minutes by default,
 less than the 13-minute minimum for `finalized`. When the caller sets no timeout, they ask the network for
@@ -909,33 +911,24 @@ longer than the configured TTL, using the same anchor lookup a fresh listener wo
 **Absence still needs an answer.** A failed `applyStateDelta` reverts and writes nothing, so an anchor the
 recovery sweep asks about is either "not yet mined" or "was rejected" — both look identical as
 `driver.Unknown` from a plain chain lookup, and the shared recovery handler treats `Unknown` as "ask again
-next sweep" forever. The driver resolves this by wrapping the network in `settledNetwork` for the recovery
-path only: an anchor still `Unknown` once its transaction row has been `Pending` longer than
-`finality.timeout` is reported as `driver.Invalid` instead.
+next sweep". Age is deliberately not used to break the tie: a transaction absent past `finality.timeout`
+can still be mined, from a mempool or by any party holding the endorsed delta, and condemning it would mark
+`Deleted` a transfer the chain then applies. Recovery only sweeps `Pending` rows, so nothing would correct
+that. An absent transaction therefore stays `Pending`, and the lease sweep frees the tokens it reserved.
 
-The age comes from the transaction store's own `Timestamp` column, not from the recovery TTL or the sweep
-schedule. Those answer two different questions: the TTL is "how soon is it worth asking again", the
-timeout is "how long before absence means rejection". Raising the TTL to the finality timeout would seem
-like the obvious shortcut, but it conflates them — it also stops recovery from confirming a transaction
-that *did* commit until that same timeout has passed, which is exactly the case where the chain already had
-the answer. Reading the row's timestamp keeps the sweep frequent and the verdict patient, and it survives
-the restart recovery exists to clean up after, which an in-memory timer would not.
-
-**Condemning on evidence, not just on elapsed time.** `finality.timeout` alone can take many minutes to
-resolve a permanently-rejected transfer, because a reverted `applyStateDelta` emits no event and, when it
-reverts at gas-estimation time, no transaction is ever sent — so there is no receipt either, and `Unknown`
-is the only answer the chain gives until the timeout elapses. Waiting that long is wasteful when the chain
-already has proof the transaction can never apply: a spent token is deleted (`contracts/src/TokenState.sol`)
+**Condemning on evidence.** The driver wraps the network in `settledNetwork` for the recovery path only, and
+reports `driver.Invalid` when the chain has proof the transaction can never apply: a spent token is deleted (`contracts/src/TokenState.sol`)
 and never written back, so if the anchor is absent **and** any of the transaction's input tokens is already
 spent by some other transaction, that other transaction is the one that consumed the input and this one can
 never succeed. The verdict is permanent, not a confidence interval. Because a token that was never stored
 also reads as spent, an input only counts once the transaction that created it reads as applied.
 
-The recovery sweep checks this before falling back to the age gate: it parses the transaction's stored
-request into its input token ids and asks the chain, via `AreTokensSpent`, whether any of them are already
-spent. This runs identically over the ttx store and the audit store, so the **auditor** — which never
-observes the broadcaster's synchronous `Submit` error — converges on `driver.Invalid` through the same
-evidence, not only through its own multi-minute timeout.
+The recovery sweep parses the transaction's stored request into its input token ids and asks the chain, via
+`AreTokensSpent`, whether any of them are already spent. This runs identically over the ttx store and the
+audit store, so the **auditor**, which never observes the broadcaster's synchronous `Submit` error,
+converges on `driver.Invalid` through the same evidence. A recipient's own store keeps only the metadata it
+filtered for itself, which has no usable input ids, so a recipient's copy of a rejected transfer stays
+`Pending`.
 
 Two things keep this from being either premature or racy:
 
@@ -945,9 +938,7 @@ Two things keep this from being either premature or racy:
   merely prepared and held is indistinguishable, at that instant, from one already rejected. The grace
   window gives it a chance to either land (clearing the conflict) or genuinely fail before it is condemned.
   While a conflict is pending but has not yet cleared the grace window, the transaction is reported as
-  `Unknown` even if its row is already older than `finality.timeout` — the age gate is deliberately not
-  allowed to race ahead and condemn it on an unrelated basis while the evidence path is still waiting out
-  the grace window.
+  `Unknown`.
 - **The anchor is re-read after positive evidence.** The anchor read and the spent read are two separate
   `eth_call`s against a moving block tag; if the transaction under suspicion itself applies in the block
   between them, the first read says absent and the second says spent — spent by *this very transaction*.
@@ -955,16 +946,19 @@ Two things keep this from being either premature or racy:
   as recent as the spent read, so if the transaction landed in between, it is reported committed instead of
   being deleted as a transfer that just went final.
 
-A revert while checking spent status — expected under graph hiding, where `areTokensSpent` is unsupported
-by design — is never treated as evidence; it degrades to the pre-existing age-gate behavior rather than
-failing the sweep. The same is true of any store or chain read error along this path: an error is never
-evidence, only ever "ask again next sweep".
+A revert while checking spent status (expected under graph hiding, where `areTokensSpent` is unsupported
+by design) is never treated as evidence; the transaction stays `Unknown` rather than failing the sweep.
+The same is true of any store or chain read error along this path: an error is never evidence, only ever
+"ask again next sweep".
 
-This condemns faster only through the recovery sweep. `finality.Manager`, which serves the synchronous
-finality watch (`AddFinalityListener`), is deliberately left unchanged: it holds only the anchor and a
-`StateReader`, with no store and no persisted state by design, so it has no input ids to check against.
-A recipient waiting on the finality watch still resolves at `finality.timeout`; only the recovery path —
-which does have a store to read the request from — condemns early.
+Only the recovery sweep condemns. `finality.Manager`, which serves the synchronous finality watch
+(`AddFinalityListener`), holds only the anchor and a `StateReader`, with no store and no persisted state by
+design, so it has no input ids to check against. At `finality.timeout` it reports an error, never a
+verdict, and leaves the record to the sweep.
+
+A transaction that is never mined and never conflicts has no verdict: it stays `Pending`, and a caller
+waiting on finality gets `ErrFinalityTimeout`. A signed deadline in the endorsed delta would give it a
+definitive `Invalid` that every node can check from chain state, and is tracked as a follow-up.
 
 ### Broadcast idempotency
 

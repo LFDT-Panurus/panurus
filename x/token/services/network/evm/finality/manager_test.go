@@ -213,16 +213,20 @@ func TestAddListenerNotifiesOnceApplied(t *testing.T) {
 	assert.Equal(t, []byte("tr-hash"), listener.trHash)
 }
 
-// TestAddListenerTimesOutAsInvalid is the only failure signal available by anchor: nothing appeared
-// before the timeout, so the caller must stop waiting.
-func TestAddListenerTimesOutAsInvalid(t *testing.T) {
+// TestAddListenerTimeoutIsNotAVerdict checks an anchor still absent at the timeout gets OnError, not
+// Invalid. The transaction can still be mined, by its sender or by anyone holding the endorsed delta,
+// and an Invalid would have the token layer discard a transfer that lands later.
+func TestAddListenerTimeoutIsNotAVerdict(t *testing.T) {
 	m := fastManager(&mock.EVMClient{}, &stubState{}, 50*time.Millisecond)
 	listener := newRecordingListener()
 
 	require.NoError(t, m.AddListener(t.Context(), anchor(0x01), "anchor-1", listener))
 	listener.wait(t)
-	assert.Equal(t, driver.Invalid, listener.status)
-	assert.Contains(t, listener.message, "timeout")
+	listener.mu.Lock()
+	defer listener.mu.Unlock()
+	assert.True(t, listener.errorCalled)
+	assert.False(t, listener.statusCalled, "an absent anchor is never a verdict")
+	assert.Contains(t, listener.err.Error(), "timeout")
 }
 
 // TestAddListenerPollsImmediatelyBeforeTheFirstTick guards against a watch that only reads at the end
@@ -343,10 +347,9 @@ func TestPersistentReadFailureReportsErrorNotInvalid(t *testing.T) {
 	require.Error(t, listener.err)
 }
 
-// TestOneCleanMissThenPersistentFailureStillResolvesInvalid pins the boundary of the fix above: once a
-// single read has actually reached the chain and found nothing, a later run of read failures does not
-// erase that evidence. The transaction still resolves Invalid at the timeout, as intended.
-func TestOneCleanMissThenPersistentFailureStillResolvesInvalid(t *testing.T) {
+// TestOneCleanMissThenPersistentFailureReportsAbsence checks a watch that reached the chain at least
+// once reports the anchor as absent at the timeout, not as unreachable, and still not as Invalid.
+func TestOneCleanMissThenPersistentFailureReportsAbsence(t *testing.T) {
 	state := &stubState{}
 	m := fastManager(&mock.EVMClient{}, state, 200*time.Millisecond)
 	listener := newRecordingListener()
@@ -362,6 +365,7 @@ func TestOneCleanMissThenPersistentFailureStillResolvesInvalid(t *testing.T) {
 	listener.wait(t)
 	listener.mu.Lock()
 	defer listener.mu.Unlock()
-	assert.True(t, listener.statusCalled)
-	assert.Equal(t, driver.Invalid, listener.status)
+	assert.True(t, listener.errorCalled)
+	assert.False(t, listener.statusCalled)
+	assert.Contains(t, listener.err.Error(), "may still land")
 }

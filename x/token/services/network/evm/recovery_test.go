@@ -19,13 +19,10 @@ import (
 	token2 "github.com/LFDT-Panurus/panurus/token"
 	tokendriver "github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
-	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/services/recovery"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client/mock"
-	cdriver "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
-	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
 )
 
 func testTMSID() token2.TMSID {
@@ -86,18 +83,12 @@ func TestRecoveryConfigFallsBackToDefaults(t *testing.T) {
 	assert.Less(t, cfg.ScanInterval, 5*time.Minute, "a sweep this rare would not rescue anything usefully")
 }
 
-// TestSettledNetworkResolvesAnAbsentAnchor is the fix for a rejected transaction being swept forever.
-//
-// A revert writes nothing to the chain, so an anchor that never appears is all a rejection ever looks
-// like. Reporting that as Unknown made the shared recovery handler treat it as transient and look
-// again on the next sweep, so the record stayed Pending, the holding it reserved was never released,
-// and the sweep repeated every few seconds indefinitely.
-func TestSettledNetworkResolvesAnAbsentAnchor(t *testing.T) {
-	const timeout = time.Minute
-
-	// settled builds the wrapper over a node whose eth_call returns raw, and a store that claims the
-	// transaction was written age ago.
-	settled := func(t *testing.T, raw []byte, callErr error, age time.Duration) (settledNetwork, string) {
+// TestSettledNetworkLeavesAnAbsentAnchorUnknown checks age alone never condemns a transaction. An
+// anchor absent past the finality timeout can still be mined, from a mempool or by any party holding
+// the endorsed delta, and recording it Invalid would leave a transfer that lands later marked Deleted.
+func TestSettledNetworkLeavesAnAbsentAnchorUnknown(t *testing.T) {
+	// settled builds the wrapper over a node whose eth_call returns raw.
+	settled := func(t *testing.T, raw []byte, callErr error) (settledNetwork, string) {
 		t.Helper()
 		evm := &mock.EVMClient{}
 		evm.ChainIDReturns(bigInt(testChainID), nil)
@@ -106,32 +97,21 @@ func TestSettledNetworkResolvesAnAbsentAnchor(t *testing.T) {
 
 		return settledNetwork{
 			Network: n,
-			store:   &agedStore{age: age},
-			timeout: timeout,
+			store:   &fakeRecoveryStore{},
+			timeout: time.Minute,
 		}, n.ComputeTxID(&driver.TxID{Creator: []byte("creator")})
 	}
 
 	// An all-zero return is the contract reporting no token request hash for the anchor, which is what
-	// a reverted apply leaves behind.
+	// a reverted apply leaves behind, and also what a transaction not mined yet looks like.
 	absent := make([]byte, 32)
 
-	t.Run("an anchor absent past the timeout is invalid", func(t *testing.T) {
-		n, txID := settled(t, absent, nil, 2*timeout)
-
-		status, _, message, err := n.GetTransactionStatus(t.Context(), "token", txID)
-		require.NoError(t, err)
-		assert.Equal(t, driver.Invalid, status, "the sweep must reach a verdict rather than repeat forever")
-		assert.NotEmpty(t, message, "the record should say why it was closed")
-	})
-
-	// The patient half, and the reason the age is read rather than assumed: a transaction younger than
-	// the timeout may still be on its way, and condemning it would delete a transfer that then lands.
-	t.Run("an anchor absent within the timeout stays unknown", func(t *testing.T) {
-		n, txID := settled(t, absent, nil, timeout/2)
+	t.Run("an absent anchor stays unknown", func(t *testing.T) {
+		n, txID := settled(t, absent, nil)
 
 		status, _, _, err := n.GetTransactionStatus(t.Context(), "token", txID)
 		require.NoError(t, err)
-		assert.Equal(t, driver.Unknown, status, "a transaction still in flight must be left alone")
+		assert.Equal(t, driver.Unknown, status, "absence is not a verdict, however long it lasts")
 	})
 
 	// Only Unknown is reinterpreted. A committed transaction still recovers as Valid however old it
@@ -139,7 +119,7 @@ func TestSettledNetworkResolvesAnAbsentAnchor(t *testing.T) {
 	t.Run("a committed anchor is untouched", func(t *testing.T) {
 		hash := make([]byte, 32)
 		hash[31] = 0x7C
-		n, txID := settled(t, hash, nil, 2*timeout)
+		n, txID := settled(t, hash, nil)
 
 		status, got, _, err := n.GetTransactionStatus(t.Context(), "token", txID)
 		require.NoError(t, err)
@@ -147,53 +127,13 @@ func TestSettledNetworkResolvesAnAbsentAnchor(t *testing.T) {
 		assert.Equal(t, hash, got, "the token request hash must reach the handler intact")
 	})
 
-	// A record with no timestamp is the one input that reads as catastrophically old: time.Since of
-	// the zero time is two thousand years, which would clear the timeout on the very first sweep and
-	// condemn a transaction that may have been submitted seconds ago. "Not known" is the honest answer
-	// and the safe one, matching what an unreadable store already does.
-	t.Run("a record with no timestamp stays unknown", func(t *testing.T) {
-		evm := &mock.EVMClient{}
-		evm.ChainIDReturns(bigInt(testChainID), nil)
-		evm.CallReturns(absent, nil)
-		n := testNetwork(t, evm, nil)
-		settled := settledNetwork{Network: n, store: &agedStore{unset: true}, timeout: timeout}
-		txID := n.ComputeTxID(&driver.TxID{Creator: []byte("creator")})
-
-		status, _, _, err := settled.GetTransactionStatus(t.Context(), "token", txID)
-		require.NoError(t, err)
-		assert.Equal(t, driver.Unknown, status, "an unknown age must not be read as an infinite one")
-	})
-
 	// A node that could not be reached has established nothing about the transaction, so it stays a
 	// failure to be retried rather than becoming a verdict.
 	t.Run("an unreachable node is not a verdict", func(t *testing.T) {
-		n, txID := settled(t, nil, errors.New("connection refused"), 2*timeout)
+		n, txID := settled(t, nil, errors.New("connection refused"))
 
 		_, _, _, err := n.GetTransactionStatus(t.Context(), "token", txID)
 		require.Error(t, err)
-	})
-
-	// A store that cannot say how old the row is leaves the transaction in the sweep. Condemning it on
-	// the strength of a failed database read would be the one irreversible move available here.
-	t.Run("an unreadable store leaves it for the next sweep", func(t *testing.T) {
-		n, txID := settled(t, absent, nil, 2*timeout)
-		n.store = &agedStore{err: errors.New("store is down")}
-
-		status, _, _, err := n.GetTransactionStatus(t.Context(), "token", txID)
-		require.NoError(t, err)
-		assert.Equal(t, driver.Unknown, status)
-	})
-
-	// A store that returns a nil iterator with no error must not be dereferenced: it is treated the
-	// same as an unreadable store, leaving the transaction for the next sweep instead of panicking the
-	// sweep goroutine.
-	t.Run("a nil iterator leaves it for the next sweep", func(t *testing.T) {
-		n, txID := settled(t, absent, nil, 2*timeout)
-		n.store = &agedStore{nilIterator: true}
-
-		status, _, _, err := n.GetTransactionStatus(t.Context(), "token", txID)
-		require.NoError(t, err)
-		assert.Equal(t, driver.Unknown, status)
 	})
 }
 
@@ -211,9 +151,9 @@ func TestSettledNetworkCondemnsASpentInput(t *testing.T) {
 	inputID := &token.ID{TxId: anchorHex(0x01), Index: 0}
 
 	// build assembles a settledNetwork whose anchor read always answers absent (unless overridden via
-	// callReturnsOnCall), wired to a store that reports the given age and stored request bytes, a
-	// parser that returns request unconditionally, and a spent reader that returns spent/spentErr.
-	build := func(t *testing.T, age time.Duration, request *token2.Request, spent []bool, spentErr error) (settledNetwork, string) {
+	// callReturnsOnCall), wired to a store that returns stored request bytes, a parser that returns
+	// request unconditionally, and a spent reader that returns spent/spentErr.
+	build := func(t *testing.T, request *token2.Request, spent []bool, spentErr error) (settledNetwork, string) {
 		t.Helper()
 		evm := &mock.EVMClient{}
 		evm.ChainIDReturns(bigInt(testChainID), nil)
@@ -222,7 +162,7 @@ func TestSettledNetworkCondemnsASpentInput(t *testing.T) {
 
 		return settledNetwork{
 			Network:   n,
-			store:     &agedStore{age: age, tokenRequest: []byte("raw")},
+			store:     &fakeRecoveryStore{tokenRequest: []byte("raw")},
 			timeout:   timeout,
 			grace:     grace,
 			parser:    &fakeParser{request: request},
@@ -247,13 +187,12 @@ func TestSettledNetworkCondemnsASpentInput(t *testing.T) {
 	}
 
 	t.Run("a spent input past the grace window is invalid", func(t *testing.T) {
-		n, txID := build(t, 2*timeout, transferRequest(inputID), []bool{true}, nil)
+		n, txID := build(t, transferRequest(inputID), []bool{true}, nil)
 
-		// The first check only observes the conflict and starts the clock; it must not condemn yet
-		// even though the row's age already clears the (unrelated) finality timeout.
+		// The first check only observes the conflict and starts the clock; it must not condemn yet.
 		status, _, _, err := n.GetTransactionStatus(t.Context(), "token", txID)
 		require.NoError(t, err)
-		assert.Equal(t, driver.Unknown, status, "the grace window must run its course even on an old row")
+		assert.Equal(t, driver.Unknown, status, "the grace window must run its course")
 
 		n.conflicts.mu.Lock()
 		n.conflicts.entries[txID] = conflictEntry{
@@ -266,11 +205,11 @@ func TestSettledNetworkCondemnsASpentInput(t *testing.T) {
 		status, _, message, err := n.GetTransactionStatus(t.Context(), "token", txID)
 		require.NoError(t, err)
 		assert.Equal(t, driver.Invalid, status)
-		assert.Contains(t, message, "already spent", "the message must be distinguishable from the timeout one")
+		assert.Contains(t, message, "already spent")
 	})
 
 	t.Run("a spent input within the grace window stays unknown", func(t *testing.T) {
-		n, txID := build(t, 2*timeout, transferRequest(inputID), []bool{true}, nil)
+		n, txID := build(t, transferRequest(inputID), []bool{true}, nil)
 
 		status, _, _, err := n.GetTransactionStatus(t.Context(), "token", txID)
 		require.NoError(t, err)
@@ -278,21 +217,20 @@ func TestSettledNetworkCondemnsASpentInput(t *testing.T) {
 			"pending immediately after the winner lands; condemning on sight would break that")
 	})
 
-	t.Run("an unspent input leaves the timeout in charge", func(t *testing.T) {
-		n, txID := build(t, 2*timeout, transferRequest(inputID), []bool{false}, nil)
-
-		status, _, message, err := n.GetTransactionStatus(t.Context(), "token", txID)
-		require.NoError(t, err)
-		assert.Equal(t, driver.Invalid, status)
-		assert.Contains(t, message, "finality timeout", "the age gate, not the conflict path, must have decided this")
-	})
-
-	t.Run("no inputs are never condemned by conflict", func(t *testing.T) {
-		n, txID := build(t, 2*timeout, transferRequest(), nil, nil)
+	t.Run("an unspent input stays unknown", func(t *testing.T) {
+		n, txID := build(t, transferRequest(inputID), []bool{false}, nil)
 
 		status, _, _, err := n.GetTransactionStatus(t.Context(), "token", txID)
 		require.NoError(t, err)
-		assert.Equal(t, driver.Invalid, status, "the age gate still applies")
+		assert.Equal(t, driver.Unknown, status, "without evidence the transaction can still land")
+	})
+
+	t.Run("no inputs are never condemned by conflict", func(t *testing.T) {
+		n, txID := build(t, transferRequest(), nil, nil)
+
+		status, _, _, err := n.GetTransactionStatus(t.Context(), "token", txID)
+		require.NoError(t, err)
+		assert.Equal(t, driver.Unknown, status, "with nothing to check, there is no evidence")
 
 		n.conflicts.mu.Lock()
 		entry := n.conflicts.entries[txID]
@@ -306,25 +244,24 @@ func TestSettledNetworkCondemnsASpentInput(t *testing.T) {
 		// (token/metadata.go, filterTransfer); a TxId that is not a valid anchor is the shape a foreign
 		// or malformed id would take.
 		foreign := &token.ID{TxId: "not-an-anchor", Index: 0}
-		n, txID := build(t, 2*timeout, transferRequest(nil, foreign), nil, nil)
+		n, txID := build(t, transferRequest(nil, foreign), nil, nil)
 		n.spent = spentReader
 
-		status, _, message, err := n.GetTransactionStatus(t.Context(), "token", txID)
+		status, _, _, err := n.GetTransactionStatus(t.Context(), "token", txID)
 		require.NoError(t, err)
-		assert.Equal(t, driver.Invalid, status, "only the age gate can have fired: every candidate id was unusable")
-		assert.Contains(t, message, "finality timeout")
+		assert.Equal(t, driver.Unknown, status, "every candidate id was unusable, so there is no evidence")
 		assert.Zero(t, spentReader.calls, "no usable id means AreTokensSpent must never be called")
 	})
 
 	t.Run("a store or chain error is never treated as evidence", func(t *testing.T) {
-		n, txID := build(t, timeout/2, transferRequest(inputID), []bool{true}, errors.New("node is unhappy"))
+		n, txID := build(t, transferRequest(inputID), []bool{true}, errors.New("node is unhappy"))
 
 		status, _, _, err := n.GetTransactionStatus(t.Context(), "token", txID)
 		require.NoError(t, err)
 		assert.Equal(t, driver.Unknown, status)
 
-		n2, txID2 := build(t, timeout/2, nil, nil, nil)
-		n2.store = &agedStore{age: timeout / 2, tokenRequestErr: errors.New("store is down")}
+		n2, txID2 := build(t, nil, nil, nil)
+		n2.store = &fakeRecoveryStore{tokenRequestErr: errors.New("store is down")}
 
 		status, _, _, err = n2.GetTransactionStatus(t.Context(), "token", txID2)
 		require.NoError(t, err)
@@ -332,7 +269,7 @@ func TestSettledNetworkCondemnsASpentInput(t *testing.T) {
 	})
 
 	t.Run("a missing input whose creator has not applied is no evidence", func(t *testing.T) {
-		n, txID := build(t, timeout/2, transferRequest(inputID), []bool{true}, nil)
+		n, txID := build(t, transferRequest(inputID), []bool{true}, nil)
 		n.spent = &fakeSpentReader{spent: []bool{true}, creatorPending: true}
 
 		status, _, _, err := n.GetTransactionStatus(t.Context(), "token", txID)
@@ -344,7 +281,7 @@ func TestSettledNetworkCondemnsASpentInput(t *testing.T) {
 	})
 
 	t.Run("a conflict that goes away resets the grace window", func(t *testing.T) {
-		n, txID := build(t, 2*timeout, transferRequest(inputID), []bool{true}, nil)
+		n, txID := build(t, transferRequest(inputID), []bool{true}, nil)
 
 		_, _, _, err := n.GetTransactionStatus(t.Context(), "token", txID)
 		require.NoError(t, err)
@@ -362,7 +299,7 @@ func TestSettledNetworkCondemnsASpentInput(t *testing.T) {
 
 	t.Run("input ids are parsed once per transaction", func(t *testing.T) {
 		parser := &fakeParser{request: transferRequest(inputID)}
-		n, txID := build(t, timeout/2, nil, []bool{false}, nil)
+		n, txID := build(t, nil, []bool{false}, nil)
 		n.parser = parser
 
 		_, _, _, err := n.GetTransactionStatus(t.Context(), "token", txID)
@@ -372,13 +309,12 @@ func TestSettledNetworkCondemnsASpentInput(t *testing.T) {
 		assert.Equal(t, 1, parser.calls, "the second sweep must reuse the memoised ids rather than re-parsing")
 	})
 
-	t.Run("a revert checking spent status degrades to the timeout, as under graph hiding", func(t *testing.T) {
-		n, txID := build(t, 2*timeout, transferRequest(inputID), nil, client.ErrExecutionReverted)
+	t.Run("a revert checking spent status is not evidence, as under graph hiding", func(t *testing.T) {
+		n, txID := build(t, transferRequest(inputID), nil, client.ErrExecutionReverted)
 
-		status, _, message, err := n.GetTransactionStatus(t.Context(), "token", txID)
+		status, _, _, err := n.GetTransactionStatus(t.Context(), "token", txID)
 		require.NoError(t, err)
-		assert.Equal(t, driver.Invalid, status)
-		assert.Contains(t, message, "finality timeout")
+		assert.Equal(t, driver.Unknown, status)
 	})
 
 	t.Run("an anchor that appears between the two reads is not condemned", func(t *testing.T) {
@@ -395,7 +331,7 @@ func TestSettledNetworkCondemnsASpentInput(t *testing.T) {
 		txID := n.ComputeTxID(&driver.TxID{Creator: []byte("creator")})
 		settled := settledNetwork{
 			Network: n,
-			store:   &agedStore{age: 2 * timeout, tokenRequest: []byte("raw")},
+			store:   &fakeRecoveryStore{tokenRequest: []byte("raw")},
 			timeout: timeout,
 			grace:   grace,
 			parser:  &fakeParser{request: transferRequest(inputID)},
@@ -439,7 +375,7 @@ func TestSpentTokenIDsOfRequest(t *testing.T) {
 		t.Helper()
 
 		return settledNetwork{
-			store:  &agedStore{tokenRequest: raw, tokenRequestErr: rawErr},
+			store:  &fakeRecoveryStore{tokenRequest: raw, tokenRequestErr: rawErr},
 			parser: &fakeParser{request: request, err: parseErr},
 		}
 	}
@@ -556,7 +492,7 @@ func TestConflictWatchPruning(t *testing.T) {
 	// prune at all.
 	t.Run("a no-candidates check still sweeps stale entries out of the watch", func(t *testing.T) {
 		n := settledNetwork{
-			store:   &agedStore{tokenRequest: nil},
+			store:   &fakeRecoveryStore{tokenRequest: nil},
 			timeout: time.Nanosecond,
 			grace:   time.Second,
 			parser:  &fakeParser{request: nil},
@@ -566,7 +502,7 @@ func TestConflictWatchPruning(t *testing.T) {
 			}},
 		}
 
-		_, _, _ = n.condemnedByConflict(t.Context(), "token", "tx-with-no-inputs")
+		_, _ = n.condemnedByConflict(t.Context(), "token", "tx-with-no-inputs")
 
 		n.conflicts.mu.Lock()
 		defer n.conflicts.mu.Unlock()
@@ -593,7 +529,7 @@ func TestSettledNetworkConflictCheckIsConcurrencySafe(t *testing.T) {
 	}
 
 	n := settledNetwork{
-		store:     &agedStore{tokenRequest: []byte("raw")},
+		store:     &fakeRecoveryStore{tokenRequest: []byte("raw")},
 		timeout:   time.Minute,
 		grace:     10 * time.Millisecond,
 		parser:    &concurrentParser{request: request},
@@ -609,7 +545,7 @@ func TestSettledNetworkConflictCheckIsConcurrencySafe(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range 20 {
-				_, _, _ = n.condemnedByConflict(t.Context(), "token", txID)
+				_, _ = n.condemnedByConflict(t.Context(), "token", txID)
 			}
 		}()
 	}
@@ -679,19 +615,11 @@ func (f *fakeSpentReader) AreTokensSpent(
 	return f.spent, f.err
 }
 
-// agedStore is a recoveryStore that only answers the age question, which is all settledNetwork asks
-// of it. Every other method is present to satisfy the interface and panics if the code under test
-// starts depending on it.
-type agedStore struct {
+// fakeRecoveryStore is a recoveryStore that only answers GetTokenRequest, which is all settledNetwork
+// asks of it. Every other method is present to satisfy the interface and panics if the code under
+// test starts depending on it.
+type fakeRecoveryStore struct {
 	recoveryStore
-	age time.Duration
-	err error
-	// unset makes the record come back with no timestamp, the shape a store that never populated the
-	// column would produce.
-	unset bool
-	// nilIterator makes Transactions return (nil, nil), the shape a store implementation bug would
-	// produce: success, but nothing to read from.
-	nilIterator bool
 	// tokenRequest and tokenRequestErr back GetTokenRequest, used by the conflict-check tests. A zero
 	// value returns (nil, nil): no stored bytes, which reads as "no candidates" further up the stack.
 	tokenRequest    []byte
@@ -699,30 +627,8 @@ type agedStore struct {
 }
 
 // GetTokenRequest returns the raw bytes configured on the fake, or an error.
-func (s *agedStore) GetTokenRequest(_ context.Context, _ string) ([]byte, error) {
+func (s *fakeRecoveryStore) GetTokenRequest(_ context.Context, _ string) ([]byte, error) {
 	return s.tokenRequest, s.tokenRequestErr
-}
-
-func (s *agedStore) Transactions(
-	_ context.Context,
-	_ dbdriver.QueryTransactionsParams,
-	_ cdriver.Pagination,
-) (*cdriver.PageIterator[*dbdriver.TransactionRecord], error) {
-	if s.err != nil {
-		return nil, s.err
-	}
-	if s.nilIterator {
-		return nil, nil
-	}
-
-	record := &dbdriver.TransactionRecord{Timestamp: time.Now().Add(-s.age)}
-	if s.unset {
-		record.Timestamp = time.Time{}
-	}
-
-	return &cdriver.PageIterator[*dbdriver.TransactionRecord]{
-		Items: iterators.Slice([]*dbdriver.TransactionRecord{record}),
-	}, nil
 }
 
 // newRecoveryDriver returns a Driver with the recovery bookkeeping initialized and no stores, which
