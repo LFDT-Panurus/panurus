@@ -137,6 +137,12 @@ func HasValidationParams(params driver2.QueryValidationRecordsParams, tableName 
 	)
 }
 
+func HasValidationFailureParams(params driver2.QueryValidationFailureRecordsParams, tableName string) cond.Condition {
+	return cond.And(
+		cond.BetweenTimestamps(common.FieldName(tableName+".stored_at"), utc(params.From), utc(params.To)),
+	)
+}
+
 func HasTransactionParams(params driver2.QueryTransactionsParams, table common.Table) cond.Condition {
 	conds := []cond.Condition{
 		cond.FieldIn(table.Field("tx_id"), params.IDs...),

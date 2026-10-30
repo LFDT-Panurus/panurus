@@ -41,6 +41,18 @@ func (g *guardedEndorserStore) NewEndorserStoreTransaction() (driver.EndorserSto
 	return &guardedEndorserStoreTx{EndorserStoreTransaction: w, policy: g.policy}, nil
 }
 
+// RecordValidationFailure caps the audited payload before delegating: the request bytes come
+// straight off the wire from a request that failed validation, so they are exactly the kind of
+// untrusted, potentially oversized input the payload guard exists to bound.
+func (g *guardedEndorserStore) RecordValidationFailure(ctx context.Context, txID string, tokenRequest []byte, reason string) error {
+	size := len(txID) + len(tokenRequest) + len(reason)
+	if err := CheckPayload("RecordValidationFailure", size, g.policy.MaxPayloadSize); err != nil {
+		return err
+	}
+
+	return g.EndorserStore.RecordValidationFailure(ctx, txID, tokenRequest, reason)
+}
+
 type guardedEndorserStoreTx struct {
 	driver.EndorserStoreTransaction
 	policy Policy

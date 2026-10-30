@@ -29,6 +29,20 @@ type EndorserStore interface {
 	// GetStatus returns the status of a given transaction from the validation records.
 	// It returns an error if the transaction is not found
 	GetStatus(ctx context.Context, txID string) (TxStatus, string, error)
+
+	// RecordValidationFailure records, for auditing purposes, that validation of the token
+	// request filed under txID failed, together with the raw request bytes and a free-text
+	// reason describing the failure.
+	//
+	// Unlike AddValidationRecord, this is an append-only forensic record kept in a separate
+	// table: it carries no public parameters hash, is not subject to the token-request
+	// well-formedness checks (the request may have failed precisely because it was malformed),
+	// and never participates in the already-processed / single-approval guard. Several failures
+	// may therefore be recorded for the same txID.
+	RecordValidationFailure(ctx context.Context, txID string, tokenRequest []byte, reason string) error
+
+	// QueryValidationFailures returns a list of validation failure records matching params.
+	QueryValidationFailures(ctx context.Context, params QueryValidationFailureRecordsParams) (ValidationFailureRecordsIterator, error)
 }
 
 //go:generate counterfeiter -o mock/endorser_store_transaction.go -fake-name EndorserStoreTransaction . EndorserStoreTransaction
@@ -50,6 +64,12 @@ type EndorserStoreTransaction interface {
 	// the request it names carries nothing to validate.
 	AddValidationRecord(ctx context.Context, txID string, tokenRequest []byte, meta map[string][]byte, ppHash driver.PPHash) error
 
+	// DeleteValidationRecord removes the validation record for txID, if any. It is used to
+	// undo a record whose endorsement subsequently failed, so the request is left retryable
+	// rather than permanently marked as processed. Deleting a txID that has no record is not
+	// an error.
+	DeleteValidationRecord(ctx context.Context, txID string) error
+
 	// SetStatus sets the status of a validation record
 	SetStatus(ctx context.Context, txID string, status TxStatus, message string) error
 }
@@ -69,6 +89,24 @@ type ValidationRecord struct {
 // ValidationRecordsIterator is an iterator for validation records
 type ValidationRecordsIterator = iterators.Iterator[*ValidationRecord]
 
+// ValidationFailureRecord is an append-only, audit-only record of a token request whose
+// validation failed on the endorser approval path. Unlike ValidationRecord it carries no
+// metadata or public parameters hash (there may be none to produce for a request that failed
+// to validate) and it never gates re-evaluation of the same transaction.
+type ValidationFailureRecord struct {
+	// TxID is the transaction ID (request anchor) the failed request was filed under
+	TxID string
+	// TokenRequest is the raw token request bytes that failed validation, as received
+	TokenRequest []byte
+	// Reason is a free-text description of why validation failed
+	Reason string
+	// Timestamp is the time the failure was recorded
+	Timestamp time.Time
+}
+
+// ValidationFailureRecordsIterator is an iterator for validation failure records
+type ValidationFailureRecordsIterator = iterators.Iterator[*ValidationFailureRecord]
+
 // QueryValidationRecordsParams defines the parameters for querying validation records.
 type QueryValidationRecordsParams struct {
 	// From is the start time of the query
@@ -84,4 +122,19 @@ type QueryValidationRecordsParams struct {
 	// If specified, this filter will be applied.
 	// the filter returns true if the record must be selected, false otherwise.
 	Filter func(record *ValidationRecord) bool
+}
+
+// QueryValidationFailureRecordsParams defines the parameters for querying validation failure
+// records.
+type QueryValidationFailureRecordsParams struct {
+	// From is the start time of the query.
+	// If nil, the query starts from the first record.
+	From *time.Time
+	// To is the end time of the query.
+	// If nil, the query ends at the last record.
+	To *time.Time
+	// Filter defines a custom filter function.
+	// If specified, this filter will be applied.
+	// the filter returns true if the record must be selected, false otherwise.
+	Filter func(record *ValidationFailureRecord) bool
 }

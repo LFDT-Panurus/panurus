@@ -69,6 +69,12 @@ var TxStatusMessage = dbdriver.TxStatusMessage
 // ValidationRecord is a record that contains information about the validation of a given token request
 type ValidationRecord = dbdriver.ValidationRecord
 
+// ValidationFailureRecord is an audit-only record of a token request whose validation failed.
+type ValidationFailureRecord = dbdriver.ValidationFailureRecord
+
+// QueryValidationFailureRecordsParams defines the parameters for querying validation failure records
+type QueryValidationFailureRecordsParams = dbdriver.QueryValidationFailureRecordsParams
+
 // ValidationRecordsIterator is an iterator over validation records
 type ValidationRecordsIterator struct {
 	it dbdriver.ValidationRecordsIterator
@@ -95,6 +101,30 @@ func (t *ValidationRecordsIterator) Next() (*ValidationRecord, error) {
 
 // QueryValidationRecordsParams defines the parameters for querying validation records
 type QueryValidationRecordsParams = dbdriver.QueryValidationRecordsParams
+
+// ValidationFailureRecordsIterator is an iterator over validation failure records
+type ValidationFailureRecordsIterator struct {
+	it dbdriver.ValidationFailureRecordsIterator
+}
+
+// Close closes the iterator. It must be called when done with the iterator.
+func (t *ValidationFailureRecordsIterator) Close() {
+	t.it.Close()
+}
+
+// Next returns the next validation failure record, if any.
+// It returns nil, nil if there are no more records.
+func (t *ValidationFailureRecordsIterator) Next() (*ValidationFailureRecord, error) {
+	next, err := t.it.Next()
+	if err != nil {
+		return nil, err
+	}
+	if next == nil {
+		return nil, nil
+	}
+
+	return next, nil
+}
 
 // StoreService is a database that stores token transaction endorsement validation records
 type StoreService struct {
@@ -161,6 +191,72 @@ func (d *StoreService) AppendValidationRecord(ctx context.Context, txID string, 
 	logger.DebugfContext(ctx, "appending validation record completed without errors")
 
 	return nil
+}
+
+// DeleteValidationRecord removes the validation record for txID, if any. It undoes a record
+// written by AppendValidationRecord whose endorsement subsequently failed, so that the
+// request is left retryable instead of permanently rejected by AlreadyProcessed. Deleting a
+// txID that has no record is not an error.
+func (d *StoreService) DeleteValidationRecord(ctx context.Context, txID string) error {
+	logger.DebugfContext(ctx, "deleting validation record... [%s]", txID)
+
+	w, err := d.db.NewEndorserStoreTransaction()
+	if err != nil {
+		return errors.WithMessagef(err, "begin update for txid [%s] failed", txID)
+	}
+	if err := w.DeleteValidationRecord(ctx, txID); err != nil {
+		w.Rollback()
+
+		return errors.WithMessagef(err, "delete validation record for txid [%s] failed", txID)
+	}
+	if err := w.Commit(); err != nil {
+		return errors.WithMessagef(err, "delete validation record commit for txid [%s] failed", txID)
+	}
+	logger.DebugfContext(ctx, "deleting validation record completed without errors")
+
+	return nil
+}
+
+// AlreadyProcessed reports whether a validation record already exists for txID.
+//
+// A validation record is written for every request this endorser approves, keyed
+// by the request anchor (tx id), so its presence means the request has already
+// been processed and must not be evaluated again. It builds on GetStatus, which
+// reports Unknown (without error) for a txID that has no record.
+func (d *StoreService) AlreadyProcessed(ctx context.Context, txID string) (bool, error) {
+	status, _, err := d.GetStatus(ctx, txID)
+	if err != nil {
+		return false, errors.WithMessagef(err, "failed to check whether [%s] was already processed", txID)
+	}
+
+	return status != Unknown, nil
+}
+
+// RecordValidationFailure records, for auditing purposes, that validation of the token request
+// filed under txID failed, together with the raw request bytes and a free-text reason.
+//
+// This is an append-only forensic record kept separately from the validation records written
+// by AppendValidationRecord: it is never consulted by AlreadyProcessed, so recording a failure
+// does not block a later re-evaluation of the same request. Whether a re-evaluation is allowed
+// is therefore governed entirely by the success path, not by the presence of a failure record.
+func (d *StoreService) RecordValidationFailure(ctx context.Context, txID string, tokenRequest []byte, reason string) error {
+	logger.DebugfContext(ctx, "recording validation failure... [%s]", txID)
+	if err := d.db.RecordValidationFailure(ctx, txID, tokenRequest, reason); err != nil {
+		return errors.WithMessagef(err, "failed to record validation failure for [%s]", txID)
+	}
+	logger.DebugfContext(ctx, "recording validation failure completed without errors")
+
+	return nil
+}
+
+// ValidationFailures returns an iterator of validation failure records filtered by the given params.
+func (d *StoreService) ValidationFailures(ctx context.Context, params QueryValidationFailureRecordsParams) (*ValidationFailureRecordsIterator, error) {
+	it, err := d.db.QueryValidationFailures(ctx, params)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to query validation failure records")
+	}
+
+	return &ValidationFailureRecordsIterator{it: it}, nil
 }
 
 // SetStatus sets the status of the validation record with the passed transaction id to the passed status
