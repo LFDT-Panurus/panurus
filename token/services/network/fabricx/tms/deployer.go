@@ -8,6 +8,7 @@ package tms
 
 import (
 	"crypto/sha256"
+	"os"
 	"reflect"
 
 	"github.com/LFDT-Panurus/panurus/token"
@@ -15,8 +16,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/keys"
 	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
-	"github.com/LFDT-Panurus/panurus/token/services/network/fabric"
-	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx/pp"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	cdriver "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services"
 	"github.com/hyperledger/fabric-x-common/api/applicationpb"
@@ -28,7 +28,8 @@ var logger = logging.MustGetLogger()
 type DeployerService interface {
 	// DeployTMSs deploys all TMSs defined in the configuration.
 	DeployTMSs() error
-	// DeployTMS deploys the TMS with the given ID.
+	// DeployTMS deploys the TMS with the given ID, using the public parameters at the
+	// publicParameters.path of its configuration.
 	DeployTMS(tmsID token.TMSID) error
 	// DeployTMSWithPP deploys the TMS with the given ID and public parameters.
 	DeployTMSWithPP(tmsID token.TMSID, ppRaw []byte) error
@@ -37,12 +38,10 @@ type DeployerService interface {
 // NewTMSDeployerService returns a new DeployerService instance for
 // token management systems.
 func NewTMSDeployerService(
-	ppFetcher *pp.PublicParametersService,
 	configService *config.Service,
 	nsSubmitter Submitter,
 ) *deployerService {
 	return &deployerService{
-		ppFetcher:     ppFetcher,
 		configService: configService,
 		nsSubmitter:   nsSubmitter,
 		keyTranslator: &keys.Translator{},
@@ -50,7 +49,6 @@ func NewTMSDeployerService(
 }
 
 type deployerService struct {
-	ppFetcher     fabric.NetworkPublicParamsFetcher
 	configService *config.Service
 	nsSubmitter   Submitter
 	keyTranslator translator.KeyTranslator
@@ -99,7 +97,8 @@ func (s *deployerService) DeployTMSs() error {
 	return nil
 }
 
-// DeployTMS fetches the public parameters for the specified TMS and deploys them.
+// DeployTMS loads the public parameters of the specified TMS from its configuration and deploys
+// them.
 func (s *deployerService) DeployTMS(tmsID token.TMSID) error {
 	return s.deployPublicParameters(tmsID)
 }
@@ -109,9 +108,11 @@ func (s *deployerService) DeployTMSWithPP(tmsID token.TMSID, ppRaw []byte) error
 	return s.deployPublicParametersRaw(tmsID, ppRaw)
 }
 
-// deployPublicParameters fetches public parameters and passes them to the deployment logic.
+// deployPublicParameters loads the public parameters from the TMS configuration and passes them to
+// the deployment logic. They are not read from the ledger: on a namespace that was never initialized
+// there is nothing there yet, and deploying is how they get there.
 func (s *deployerService) deployPublicParameters(tmsID token.TMSID) error {
-	ppRaw, err := s.ppFetcher.Fetch(tmsID.Network, tmsID.Channel, tmsID.Namespace)
+	ppRaw, err := s.publicParametersFromConfig(tmsID)
 	if err != nil {
 		return err
 	}
@@ -119,9 +120,37 @@ func (s *deployerService) deployPublicParameters(tmsID token.TMSID) error {
 	return s.deployPublicParametersRaw(tmsID, ppRaw)
 }
 
+// publicParametersFromConfig reads the file at the publicParameters.path of the TMS configuration.
+func (s *deployerService) publicParametersFromConfig(tmsID token.TMSID) ([]byte, error) {
+	tmsConfig, err := s.configService.ConfigurationFor(tmsID.Network, tmsID.Channel, tmsID.Namespace)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed to load the configuration of [%s]", tmsID)
+	}
+	var cPP struct {
+		Path string `yaml:"path"`
+	}
+	if err := tmsConfig.UnmarshalKey("publicParameters", &cPP); err != nil {
+		return nil, errors.WithMessagef(err, "failed to unmarshal the public parameters configuration of [%s]", tmsID)
+	}
+	if len(cPP.Path) == 0 {
+		return nil, errors.Errorf("no public parameters path configured for [%s]", tmsID)
+	}
+	logger.Infof("load public parameters for [%s] from [%s]", tmsID, cPP.Path)
+	ppRaw, err := os.ReadFile(cPP.Path)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to load public parameters for [%s] from [%s]", tmsID, cPP.Path)
+	}
+
+	return ppRaw, nil
+}
+
 // deployPublicParametersRaw constructs a public parameters transaction and
-// submits it to the network.
+// submits it to the network. Empty public parameters are refused: the
+// transaction would commit and leave the namespace unusable.
 func (s *deployerService) deployPublicParametersRaw(tmsID token.TMSID, ppRaw []byte) error {
+	if len(ppRaw) == 0 {
+		return errors.Errorf("refusing to deploy empty public parameters for [%s]", tmsID)
+	}
 	tx, err := s.createPublicParametersTx(ppRaw, tmsID.Namespace)
 	if err != nil {
 		return err
