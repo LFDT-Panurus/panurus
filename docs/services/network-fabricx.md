@@ -405,6 +405,27 @@ unsynchronized: `GetVersion` returns the error to the caller (so the endorsement
 fails loudly instead of producing a transaction that is silently rejected later)
 and retries on the next call.
 
+### Deploying the Public Parameters
+
+The first setup transaction on a namespace is written by
+[`tms.DeployerService`](../../token/services/network/fabricx/tms/deployer.go).
+`DeployTMSs` and `DeployTMS` read the parameters from the file at each TMS's
+`publicParameters.path`, not from the ledger, which holds nothing yet on a namespace
+that was never initialized. `DeployTMSWithPP` deploys the bytes it is given instead.
+All three refuse empty parameters: committing an empty setup key would leave the
+namespace unusable for every later token operation.
+
+```yaml
+token:
+  tms:
+    mytms:
+      network: mynet
+      channel: ""
+      namespace: token
+      publicParameters:
+        path: /path/to/zkatdlognoghv1_pp.json
+```
+
 ### Version Keeper Configuration
 
 The keeper itself has no configuration; it follows the lookup listener that watches
