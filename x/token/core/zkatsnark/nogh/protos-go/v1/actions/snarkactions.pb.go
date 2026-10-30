@@ -225,7 +225,10 @@ type IssueActionInput struct {
 	// id is the ledger identifier of the consumed token
 	Id *v1.TokenID `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	// token is the consumed token exactly as stored on the ledger
-	Token         []byte `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
+	Token []byte `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
+	// migration proves the opening of a consumed ZKAT-DLOG token; it is set if
+	// and only if token is a ZKAT-DLOG (commitment) output
+	Migration     *MigrationDescription `protobuf:"bytes,3,opt,name=migration,proto3" json:"migration,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -274,6 +277,81 @@ func (x *IssueActionInput) GetToken() []byte {
 	return nil
 }
 
+func (x *IssueActionInput) GetMigration() *MigrationDescription {
+	if x != nil {
+		return x.Migration
+	}
+	return nil
+}
+
+// MigrationDescription proves that a redeemed ZKAT-DLOG Pedersen commitment
+// opens to the issue action's token type and to the value committed in
+// (value_commit_in_x, value_commit_in_y). The commitment itself is never
+// carried here: the validator reads it from the ledger token bytes.
+type MigrationDescription struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// value_commit_in_x is the X coordinate of the value commitment of the
+	// redeemed token (twisted Edwards curve embedded in the SNARK curve), 32 bytes
+	ValueCommitInX []byte `protobuf:"bytes,1,opt,name=value_commit_in_x,json=valueCommitInX,proto3" json:"value_commit_in_x,omitempty"`
+	// value_commit_in_y is the Y coordinate of that value commitment, 32 bytes
+	ValueCommitInY []byte `protobuf:"bytes,2,opt,name=value_commit_in_y,json=valueCommitInY,proto3" json:"value_commit_in_y,omitempty"`
+	// migration_proof is the zero-knowledge proof for the migration circuit
+	MigrationProof []byte `protobuf:"bytes,3,opt,name=migration_proof,json=migrationProof,proto3" json:"migration_proof,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *MigrationDescription) Reset() {
+	*x = MigrationDescription{}
+	mi := &file_snarkactions_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MigrationDescription) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MigrationDescription) ProtoMessage() {}
+
+func (x *MigrationDescription) ProtoReflect() protoreflect.Message {
+	mi := &file_snarkactions_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MigrationDescription.ProtoReflect.Descriptor instead.
+func (*MigrationDescription) Descriptor() ([]byte, []int) {
+	return file_snarkactions_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *MigrationDescription) GetValueCommitInX() []byte {
+	if x != nil {
+		return x.ValueCommitInX
+	}
+	return nil
+}
+
+func (x *MigrationDescription) GetValueCommitInY() []byte {
+	if x != nil {
+		return x.ValueCommitInY
+	}
+	return nil
+}
+
+func (x *MigrationDescription) GetMigrationProof() []byte {
+	if x != nil {
+		return x.MigrationProof
+	}
+	return nil
+}
+
 // IssueAction represents the creation of one or more new tokens.
 // There are no SpendDescriptions; a plain issuance consumes nothing, an
 // upgrade issuance consumes the legacy tokens listed in inputs.
@@ -304,7 +382,7 @@ type IssueAction struct {
 
 func (x *IssueAction) Reset() {
 	*x = IssueAction{}
-	mi := &file_snarkactions_proto_msgTypes[3]
+	mi := &file_snarkactions_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -316,7 +394,7 @@ func (x *IssueAction) String() string {
 func (*IssueAction) ProtoMessage() {}
 
 func (x *IssueAction) ProtoReflect() protoreflect.Message {
-	mi := &file_snarkactions_proto_msgTypes[3]
+	mi := &file_snarkactions_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -329,7 +407,7 @@ func (x *IssueAction) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IssueAction.ProtoReflect.Descriptor instead.
 func (*IssueAction) Descriptor() ([]byte, []int) {
-	return file_snarkactions_proto_rawDescGZIP(), []int{3}
+	return file_snarkactions_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *IssueAction) GetIssuer() []byte {
@@ -421,7 +499,7 @@ type TransferAction struct {
 
 func (x *TransferAction) Reset() {
 	*x = TransferAction{}
-	mi := &file_snarkactions_proto_msgTypes[4]
+	mi := &file_snarkactions_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -433,7 +511,7 @@ func (x *TransferAction) String() string {
 func (*TransferAction) ProtoMessage() {}
 
 func (x *TransferAction) ProtoReflect() protoreflect.Message {
-	mi := &file_snarkactions_proto_msgTypes[4]
+	mi := &file_snarkactions_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -446,7 +524,7 @@ func (x *TransferAction) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransferAction.ProtoReflect.Descriptor instead.
 func (*TransferAction) Descriptor() ([]byte, []int) {
-	return file_snarkactions_proto_rawDescGZIP(), []int{4}
+	return file_snarkactions_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *TransferAction) GetTypeCommitment() []byte {
@@ -505,9 +583,14 @@ func (x *TransferAction) GetMetadata() map[string][]byte {
 	return nil
 }
 
-// MigrationAction is the public wire-format record for a single token
-// migration from zkatdlog (Pedersen-committed, BLS12-381 G1) to zkatsnark
-// (MiMC-committed, Jubjub value commitment).
+// MigrationAction is the former, unbound wire-format record for a single
+// token migration from zkatdlog to zkatsnark.
+//
+// Deprecated: unbound and unused. ZKAT-DLOG tokens are upgraded through an
+// IssueAction whose inputs carry a MigrationDescription. Kept only so that
+// the protobuf schema stays backward compatible.
+//
+// Deprecated: Marked as deprecated in snarkactions.proto.
 type MigrationAction struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// commitment_pedersen_x is the X coordinate of the existing Pedersen
@@ -537,7 +620,7 @@ type MigrationAction struct {
 
 func (x *MigrationAction) Reset() {
 	*x = MigrationAction{}
-	mi := &file_snarkactions_proto_msgTypes[5]
+	mi := &file_snarkactions_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -549,7 +632,7 @@ func (x *MigrationAction) String() string {
 func (*MigrationAction) ProtoMessage() {}
 
 func (x *MigrationAction) ProtoReflect() protoreflect.Message {
-	mi := &file_snarkactions_proto_msgTypes[5]
+	mi := &file_snarkactions_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -562,7 +645,7 @@ func (x *MigrationAction) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MigrationAction.ProtoReflect.Descriptor instead.
 func (*MigrationAction) Descriptor() ([]byte, []int) {
-	return file_snarkactions_proto_rawDescGZIP(), []int{5}
+	return file_snarkactions_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *MigrationAction) GetCommitmentPedersenX() []byte {
@@ -640,10 +723,15 @@ const file_snarkactions_proto_rawDesc = "" +
 	"\x0ftype_commitment\x18\x04 \x01(\fR\x0etypeCommitment\x12\x1f\n" +
 	"\vspend_proof\x18\x05 \x01(\fR\n" +
 	"spendProof\x12-\n" +
-	"\x12upgrade_randomness\x18\x06 \x01(\fR\x11upgradeRandomness\"c\n" +
+	"\x12upgrade_randomness\x18\x06 \x01(\fR\x11upgradeRandomness\"\xbc\x01\n" +
 	"\x10IssueActionInput\x129\n" +
 	"\x02id\x18\x01 \x01(\v2).fabric_token_sdk.token.driver.v1.TokenIDR\x02id\x12\x14\n" +
-	"\x05token\x18\x02 \x01(\fR\x05token\"\x9e\x04\n" +
+	"\x05token\x18\x02 \x01(\fR\x05token\x12W\n" +
+	"\tmigration\x18\x03 \x01(\v29.fabric_token_sdk.token.zkatsnark.v1.MigrationDescriptionR\tmigration\"\x95\x01\n" +
+	"\x14MigrationDescription\x12)\n" +
+	"\x11value_commit_in_x\x18\x01 \x01(\fR\x0evalueCommitInX\x12)\n" +
+	"\x11value_commit_in_y\x18\x02 \x01(\fR\x0evalueCommitInY\x12'\n" +
+	"\x0fmigration_proof\x18\x03 \x01(\fR\x0emigrationProof\"\x9e\x04\n" +
 	"\vIssueAction\x12\x16\n" +
 	"\x06issuer\x18\x01 \x01(\fR\x06issuer\x12\x1d\n" +
 	"\n" +
@@ -670,7 +758,7 @@ const file_snarkactions_proto_rawDesc = "" +
 	"\bmetadata\x18\b \x03(\v2A.fabric_token_sdk.token.zkatsnark.v1.TransferAction.MetadataEntryR\bmetadata\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"\xec\x02\n" +
+	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"\xf0\x02\n" +
 	"\x0fMigrationAction\x122\n" +
 	"\x15commitment_pedersen_x\x18\x01 \x01(\fR\x13commitmentPedersenX\x122\n" +
 	"\x15commitment_pedersen_y\x18\x02 \x01(\fR\x13commitmentPedersenY\x12'\n" +
@@ -679,7 +767,7 @@ const file_snarkactions_proto_rawDesc = "" +
 	"\x12value_commit_out_y\x18\x05 \x01(\fR\x0fvalueCommitOutY\x12'\n" +
 	"\x0ftype_commitment\x18\x06 \x01(\fR\x0etypeCommitment\x12'\n" +
 	"\x0fmigration_proof\x18\a \x01(\fR\x0emigrationProof\x12\x1c\n" +
-	"\trecipient\x18\b \x01(\fR\trecipientBRZPgithub.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/protos-go/v1/actionsb\x06proto3"
+	"\trecipient\x18\b \x01(\fR\trecipient:\x02\x18\x01BRZPgithub.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/protos-go/v1/actionsb\x06proto3"
 
 var (
 	file_snarkactions_proto_rawDescOnce sync.Once
@@ -693,32 +781,34 @@ func file_snarkactions_proto_rawDescGZIP() []byte {
 	return file_snarkactions_proto_rawDescData
 }
 
-var file_snarkactions_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_snarkactions_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_snarkactions_proto_goTypes = []any{
-	(*OutputDescription)(nil), // 0: fabric_token_sdk.token.zkatsnark.v1.OutputDescription
-	(*SpendDescription)(nil),  // 1: fabric_token_sdk.token.zkatsnark.v1.SpendDescription
-	(*IssueActionInput)(nil),  // 2: fabric_token_sdk.token.zkatsnark.v1.IssueActionInput
-	(*IssueAction)(nil),       // 3: fabric_token_sdk.token.zkatsnark.v1.IssueAction
-	(*TransferAction)(nil),    // 4: fabric_token_sdk.token.zkatsnark.v1.TransferAction
-	(*MigrationAction)(nil),   // 5: fabric_token_sdk.token.zkatsnark.v1.MigrationAction
-	nil,                       // 6: fabric_token_sdk.token.zkatsnark.v1.IssueAction.MetadataEntry
-	nil,                       // 7: fabric_token_sdk.token.zkatsnark.v1.TransferAction.MetadataEntry
-	(*v1.TokenID)(nil),        // 8: fabric_token_sdk.token.driver.v1.TokenID
+	(*OutputDescription)(nil),    // 0: fabric_token_sdk.token.zkatsnark.v1.OutputDescription
+	(*SpendDescription)(nil),     // 1: fabric_token_sdk.token.zkatsnark.v1.SpendDescription
+	(*IssueActionInput)(nil),     // 2: fabric_token_sdk.token.zkatsnark.v1.IssueActionInput
+	(*MigrationDescription)(nil), // 3: fabric_token_sdk.token.zkatsnark.v1.MigrationDescription
+	(*IssueAction)(nil),          // 4: fabric_token_sdk.token.zkatsnark.v1.IssueAction
+	(*TransferAction)(nil),       // 5: fabric_token_sdk.token.zkatsnark.v1.TransferAction
+	(*MigrationAction)(nil),      // 6: fabric_token_sdk.token.zkatsnark.v1.MigrationAction
+	nil,                          // 7: fabric_token_sdk.token.zkatsnark.v1.IssueAction.MetadataEntry
+	nil,                          // 8: fabric_token_sdk.token.zkatsnark.v1.TransferAction.MetadataEntry
+	(*v1.TokenID)(nil),           // 9: fabric_token_sdk.token.driver.v1.TokenID
 }
 var file_snarkactions_proto_depIdxs = []int32{
-	8, // 0: fabric_token_sdk.token.zkatsnark.v1.IssueActionInput.id:type_name -> fabric_token_sdk.token.driver.v1.TokenID
-	0, // 1: fabric_token_sdk.token.zkatsnark.v1.IssueAction.outputs:type_name -> fabric_token_sdk.token.zkatsnark.v1.OutputDescription
-	6, // 2: fabric_token_sdk.token.zkatsnark.v1.IssueAction.metadata:type_name -> fabric_token_sdk.token.zkatsnark.v1.IssueAction.MetadataEntry
-	2, // 3: fabric_token_sdk.token.zkatsnark.v1.IssueAction.inputs:type_name -> fabric_token_sdk.token.zkatsnark.v1.IssueActionInput
-	8, // 4: fabric_token_sdk.token.zkatsnark.v1.TransferAction.input_ids:type_name -> fabric_token_sdk.token.driver.v1.TokenID
-	1, // 5: fabric_token_sdk.token.zkatsnark.v1.TransferAction.inputs:type_name -> fabric_token_sdk.token.zkatsnark.v1.SpendDescription
-	0, // 6: fabric_token_sdk.token.zkatsnark.v1.TransferAction.outputs:type_name -> fabric_token_sdk.token.zkatsnark.v1.OutputDescription
-	7, // 7: fabric_token_sdk.token.zkatsnark.v1.TransferAction.metadata:type_name -> fabric_token_sdk.token.zkatsnark.v1.TransferAction.MetadataEntry
-	8, // [8:8] is the sub-list for method output_type
-	8, // [8:8] is the sub-list for method input_type
-	8, // [8:8] is the sub-list for extension type_name
-	8, // [8:8] is the sub-list for extension extendee
-	0, // [0:8] is the sub-list for field type_name
+	9, // 0: fabric_token_sdk.token.zkatsnark.v1.IssueActionInput.id:type_name -> fabric_token_sdk.token.driver.v1.TokenID
+	3, // 1: fabric_token_sdk.token.zkatsnark.v1.IssueActionInput.migration:type_name -> fabric_token_sdk.token.zkatsnark.v1.MigrationDescription
+	0, // 2: fabric_token_sdk.token.zkatsnark.v1.IssueAction.outputs:type_name -> fabric_token_sdk.token.zkatsnark.v1.OutputDescription
+	7, // 3: fabric_token_sdk.token.zkatsnark.v1.IssueAction.metadata:type_name -> fabric_token_sdk.token.zkatsnark.v1.IssueAction.MetadataEntry
+	2, // 4: fabric_token_sdk.token.zkatsnark.v1.IssueAction.inputs:type_name -> fabric_token_sdk.token.zkatsnark.v1.IssueActionInput
+	9, // 5: fabric_token_sdk.token.zkatsnark.v1.TransferAction.input_ids:type_name -> fabric_token_sdk.token.driver.v1.TokenID
+	1, // 6: fabric_token_sdk.token.zkatsnark.v1.TransferAction.inputs:type_name -> fabric_token_sdk.token.zkatsnark.v1.SpendDescription
+	0, // 7: fabric_token_sdk.token.zkatsnark.v1.TransferAction.outputs:type_name -> fabric_token_sdk.token.zkatsnark.v1.OutputDescription
+	8, // 8: fabric_token_sdk.token.zkatsnark.v1.TransferAction.metadata:type_name -> fabric_token_sdk.token.zkatsnark.v1.TransferAction.MetadataEntry
+	9, // [9:9] is the sub-list for method output_type
+	9, // [9:9] is the sub-list for method input_type
+	9, // [9:9] is the sub-list for extension type_name
+	9, // [9:9] is the sub-list for extension extendee
+	0, // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_snarkactions_proto_init() }
@@ -732,7 +822,7 @@ func file_snarkactions_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_snarkactions_proto_rawDesc), len(file_snarkactions_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

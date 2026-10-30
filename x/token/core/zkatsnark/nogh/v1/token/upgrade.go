@@ -27,14 +27,17 @@ var (
 )
 
 // IssueActionInput is a legacy ledger token redeemed by an upgrade issuance
-// (burn-and-re-issue). Token holds the serialized fabtoken output exactly as
-// recorded on the ledger: the ledger translator derives the key it checks and
-// deletes from these bytes, so they must never be re-encoded.
+// (burn-and-re-issue). Token holds the serialized fabtoken or ZKAT-DLOG output
+// exactly as recorded on the ledger: the ledger translator derives the key it
+// checks and deletes from these bytes, so they must never be re-encoded.
 type IssueActionInput struct {
 	// ID is the ledger identifier of the redeemed token.
 	ID token2.ID
-	// Token is the serialized fabtoken output, as stored on the ledger.
+	// Token is the serialized fabtoken or ZKAT-DLOG output, as stored on the ledger.
 	Token []byte
+	// Migration proves the opening of a ZKAT-DLOG Token. It is set if and only
+	// if Token is a ZKAT-DLOG output.
+	Migration *MigrationDescription
 }
 
 // UpgradeInput is the cleartext content of a redeemed fabtoken output.

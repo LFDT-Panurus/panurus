@@ -16,7 +16,6 @@ import (
 const (
 	fieldElementLen = 32 // one Fr element, canonical encoding (both BLS12-381 and BN254 have 32-byte scalars)
 	signatureLen    = 96 // R.X (32) || R.Y (32) || S (32)
-	fpElementLen    = 48 // one BLS12-381 base-field (Fp) element
 )
 
 // validateSpendDescriptionShape checks byte lengths only — no field-element
@@ -115,31 +114,4 @@ func validateIssueActionShape(a *snarktoken.IssueAction) error {
 	}
 
 	return validateBindingSignatureShape(a.BindingSignature)
-}
-
-// validateMigrationActionShape checks byte lengths for a MigrationAction.
-func validateMigrationActionShape(a *snarktoken.MigrationAction) error {
-	if len(a.CommitmentPedersenX) != fpElementLen {
-		return errors.Wrapf(ErrMalformedAction, "CommitmentPedersenX must be %d bytes, got %d", fpElementLen, len(a.CommitmentPedersenX))
-	}
-	if len(a.CommitmentPedersenY) != fpElementLen {
-		return errors.Wrapf(ErrMalformedAction, "CommitmentPedersenY must be %d bytes, got %d", fpElementLen, len(a.CommitmentPedersenY))
-	}
-	if len(a.CommitmentMiMC) != fieldElementLen {
-		return errors.Wrapf(ErrMalformedAction, "CommitmentMiMC must be %d bytes, got %d", fieldElementLen, len(a.CommitmentMiMC))
-	}
-	if len(a.ValueCommitOutX) != fieldElementLen {
-		return errors.Wrapf(ErrMalformedAction, "ValueCommitOutX must be %d bytes, got %d", fieldElementLen, len(a.ValueCommitOutX))
-	}
-	if len(a.ValueCommitOutY) != fieldElementLen {
-		return errors.Wrapf(ErrMalformedAction, "ValueCommitOutY must be %d bytes, got %d", fieldElementLen, len(a.ValueCommitOutY))
-	}
-	if len(a.TypeCommitment) != fieldElementLen {
-		return errors.Wrapf(ErrMalformedAction, "TypeCommitment must be %d bytes, got %d", fieldElementLen, len(a.TypeCommitment))
-	}
-	if len(a.MigrationProof) == 0 {
-		return errors.Wrapf(ErrMalformedAction, "MigrationProof must not be empty")
-	}
-
-	return nil
 }

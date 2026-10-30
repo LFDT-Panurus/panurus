@@ -363,47 +363,6 @@ func TestInput_GetOwner(t *testing.T) {
 	require.Equal(t, []byte("owner-bytes"), i.GetOwner())
 }
 
-// ── PedersenOpening ───────────────────────────────────────────────────────────
-
-func TestPedersenOpening_Validate_OK(t *testing.T) {
-	o := snarktoken.PedersenOpening{
-		Value:           100,
-		TokenType:       "USD",
-		BlindingFactor:  make([]byte, 32),
-		CommitmentBytes: make([]byte, 96),
-	}
-	require.NoError(t, o.Validate())
-}
-
-func TestPedersenOpening_Validate_EmptyTokenType(t *testing.T) {
-	o := snarktoken.PedersenOpening{
-		Value:           100,
-		TokenType:       "",
-		BlindingFactor:  make([]byte, 32),
-		CommitmentBytes: make([]byte, 96),
-	}
-	require.Error(t, o.Validate())
-}
-
-func TestPedersenOpening_Validate_EmptyBlindingFactor(t *testing.T) {
-	o := snarktoken.PedersenOpening{
-		Value:           100,
-		TokenType:       "USD",
-		BlindingFactor:  nil,
-		CommitmentBytes: make([]byte, 96),
-	}
-	require.Error(t, o.Validate())
-}
-
-func TestPedersenOpening_Validate_EmptyCommitmentBytes(t *testing.T) {
-	o := snarktoken.PedersenOpening{
-		Value:          100,
-		TokenType:      "USD",
-		BlindingFactor: make([]byte, 32),
-	}
-	require.Error(t, o.Validate())
-}
-
 // ── EncodeTokenType ───────────────────────────────────────────────────────────
 
 func TestEncodeTokenType_Empty(t *testing.T) {
@@ -506,30 +465,4 @@ func TestNote_Deserialize_LengthMismatch(t *testing.T) {
 	buf[15] = 0xE8 // 1000 in big-endian LSB
 	_, err := snarktoken.Deserialize(buf)
 	require.Error(t, err)
-}
-
-func TestMigrationAction_Serialize_Deserialize_RoundTrip(t *testing.T) {
-	orig := &snarktoken.MigrationAction{
-		CommitmentPedersenX: []byte("pedersen-x"),
-		CommitmentPedersenY: []byte("pedersen-y"),
-		CommitmentMiMC:      []byte("mimc-cm"),
-		ValueCommitOutX:     []byte("jubjub-x"),
-		ValueCommitOutY:     []byte("jubjub-y"),
-		TypeCommitment:      []byte("type-cm"),
-		MigrationProof:      []byte("proof-bytes"),
-		Recipient:           []byte("carol"),
-	}
-	raw, err := orig.Serialize()
-	require.NoError(t, err)
-
-	got := &snarktoken.MigrationAction{}
-	require.NoError(t, got.Deserialize(raw))
-	require.Equal(t, orig.CommitmentPedersenX, got.CommitmentPedersenX)
-	require.Equal(t, orig.CommitmentPedersenY, got.CommitmentPedersenY)
-	require.Equal(t, orig.CommitmentMiMC, got.CommitmentMiMC)
-	require.Equal(t, orig.ValueCommitOutX, got.ValueCommitOutX)
-	require.Equal(t, orig.ValueCommitOutY, got.ValueCommitOutY)
-	require.Equal(t, orig.TypeCommitment, got.TypeCommitment)
-	require.Equal(t, orig.MigrationProof, got.MigrationProof)
-	require.Equal(t, orig.Recipient, got.Recipient)
 }

@@ -11,11 +11,14 @@ import (
 	"sync"
 	"testing"
 
+	mathlib "github.com/IBM/mathlib"
 	"github.com/consensys/gnark-crypto/ecc"
+	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/stretchr/testify/require"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/setup"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/testutils/dlogpp"
 )
 
 // ── Shared setup (Setup is expensive; run once for all key tests) ────
@@ -188,10 +191,82 @@ func TestLoadVerifyingKeyBytes_MigrationMissing_Error(t *testing.T) {
 
 func TestSetupMigration_Success(t *testing.T) {
 	p := pp.DefaultPublicParams()
-	p, err := setup.SetupMigration(p, dummyGens())
+	_, err := dlogpp.Embed(p, dlogpp.DefaultCurve)
+	require.NoError(t, err)
+	p, err = setup.SetupMigration(p)
 	require.NoError(t, err)
 	require.NotEmpty(t, p.PKMigration)
 	require.NotEmpty(t, p.VKMigration)
+	require.NoError(t, p.Validate())
+}
+
+// TestSetupMigration_NoLegacyDLog checks that migration keys cannot be set up
+// without the ZKAT-DLOG public parameters whose generators they bake in.
+func TestSetupMigration_NoLegacyDLog(t *testing.T) {
+	_, err := setup.SetupMigration(pp.DefaultPublicParams())
+	require.ErrorIs(t, err, pp.ErrNoLegacyDLog)
+}
+
+// TestPedersenGeneratorCoordsFromDLog checks that the generators are read
+// from the ZKAT-DLOG public parameters: the BBS curve's hash-to-curve yields
+// other generators than the plain BLS12-381 one, so a re-derivation would
+// produce a circuit that cannot open BBS-curve commitments.
+func TestPedersenGeneratorCoordsFromDLog(t *testing.T) {
+	bbs, _, err := dlogpp.New(mathlib.BLS12_381_BBS_GURVY)
+	require.NoError(t, err)
+	plain, _, err := dlogpp.New(mathlib.BLS12_381_GURVY)
+	require.NoError(t, err)
+
+	gBBS, err := setup.PedersenGeneratorCoordsFromDLog(bbs)
+	require.NoError(t, err)
+	gPlain, err := setup.PedersenGeneratorCoordsFromDLog(plain)
+	require.NoError(t, err)
+	require.NotZero(t, gBBS.G0X.Cmp(gPlain.G0X), "BBS and plain BLS12-381 generators must differ")
+
+	var want bls12381.G1Affine
+	_, err = want.SetBytes(bbs.PedersenGenerators[1].Bytes())
+	require.NoError(t, err)
+	require.Zero(t, gBBS.G1X.Cmp(want.X.BigInt(new(big.Int))))
+	require.Zero(t, gBBS.G1Y.Cmp(want.Y.BigInt(new(big.Int))))
+
+	p := pp.DefaultPublicParams()
+	p.LegacyDLogPublicParams, err = bbs.Serialize()
+	require.NoError(t, err)
+	fromPP, err := setup.MigrationGenerators(p)
+	require.NoError(t, err)
+	require.Equal(t, gBBS, fromPP)
+
+	_, err = setup.PedersenGeneratorCoordsFromDLog(nil)
+	require.Error(t, err)
+
+	bn, _, err := dlogpp.New(mathlib.BN254)
+	require.NoError(t, err)
+	_, err = setup.PedersenGeneratorCoordsFromDLog(bn)
+	require.Error(t, err, "BN254 ZKAT-DLOG generators cannot be opened by the migration circuit")
+
+	short := *bbs
+	short.PedersenGenerators = bbs.PedersenGenerators[:2]
+	_, err = setup.PedersenGeneratorCoordsFromDLog(&short)
+	require.Error(t, err)
+}
+
+// TestCompileMigrationCircuit_RejectsBN254AndPlonkFRI checks that the
+// migration circuit is only compiled over the BLS12-381 scalar field, and not
+// with plonkfri.
+func TestCompileMigrationCircuit_RejectsBN254AndPlonkFRI(t *testing.T) {
+	p := pp.DefaultPublicParams()
+	p.Curve = ecc.BN254
+	_, err := setup.CompileMigrationCircuit(p, dummyGens())
+	require.Error(t, err)
+
+	p = pp.DefaultPublicParams()
+	p.ProofSystem = "plonkfri"
+	_, err = setup.CompileMigrationCircuit(p, dummyGens())
+	require.Error(t, err)
+
+	p = pp.DefaultPublicParams()
+	_, err = setup.CompileMigrationCircuit(p, setup.PedersenGeneratorCoords{})
+	require.Error(t, err, "missing generators")
 }
 
 func TestSetupAll_OutputCircuitError(t *testing.T) {
@@ -343,7 +418,9 @@ func TestCompileMigrationCircuit_UnsupportedProofSystem_Error(t *testing.T) {
 func TestSetupMigration_UnsupportedProofSystem_Error(t *testing.T) {
 	p := pp.DefaultPublicParams()
 	p.ProofSystem = "invalid"
-	_, err := setup.SetupMigration(p, dummyGens())
+	_, err := dlogpp.Embed(p, dlogpp.DefaultCurve)
+	require.NoError(t, err)
+	_, err = setup.SetupMigration(p)
 	require.Error(t, err)
 }
 

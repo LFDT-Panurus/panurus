@@ -179,6 +179,11 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 	spendProver := prover.NewSpendProver(proverParams)
 	outputProver := prover.NewOutputProver(proverParams)
 	orchestrator := prover.NewOrchestrator(spendProver, outputProver)
+	if migrationProver, err := newMigrationProver(ppp, proverParams); err != nil {
+		return nil, errors.WithMessagef(err, "failed to initialize ZKAT-DLOG upgrades")
+	} else if migrationProver != nil {
+		orchestrator.SetMigrationProver(migrationProver)
+	}
 
 	tokensService, tokensUpgradeService, err := NewTokensServices(logger, ppm, deserializer, ip)
 	if err != nil {
@@ -225,7 +230,9 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 // NewTokensServices builds the TokensService and the TokensUpgradeService of a
 // zkatsnark TMS, exactly as NewTokenService wires them: the upgrade service is
 // eligible for exactly the fabtoken formats the tokens service does not spend
-// in place, so each fabtoken format takes exactly one upgrade path.
+// in place, so each fabtoken format takes exactly one upgrade path. ZKAT-DLOG
+// outputs of the embedded ZKAT-DLOG generation, if any, are only eligible for
+// the upgrade service.
 func NewTokensServices(
 	logger logging.Logger,
 	ppm common.PublicParametersManager[*pp.PublicParams],
@@ -236,7 +243,11 @@ func NewTokensServices(
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "failed to initialize token service")
 	}
-	tokensUpgradeService, err := token.NewTokensUpgradeService(logger, ppm.PublicParams().PrecisionValue, deserializer, identityProvider, tokensService.SupportedTokenFormats())
+	resolver, err := legacyDLogResolver(ppm.PublicParams())
+	if err != nil {
+		return nil, nil, errors.WithMessagef(err, "invalid ZKAT-DLOG public parameters")
+	}
+	tokensUpgradeService, err := token.NewTokensUpgradeService(logger, ppm.PublicParams().PrecisionValue, deserializer, identityProvider, tokensService.SupportedTokenFormats(), resolver)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "failed to initialize token upgrade service")
 	}

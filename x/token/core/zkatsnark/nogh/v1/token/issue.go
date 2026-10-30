@@ -92,9 +92,12 @@ func (o *OutputDescription) GetOwner() []byte {
 // IssueAction represents the creation of one or more new tokens.
 //
 // There are no SpendDescriptions: a plain issuance consumes nothing. An
-// upgrade issuance (burn-and-re-issue of legacy fabtoken outputs) lists the
-// redeemed fabtokens in Inputs and reveals TypeRandomness, so that the
-// validator can bind the minted type and value to the redeemed ones. The binding
+// upgrade issuance (burn-and-re-issue of legacy fabtoken or ZKAT-DLOG outputs)
+// lists the redeemed tokens in Inputs and reveals TypeRandomness, so that the
+// validator can bind the minted type and value to the redeemed ones. For
+// ZKAT-DLOG inputs the values stay hidden: each input carries a migration
+// proof, TotalValue is zero, and the binding signature conserves value between
+// the inputs' and the outputs' value commitments. The binding
 // signature's signing key is bsk = −Σrcv_out (no input RCVs to add), and it
 // attests that every output's value commitment is correctly formed, not
 // that any conservation equation holds — there is nothing to conserve
@@ -111,7 +114,8 @@ type IssueAction struct {
 	TotalValue       []byte
 	limits           *driver.ResourceLimits
 	Metadata         map[string][]byte `json:"Metadata,omitempty"` // action metadata, set from the issue options
-	// Inputs are the legacy fabtoken outputs redeemed by an upgrade issuance; empty otherwise.
+	// Inputs are the legacy fabtoken or ZKAT-DLOG outputs redeemed by an
+	// upgrade issuance, all of the same kind; empty otherwise.
 	Inputs []*IssueActionInput `json:"Inputs,omitempty"`
 	// TypeRandomness opens TypeCommitment. It is set if and only if Inputs is
 	// non-empty: the token type is then already public through the inputs.
@@ -161,7 +165,40 @@ func (a *IssueAction) validateInputs() error {
 		seen[in.ID] = struct{}{}
 	}
 
+	return a.CheckUpgradeInputKinds()
+}
+
+// CheckUpgradeInputKinds checks that the inputs are all fabtoken outputs or
+// all ZKAT-DLOG outputs, never a mix, and that an input carries a migration
+// proof if and only if it is a ZKAT-DLOG output. Nil inputs are reported as
+// incomplete.
+func (a *IssueAction) CheckUpgradeInputKinds() error {
+	dlogUpgrade := a.IsDLogUpgrade()
+	for i, in := range a.Inputs {
+		if in == nil {
+			return errors.Wrapf(ErrInvalidUpgradeInput, "input [%d] is nil or incomplete", i)
+		}
+		dlog := IsDLogOutput(in.Token)
+		if dlog != dlogUpgrade {
+			return errors.Wrapf(ErrInvalidUpgradeInput, "input [%d] mixes fabtoken and ZKAT-DLOG inputs", i)
+		}
+		if dlog != (in.Migration != nil) {
+			if dlog {
+				return errors.Wrapf(ErrInvalidUpgradeInput, "ZKAT-DLOG input [%d] has no migration proof", i)
+			}
+
+			return errors.Wrapf(ErrInvalidUpgradeInput, "fabtoken input [%d] carries a migration proof", i)
+		}
+	}
+
 	return nil
+}
+
+// IsDLogUpgrade reports whether the action is an upgrade issuance of ZKAT-DLOG
+// outputs, that is, whether its first input is a ZKAT-DLOG output.
+// validateInputs enforces that every other input is of the same kind.
+func (a *IssueAction) IsDLogUpgrade() bool {
+	return len(a.Inputs) != 0 && a.Inputs[0] != nil && IsDLogOutput(a.Inputs[0].Token)
 }
 
 // ── driver.ActionWithInputs ────────────────────────────────────────────────────
@@ -238,9 +275,18 @@ func (a *IssueAction) Serialize() ([]byte, error) {
 		if in == nil {
 			return nil, errors.Errorf("nil input at index [%d]", i)
 		}
+		var migration *snarkactions.MigrationDescription
+		if in.Migration != nil {
+			migration = &snarkactions.MigrationDescription{
+				ValueCommitInX: in.Migration.ValueCommitInX,
+				ValueCommitInY: in.Migration.ValueCommitInY,
+				MigrationProof: in.Migration.MigrationProof,
+			}
+		}
 		inputs = append(inputs, &snarkactions.IssueActionInput{
-			Id:    &protosv1.TokenID{TxId: in.ID.TxId, Index: in.ID.Index},
-			Token: in.Token,
+			Id:        &protosv1.TokenID{TxId: in.ID.TxId, Index: in.ID.Index},
+			Token:     in.Token,
+			Migration: migration,
 		})
 	}
 
@@ -288,6 +334,13 @@ func (a *IssueAction) Deserialize(raw []byte) error {
 			a.Inputs[i] = &IssueActionInput{
 				ID:    token2.ID{TxId: in.Id.TxId, Index: in.Id.Index},
 				Token: in.Token,
+			}
+			if in.Migration != nil {
+				a.Inputs[i].Migration = &MigrationDescription{
+					ValueCommitInX: in.Migration.ValueCommitInX,
+					ValueCommitInY: in.Migration.ValueCommitInY,
+					MigrationProof: in.Migration.MigrationProof,
+				}
 			}
 		}
 	}

@@ -9,7 +9,6 @@ import (
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/witness"
 	"github.com/consensys/gnark/frontend"
-	"github.com/consensys/gnark/std/math/emulated"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/circuit"
@@ -54,34 +53,6 @@ func publicWitnessForOutput(d decodedOutput, curve ecc.ID) (witness.Witness, err
 	w, err := frontend.NewWitness(assignment, curve.ScalarField(), frontend.PublicOnly())
 	if err != nil {
 		return nil, errors.Wrapf(err, "validator: building output public witness")
-	}
-
-	return w, nil
-}
-
-// publicWitnessForMigration builds a public-only witness for
-// MigrationCircuit from decoded field elements.
-//
-// Only the six gnark:",public" fields are populated (CommitmentPedersenX/Y,
-// CommitmentMiMC, ValueCommitOutX/Y, TypeCommitment). Every private field
-// (Value, TokenTypePed, RandomnessPed, RandomnessNew, RCV) and every
-// compile-time-only field (MaxBits, PedG0X/Y, PedG1X/Y, PedG2X/Y,
-// GenVX/Y, GenRX/Y) is left at its zero value. frontend.PublicOnly() only
-// reads gnark:",public"-tagged frontend.Variable (and emulated.Element)
-// fields via reflection — it never dereferences the *big.Int compile-time
-// fields, so leaving them nil is safe here.
-func publicWitnessForMigration(d decodedMigration, curve ecc.ID) (witness.Witness, error) {
-	assignment := &circuit.MigrationCircuit{
-		CommitmentPedersenX: emulated.ValueOf[emulated.BLS12381Fp](d.PedersenX),
-		CommitmentPedersenY: emulated.ValueOf[emulated.BLS12381Fp](d.PedersenY),
-		CommitmentMiMC:      d.CommitmentMiMC,
-		ValueCommitOutX:     d.ValueCommitX,
-		ValueCommitOutY:     d.ValueCommitY,
-		TypeCommitment:      d.TypeCommitment,
-	}
-	w, err := frontend.NewWitness(assignment, curve.ScalarField(), frontend.PublicOnly())
-	if err != nil {
-		return nil, errors.Wrapf(err, "validator: building migration public witness")
 	}
 
 	return w, nil
@@ -151,26 +122,6 @@ func verifyAllProofs(
 		if o := <-ch; o.err != nil {
 			return o.err
 		}
-	}
-
-	return nil
-}
-
-// verifyMigrationProof verifies a single MigrationAction's proof against
-// the already-prepared migration verifying key. Callers must check
-// v.VKMigration() != nil first (ValidateMigration does, returning
-// ErrMigrationNotConfigured otherwise).
-func verifyMigrationProof(
-	v *prepared.Verifier,
-	proofBytes []byte,
-	decoded decodedMigration,
-) error {
-	pw, err := publicWitnessForMigration(decoded, v.PP().Curve)
-	if err != nil {
-		return err
-	}
-	if err := v.Backend().Verify(v.VKMigration(), proofBytes, pw); err != nil {
-		return errors.Wrapf(ErrInvalidProof, "%s", err)
 	}
 
 	return nil

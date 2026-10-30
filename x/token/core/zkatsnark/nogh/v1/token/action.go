@@ -11,4 +11,8 @@ package token
 const (
 	ActionTypeIssue    = "issue"
 	ActionTypeTransfer = "transfer"
+	// ActionTypeIssueMigration domain-separates the binding signature of an
+	// upgrade issuance of ZKAT-DLOG outputs, which conserves value between the
+	// migration value commitments and the outputs.
+	ActionTypeIssueMigration = "issue-migration"
 )

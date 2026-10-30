@@ -7,18 +7,17 @@ package prover_test
 
 import (
 	"context"
-	"crypto/sha256"
 	"math/big"
 	"testing"
 
+	"github.com/consensys/gnark-crypto/ecc"
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/stretchr/testify/require"
 
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prepared"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prover"
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/setup"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/token"
 )
 
@@ -44,161 +43,70 @@ func randomCanonicalFr(t *testing.T) []byte {
 	return b[:]
 }
 
-func computeValidPedersenCommit(t *testing.T, value uint64, tokenType string, blindingFactor []byte) []byte {
+func validOpening(t *testing.T) *snarktoken.DLogOpening {
 	t.Helper()
-	gens := prover.DefaultPedersenGeneratorCoords()
 
-	var g0, g1, g2 bls12381.G1Affine
-	g0.X.SetBigInt(gens.G0X)
-	g0.Y.SetBigInt(gens.G0Y)
-	g1.X.SetBigInt(gens.G1X)
-	g1.Y.SetBigInt(gens.G1Y)
-	g2.X.SetBigInt(gens.G2X)
-	g2.Y.SetBigInt(gens.G2Y)
-
-	var vBig big.Int
-	vBig.SetUint64(value)
-
-	h := sha256.Sum256([]byte(tokenType))
-	var tBig big.Int
-	tBig.SetBytes(h[:])
-	tBig.Mod(&tBig, fr.Modulus())
-
-	var rBig big.Int
-	rBig.SetBytes(blindingFactor)
-
-	var p0, p1, p2 bls12381.G1Jac
-	p0.FromAffine(&g0).ScalarMultiplication(&p0, &tBig)
-	p1.FromAffine(&g1).ScalarMultiplication(&p1, &vBig)
-	p2.FromAffine(&g2).ScalarMultiplication(&p2, &rBig)
-
-	var result bls12381.G1Jac
-	result.Set(&p0).AddAssign(&p1).AddAssign(&p2)
-
-	var resAffine bls12381.G1Affine
-	resAffine.FromJacobian(&result)
-
-	raw := resAffine.RawBytes()
-
-	return raw[:]
+	return &snarktoken.DLogOpening{
+		DLogInput:      snarktoken.DLogInput{Owner: []byte("alice"), PedersenXY: onCurveG1Bytes(t)},
+		Type:           "USD",
+		Value:          100,
+		BlindingFactor: randomCanonicalFr(t),
+	}
 }
-
-// ── BuildMigrationWitness ─────────────────────────────────────────────────────
 
 func TestBuildMigrationWitness_Basic(t *testing.T) {
-	opening := snarktoken.PedersenOpening{
-		Value:           100,
-		TokenType:       "USD",
-		BlindingFactor:  randomCanonicalFr(t),
-		CommitmentBytes: onCurveG1Bytes(t),
-	}
-
-	tr := randomCanonicalFr(t)
-
 	p := pp.DefaultPublicParams()
-	res, err := prover.BuildMigrationWitness(opening, p, tr)
+	opening := validOpening(t)
+	w, err := prover.BuildMigrationWitness(opening, p)
 	require.NoError(t, err)
-	require.NotNil(t, res)
-	require.NotNil(t, res.Note)
-	require.Equal(t, opening.Value, res.Note.Value)
-	require.Equal(t, opening.TokenType, res.Note.TokenType)
+	require.Len(t, w.RCV, 32)
+	require.Len(t, w.ValueCommitmentX, 32)
+	require.Len(t, w.ValueCommitmentY, 32)
+	require.Equal(t, opening.PedersenXY, w.PedersenXY)
+	require.Equal(t, 0, snarktoken.TokenTypePed("USD").Cmp(w.Assignment.TokenTypePed.(*big.Int)),
+		"the public type scalar is the ZKAT-DLOG encoding of the opened type")
 }
 
-func TestBuildMigrationWitness_EmptyTokenType_Error(t *testing.T) {
-	opening := snarktoken.PedersenOpening{
-		Value:           100,
-		TokenType:       "", // invalid
-		BlindingFactor:  randomCanonicalFr(t),
-		CommitmentBytes: onCurveG1Bytes(t),
+func TestBuildMigrationWitness_Rejections(t *testing.T) {
+	nonCanonical := make([]byte, 32)
+	for i := range nonCanonical {
+		nonCanonical[i] = 0xFF
 	}
-
-	tr := randomCanonicalFr(t)
-
-	p := pp.DefaultPublicParams()
-	_, err := prover.BuildMigrationWitness(opening, p, tr)
-	require.Error(t, err, "empty TokenType must be rejected by PedersenOpening.Validate()")
-}
-
-func TestBuildMigrationWitness_EmptyBlindingFactor_Error(t *testing.T) {
-	opening := snarktoken.PedersenOpening{
-		Value:           100,
-		TokenType:       "USD",
-		BlindingFactor:  nil, // invalid
-		CommitmentBytes: onCurveG1Bytes(t),
+	tests := []struct {
+		name   string
+		mutate func(o *snarktoken.DLogOpening, p *pp.PublicParams)
+	}{
+		{"empty type", func(o *snarktoken.DLogOpening, _ *pp.PublicParams) { o.Type = "" }},
+		{"zero value", func(o *snarktoken.DLogOpening, _ *pp.PublicParams) { o.Value = 0 }},
+		{"value above MaxTokenValue", func(o *snarktoken.DLogOpening, p *pp.PublicParams) {
+			p.MaxBits = 8
+			o.Value = 256
+		}},
+		{"empty blinding factor", func(o *snarktoken.DLogOpening, _ *pp.PublicParams) { o.BlindingFactor = nil }},
+		{"non-canonical blinding factor", func(o *snarktoken.DLogOpening, _ *pp.PublicParams) { o.BlindingFactor = nonCanonical }},
+		{"short commitment", func(o *snarktoken.DLogOpening, _ *pp.PublicParams) { o.PedersenXY = o.PedersenXY[:95] }},
+		{"commitment off curve", func(o *snarktoken.DLogOpening, _ *pp.PublicParams) {
+			o.PedersenXY = append([]byte(nil), o.PedersenXY...)
+			o.PedersenXY[95] ^= 1
+		}},
+		{"BN254 zkatsnark curve", func(_ *snarktoken.DLogOpening, p *pp.PublicParams) { p.Curve = ecc.BN254 }},
 	}
-
-	tr := randomCanonicalFr(t)
-
-	p := pp.DefaultPublicParams()
-	_, err := prover.BuildMigrationWitness(opening, p, tr)
-	require.Error(t, err, "nil BlindingFactor must be rejected by PedersenOpening.Validate()")
-}
-
-func TestBuildMigrationWitness_NonCanonicalBlindingFactor_Error(t *testing.T) {
-	// All-0xFF exceeds the BLS12-381 Fr modulus, SetBytesCanonical must reject it.
-	badBF := make([]byte, 32)
-	for i := range badBF {
-		badBF[i] = 0xFF
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := pp.DefaultPublicParams()
+			o := validOpening(t)
+			tc.mutate(o, p)
+			_, err := prover.BuildMigrationWitness(o, p)
+			require.Error(t, err)
+		})
 	}
-
-	opening := snarktoken.PedersenOpening{
-		Value:           100,
-		TokenType:       "USD",
-		BlindingFactor:  badBF,
-		CommitmentBytes: onCurveG1Bytes(t),
-	}
-
-	tr := randomCanonicalFr(t)
-
-	p := pp.DefaultPublicParams()
-	_, err := prover.BuildMigrationWitness(opening, p, tr)
-	require.Error(t, err, "a non-canonical blinding factor must be rejected")
+	_, err := prover.BuildMigrationWitness(nil, pp.DefaultPublicParams())
+	require.Error(t, err)
 }
 
-func TestBuildMigrationWitness_GarbageCommitmentBytes_Error(t *testing.T) {
-	opening := snarktoken.PedersenOpening{
-		Value:           100,
-		TokenType:       "USD",
-		BlindingFactor:  randomCanonicalFr(t),
-		CommitmentBytes: []byte("not a valid G1 point at all"),
-	}
-
-	tr := randomCanonicalFr(t)
-
-	p := pp.DefaultPublicParams()
-	_, err := prover.BuildMigrationWitness(opening, p, tr)
-	require.Error(t, err, "garbage commitment bytes must be rejected")
-}
-
-// ── DefaultPedersenGeneratorCoords / PedersenGeneratorCoordsFrom ──────────────
-
-func TestDefaultPedersenGeneratorCoords_Deterministic(t *testing.T) {
-	g1 := prover.DefaultPedersenGeneratorCoords()
-	g2 := prover.DefaultPedersenGeneratorCoords()
-
-	require.Equal(t, 0, g1.G0X.Cmp(g2.G0X), "G0X must be deterministic")
-	require.Equal(t, 0, g1.G0Y.Cmp(g2.G0Y), "G0Y must be deterministic")
-	require.Equal(t, 0, g1.G1X.Cmp(g2.G1X), "G1X must be deterministic")
-	require.Equal(t, 0, g1.G1Y.Cmp(g2.G1Y), "G1Y must be deterministic")
-	require.Equal(t, 0, g1.G2X.Cmp(g2.G2X), "G2X must be deterministic")
-	require.Equal(t, 0, g1.G2Y.Cmp(g2.G2Y), "G2Y must be deterministic")
-}
-
-func TestPedersenGeneratorCoordsFrom_DifferentDrivers_DifferentCoords(t *testing.T) {
-	g1 := prover.PedersenGeneratorCoordsFrom("driver-alpha", 1)
-	g2 := prover.PedersenGeneratorCoordsFrom("driver-beta", 1)
-
-	// At least one coordinate pair must differ.
-	require.NotEqual(t, 0, g1.G0X.Cmp(g2.G0X),
-		"different driver names must produce different Pedersen generators")
-}
-
-func TestPedersenGeneratorCoordsFrom_DifferentVersions_DifferentCoords(t *testing.T) {
-	g1 := prover.PedersenGeneratorCoordsFrom("zkatdlognogh", 1)
-	g2 := prover.PedersenGeneratorCoordsFrom("zkatdlognogh", 2)
-
-	require.NotEqual(t, 0, g1.G0X.Cmp(g2.G0X),
-		"different driver versions must produce different Pedersen generators")
+func TestNewMigrationProver_RequiresMigrationKey(t *testing.T) {
+	_, err := prover.NewMigrationProver(nil)
+	require.Error(t, err)
 }
 
 // ── Orchestrator error paths ──────────────────────────────────────────────────
@@ -233,74 +141,19 @@ func TestOrchestrator_BuildIssueAction_NoOutputs(t *testing.T) {
 	require.Error(t, err, "zero outputs must be rejected")
 }
 
-func TestOrchestrator_BuildMigrationAction_NoProver(t *testing.T) {
-	setupProvers(t)
-	// Create an orchestrator WITHOUT a migration prover.
-	o := prover.NewOrchestrator(spendProver, outputProver)
-
-	_, _, err := o.BuildMigrationAction(
-		context.Background(),
-		[]prover.MigrationRequest{{
-			Opening: snarktoken.PedersenOpening{
-				Value:           100,
-				TokenType:       "USD",
-				BlindingFactor:  randomCanonicalFr(t),
-				CommitmentBytes: onCurveG1Bytes(t),
-			},
-			Recipient: []byte("alice"),
-		}},
-		testPP,
-	)
-	require.Error(t, err, "orchestrator without migration prover must return error")
-}
-
-func TestOrchestrator_BuildMigrationAction_NoRequests(t *testing.T) {
-	setupProvers(t)
-	o := prover.NewOrchestrator(spendProver, outputProver)
-
-	_, _, err := o.BuildMigrationAction(context.Background(), nil, testPP)
-	require.Error(t, err, "empty migration request list must be rejected")
-}
-
-func TestOrchestrator_BuildMigrationAction_Valid(t *testing.T) {
+// TestOrchestrator_BuildDLogUpgradeIssueAction_Rejections covers the checks
+// that run before any proving.
+func TestOrchestrator_BuildDLogUpgradeIssueAction_Rejections(t *testing.T) {
 	p := pp.DefaultPublicParams()
-	gens := prover.DefaultPedersenGeneratorCoords()
-
-	p, err := setup.SetupAll(p)
-	require.NoError(t, err)
-	p, err = setup.SetupMigration(p, gens)
-	require.NoError(t, err)
-
-	proverParams, err := prepared.NewProver(p)
-	require.NoError(t, err)
-	proverParams, err = proverParams.WithMigration(gens)
-	require.NoError(t, err)
-
-	migProver, err := prover.NewMigrationProver(proverParams)
-	require.NoError(t, err)
-
+	in := prover.DLogUpgradeInput{ID: token2.ID{TxId: "tx", Index: 0}, Token: []byte("tok"), Opening: validOpening(t)}
+	out := prover.OutputRequest{Value: 100, TokenType: "USD", Recipient: []byte("bob")}
 	o := prover.NewOrchestrator(nil, nil)
-	o.SetMigrationProver(migProver)
 
-	bf := randomCanonicalFr(t)
-	commitBytes := computeValidPedersenCommit(t, 100, "USD", bf)
+	_, _, err := o.BuildDLogUpgradeIssueAction(context.Background(), []byte("issuer"), []prover.DLogUpgradeInput{in}, []prover.OutputRequest{out}, "USD", p, nil)
+	require.ErrorContains(t, err, "migration prover not configured")
 
-	opening := snarktoken.PedersenOpening{
-		Value:           100,
-		TokenType:       "USD",
-		BlindingFactor:  bf,
-		CommitmentBytes: commitBytes,
-	}
-
-	actions, notes, err := o.BuildMigrationAction(
-		context.Background(),
-		[]prover.MigrationRequest{{
-			Opening:   opening,
-			Recipient: []byte("alice"),
-		}},
-		p,
-	)
-	require.NoError(t, err)
-	require.Len(t, actions, 1)
-	require.Len(t, notes, 1)
+	_, _, err = o.BuildDLogUpgradeIssueAction(context.Background(), []byte("issuer"), nil, []prover.OutputRequest{out}, "USD", p, nil)
+	require.Error(t, err, "no inputs")
+	_, _, err = o.BuildDLogUpgradeIssueAction(context.Background(), []byte("issuer"), []prover.DLogUpgradeInput{in}, nil, "USD", p, nil)
+	require.Error(t, err, "no outputs")
 }

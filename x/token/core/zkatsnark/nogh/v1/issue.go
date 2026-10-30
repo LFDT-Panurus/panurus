@@ -135,6 +135,20 @@ func (s *IssueService) upgrade(ctx context.Context, owners [][]byte, opts *drive
 		return nil, nil, errors.WithMessagef(err, "upgrade: invalid tokens upgrade request")
 	}
 
+	// one action redeems a single kind of token: all fabtoken, or all ZKAT-DLOG
+	dlog := 0
+	for _, tok := range request.Tokens {
+		if snarktoken.IsDLogOutput(tok.Token) {
+			dlog++
+		}
+	}
+	switch {
+	case dlog == len(request.Tokens):
+		return s.upgradeDLog(ctx, owners[0], opts)
+	case dlog != 0:
+		return nil, nil, errors.New("upgrade: cannot mix fabtoken and ZKAT-DLOG tokens in one upgrade")
+	}
+
 	inputs := make([]*snarktoken.IssueActionInput, len(request.Tokens))
 	for i, tok := range request.Tokens {
 		inputs[i] = &snarktoken.IssueActionInput{ID: tok.ID, Token: tok.Token}

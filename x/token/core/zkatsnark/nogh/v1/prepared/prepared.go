@@ -153,7 +153,7 @@ func NewVerifierFrom(base *Params) (*Verifier, error) {
 	switch {
 	case errors.Is(err, setup.ErrMissingKey):
 		// No migration verifying key configured for this deployment. Leave
-		// vkMigration nil; ValidateMigration fails closed with
+		// vkMigration nil; ZKAT-DLOG upgrade issuances fail closed with
 		// ErrMigrationNotConfigured.
 	case err != nil:
 		return nil, errors.Wrapf(err, "prepared: loading migration verifying key")
@@ -165,17 +165,21 @@ func NewVerifierFrom(base *Params) (*Verifier, error) {
 }
 
 // WithMigration returns a copy of v additionally holding the compiled
-// migration circuit and the migration verifying key. Returns an error if
-// p's public parameters carry no migration verifying key at all (absent is
+// migration circuit and the migration verifying key. The circuit is compiled
+// with the Pedersen generators of the ZKAT-DLOG public parameters embedded in
+// the public parameters. Returns an error if the public parameters carry no
+// migration verifying key or no ZKAT-DLOG public parameters (absent is
 // tolerated by NewVerifier/NewVerifierFrom for the default, non-migration
 // deployment; a caller that explicitly asks for migration support wants a
 // hard error when it is unavailable).
-func (v *Verifier) WithMigration(gens setup.PedersenGeneratorCoords) (*Verifier, error) {
+//
+// The validator does not need it: verification only uses the verifying key.
+func (v *Verifier) WithMigration() (*Verifier, error) {
 	if v.vkMigration == nil {
 		return nil, errors.Wrapf(setup.ErrMissingKey, "prepared: no migration verifying key configured")
 	}
 
-	migrationCS, err := setup.CompileMigrationCircuit(v.pp, gens)
+	migrationCS, err := compileMigration(v.pp)
 	if err != nil {
 		return nil, errors.Wrapf(err, "prepared: compiling migration circuit")
 	}
@@ -250,14 +254,16 @@ func NewProverFrom(base *Params) (*Prover, error) {
 }
 
 // WithMigration returns a copy of p additionally holding the compiled
-// migration circuit and the migration proving key. Returns an error if p's
-// public parameters carry no migration proving key at all.
-func (p *Prover) WithMigration(gens setup.PedersenGeneratorCoords) (*Prover, error) {
+// migration circuit and the migration proving key. The circuit is compiled
+// with the Pedersen generators of the ZKAT-DLOG public parameters embedded in
+// the public parameters. Returns an error if the public parameters carry no
+// migration proving key or no ZKAT-DLOG public parameters.
+func (p *Prover) WithMigration() (*Prover, error) {
 	if p.pkMigration == nil {
 		return nil, errors.Wrapf(setup.ErrMissingKey, "prepared: no migration proving key configured")
 	}
 
-	migrationCS, err := setup.CompileMigrationCircuit(p.pp, gens)
+	migrationCS, err := compileMigration(p.pp)
 	if err != nil {
 		return nil, errors.Wrapf(err, "prepared: compiling migration circuit")
 	}
@@ -271,6 +277,17 @@ func (p *Prover) WithMigration(gens setup.PedersenGeneratorCoords) (*Prover, err
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+
+// compileMigration compiles the migration circuit with the Pedersen generators
+// of the ZKAT-DLOG public parameters embedded in p.
+func compileMigration(p *pp.PublicParams) (constraint.ConstraintSystem, error) {
+	gens, err := setup.MigrationGenerators(p)
+	if err != nil {
+		return nil, err
+	}
+
+	return setup.CompileMigrationCircuit(p, gens)
+}
 
 func loadVerifyingKey(base *Params, name setup.CircuitName) (*backend.VerifyingKey, error) {
 	raw, err := setup.LoadVerifyingKeyBytes(base.pp, name)
