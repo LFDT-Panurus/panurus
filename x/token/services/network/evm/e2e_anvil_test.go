@@ -1259,6 +1259,7 @@ func TestTransferMetadataRoundTripAgainstAnvil(t *testing.T) {
 // anvilFixture is one TMS deployed on a fresh anvil node and wired through NewNetwork, with every
 // configuration default left as production has it unless the caller changes it.
 type anvilFixture struct {
+	endpoint   string
 	client     client.EVMClient
 	network    *Network
 	signer     *eip712.Signer
@@ -1297,7 +1298,9 @@ func newAnvilFixture(t *testing.T, configure func(*Config)) *anvilFixture {
 		[]NamespaceConfig{{Namespace: "token", Config: cfg, Submitter: submitter}}, nil, nil)
 	require.NoError(t, err)
 
-	return &anvilFixture{client: evmClient, network: n, signer: signer, tokenState: tokenState, pp: pp}
+	return &anvilFixture{
+		endpoint: endpoint, client: evmClient, network: n, signer: signer, tokenState: tokenState, pp: pp,
+	}
 }
 
 // issue builds an endorsed envelope creating one token, under a fresh anchor derived from creator.
@@ -1421,4 +1424,75 @@ func TestTwoTMSSharingASubmitterAgainstAnvil(t *testing.T) {
 		require.NoError(t, send(ns, "tx-"+strconv.Itoa(i)),
 			"transaction %d on TMS %s must not collide with the other TMS's use of the account", i, ns)
 	}
+}
+
+// anvilRPC calls one of anvil's own control methods, such as evm_setAutomine or evm_mine.
+func anvilRPC(t *testing.T, endpoint, method string, params ...any) {
+	t.Helper()
+	if params == nil {
+		params = []any{}
+	}
+	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+	require.NoError(t, err)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, endpoint, bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	var out struct {
+		Error json.RawMessage `json:"error"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
+	require.Empty(t, out.Error, "%s failed", method)
+}
+
+// verdictListener hands the finality verdict, or the error, to a channel.
+type verdictListener struct {
+	status chan int
+	err    chan error
+}
+
+func newVerdictListener() *verdictListener {
+	return &verdictListener{status: make(chan int, 1), err: make(chan error, 1)}
+}
+
+func (l *verdictListener) OnStatus(_ context.Context, _ string, status int, _ string, _ []byte) {
+	l.status <- status
+}
+
+func (l *verdictListener) OnError(_ context.Context, _ string, err error) { l.err <- err }
+
+// TestTimedOutTransactionLandsLaterAgainstAnvil is a transaction still in the mempool when the
+// finality timeout expires. It used to be reported Invalid, and the token layer discarded it, and then
+// it was mined anyway. The timeout must give no verdict, and the transaction must read as applied once
+// it lands, so recovery can still confirm it.
+func TestTimedOutTransactionLandsLaterAgainstAnvil(t *testing.T) {
+	f := newAnvilFixture(t, func(cfg *Config) {
+		cfg.Finality.BlockTag = client.BlockTagLatest
+		cfg.Finality.Timeout = 2 * time.Second
+		cfg.Finality.PollInterval = 100 * time.Millisecond
+	})
+	binding, err := f.network.binding("token")
+	require.NoError(t, err)
+
+	anvilRPC(t, f.endpoint, "evm_setAutomine", false)
+	env := f.issue(t, "issuer-timed-out", []byte("alice-owns-100"))
+	require.NoError(t, f.network.Broadcast(t.Context(), env))
+
+	listener := newVerdictListener()
+	require.NoError(t, binding.finality.AddListener(t.Context(), env.Delta.Anchor, env.Anchor, listener))
+	select {
+	case status := <-listener.status:
+		t.Fatalf("the timeout gave a verdict (%d) for a transaction still in the mempool", status)
+	case err := <-listener.err:
+		assert.Contains(t, err.Error(), "may still land")
+	case <-time.After(10 * time.Second):
+		t.Fatal("the listener was never notified")
+	}
+
+	anvilRPC(t, f.endpoint, "evm_mine")
+	code, _, _, err := f.network.GetTransactionStatus(t.Context(), "token", env.Anchor)
+	require.NoError(t, err)
+	assert.Equal(t, driver.Valid, code, "the transaction landed after the timeout and must read as applied")
 }
