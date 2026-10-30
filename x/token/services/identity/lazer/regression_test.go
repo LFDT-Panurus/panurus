@@ -12,6 +12,7 @@ import (
 	"crypto/rand"
 	"encoding/asn1"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -173,8 +174,10 @@ func TestRegressionSignatureNotMalleable(t *testing.T) {
 
 // TestRegressionCloseConcurrentWithIdentity checks that Close may run while
 // identities are generated, signers are rebuilt and signatures are verified.
-// Run with -race: KeyManager.IsRemote used to read k.user without k.mu, while
-// Close wrote it under k.mu.
+// Run with -race: IsRemote, Identity, DeserializeSigner and Verify must not
+// race with Close, which releases the user state; afterwards the key manager
+// is still local, refuses to generate identities or rebuild signers, and
+// pools no verifier state.
 func TestRegressionCloseConcurrentWithIdentity(t *testing.T) {
 	w := newTestWallet(t, "alice")
 	ctx := context.Background()
@@ -622,6 +625,22 @@ func nymCoeffs(t *testing.T, nym []byte) []int64 {
 // solveAttribute recovers the attribute committed to by nym from its opening.
 func solveAttribute(t *testing.T, nym, opening []byte) []byte {
 	t.Helper()
+	m := solveEncoding(t, nym, opening)
+	// m_i = redc16(nibble): the nibble is m_i mod 16
+	attr := make([]byte, anoncreds.AttrLen)
+	for j := range attr {
+		hi, lo := uint8(((m[2*j]%16)+16)%16), uint8(((m[2*j+1]%16)+16)%16)
+		attr[j] = hi<<4 | lo
+	}
+
+	return attr
+}
+
+// solveEncoding recovers the encoding m (64 centered coefficients) of the
+// attribute committed to by nym from its opening: nym = a0*m + Ar*r is linear
+// in m.
+func solveEncoding(t *testing.T, nym, opening []byte) []int64 {
+	t.Helper()
 	const q, deg = 12289, 64
 	commit := func(attr []byte) []int64 {
 		c, err := anoncreds.CommitWithOpening(attr, opening)
@@ -658,15 +677,8 @@ func solveAttribute(t *testing.T, nym, opening []byte) []byte {
 			mat = append(mat, row)
 		}
 	}
-	m := gaussMod(t, mat, deg, q)
-	// m_i = redc16(nibble): the nibble is m_i mod 16
-	attr := make([]byte, anoncreds.AttrLen)
-	for j := range attr {
-		hi, lo := uint8(((m[2*j]%16)+16)%16), uint8(((m[2*j+1]%16)+16)%16)
-		attr[j] = hi<<4 | lo
-	}
 
-	return attr
+	return gaussMod(t, mat, deg, q)
 }
 
 // gaussMod solves the overdetermined system mat (n unknowns, last column the
@@ -765,4 +777,155 @@ func mustOpening(t *testing.T, c *anoncreds.Commitment) []byte {
 	require.NoError(t, err)
 
 	return opening
+}
+
+// TestSizesWithinStatedBounds checks the sizes stated in the documentation:
+// identity and nym 225 B, opening 1121 B, user state 1793 B, credential at most
+// 3000 B, signature about 53.4 KB, audit info about 75 KB and signer info about
+// 51 KB. The fixed sizes are exact; for the others the bounds are the maxima
+// the decoders accept and a band around the observed size, which varies with
+// the coins of the proofs by some tens of bytes.
+func TestSizesWithinStatedBounds(t *testing.T) {
+	// the encodings of fixed length, and the maxima
+	assert.Equal(t, 225, anoncreds.MaxLenNym())
+	assert.Equal(t, 1121, anoncreds.MaxLenOpening())
+	assert.Equal(t, 1793, anoncreds.MaxLenUserState())
+	assert.Equal(t, 3000, anoncreds.MaxLenCred())
+	assert.Equal(t, anoncreds.MaxLenPres()+anoncreds.MaxLenSok()+2*anoncreds.MaxLenNym()+64, maxSignatureLen)
+
+	w := newTestWallet(t, "alice")
+	for range 3 {
+		w.addWallet(t, "alice")
+		assert.LessOrEqual(t, len(w.signer.Cred), anoncreds.MaxLenCred(), "credential")
+		assert.Len(t, w.signer.Sk, anoncreds.AttrLen+anoncreds.MaxLenUserState(), "wallet secret: usk and user state")
+
+		d, err := w.km.Identity(t.Context(), nil)
+		require.NoError(t, err)
+		assert.Len(t, d.Identity, 225, "identity")
+		sigma, err := d.Signer.Sign([]byte("m"))
+		require.NoError(t, err)
+		sig, err := unmarshalSignature(sigma)
+		require.NoError(t, err)
+		assert.Len(t, sig.NymSK, 225, "nymSK")
+		assert.Len(t, sig.NymRH, 225, "nymRH")
+		ai, err := DeserializeAuditInfo(d.AuditInfo)
+		require.NoError(t, err)
+		assert.Len(t, ai.OpeningRH, 1121, "opening of nymRH")
+
+		for _, tc := range []struct {
+			name     string
+			n        int
+			min, max int
+		}{
+			// "about 53.4 KB", at most what unmarshalSignature accepts
+			{"signature", len(sigma), 53_000, min(54_000, maxSignatureLen)},
+			// "about 75 KB", at most what DeserializeAuditInfo accepts
+			{"audit info", len(d.AuditInfo), 74_000, min(76_000, maxAuditInfoLen)},
+			// "about 51 KB", at most what decodeSignerInfo accepts
+			{"signer info", len(d.SignerInfo), 50_000, min(52_000, maxSignerInfoLen)},
+			{"presentation", len(sig.Pres), 1, anoncreds.MaxLenPres()},
+			{"signature of knowledge", len(sig.Sok), 1, anoncreds.MaxLenSok()},
+		} {
+			assert.GreaterOrEqual(t, tc.n, tc.min, tc.name)
+			assert.LessOrEqual(t, tc.n, tc.max, tc.name)
+		}
+	}
+}
+
+// TestIssueSignerConfigAttemptCap checks the cap on the user secrets that
+// IssueSignerConfig (and so lazergen) samples: 1000.
+func TestIssueSignerConfigAttemptCap(t *testing.T) {
+	assert.Equal(t, 1000, maxAttrSamples)
+	_, err := sampleAttributes("ou", "role", "eid", "rh", maxAttrSamples, func([][]byte) (bool, error) { return false, nil })
+	require.ErrorContains(t, err, "after 1000 attempts")
+}
+
+// TestAttributeEncodingBoundAndInjective checks, on random attributes, the
+// properties of the attribute encoding the proofs rely on: each coefficient
+// of the encoding m of a 32-byte attribute is in [-7, 8], so ‖m‖₂ ≤ 64, and
+// distinct attributes have distinct encodings. The encoding is recovered from
+// a commitment and its opening (solveEncoding); AttrsOK accepts any five
+// attributes that fit the P1 bound ‖(m_0..m_4)‖₂ ≤ 91.
+func TestAttributeEncodingBoundAndInjective(t *testing.T) {
+	// fixed openings, so the solved system is the same for every attribute
+	c0, err := anoncreds.Commit(make([]byte, anoncreds.AttrLen))
+	require.NoError(t, err)
+	opening := mustOpening(t, c0)
+	c0.Clear()
+	encode := func(attr []byte) []int64 {
+		c, err := anoncreds.CommitWithOpening(attr, opening)
+		require.NoError(t, err)
+		defer c.Clear()
+
+		return solveEncoding(t, c.Nym, opening)
+	}
+
+	extreme := func(b byte) []byte { return bytes.Repeat([]byte{b}, anoncreds.AttrLen) }
+	samples := [][]byte{
+		make([]byte, anoncreds.AttrLen), // all zero
+		extreme(0x88),                   // every coefficient 8, the largest norm: 64
+		extreme(0x99),                   // every coefficient -7
+		extreme(0xff),                   // every coefficient -1
+	}
+	for range 60 {
+		samples = append(samples, randomAttr(t))
+	}
+	seen := map[string]int{}
+	for i, attr := range samples {
+		m := encode(attr)
+		require.Len(t, m, 2*anoncreds.AttrLen)
+		var l2sqr int64
+		for _, x := range m {
+			require.True(t, -7 <= x && x <= 8, "coefficient %d out of [-7, 8]", x)
+			l2sqr += x * x
+		}
+		assert.LessOrEqual(t, l2sqr, int64(64*64), "‖m‖₂ > 64 for sample %d", i)
+		// the encoding determines the attribute
+		require.Equal(t, attr, solveAttribute(t, mustCommitNym(t, attr, opening), opening))
+		key := string(encodingKey(m))
+		j, dup := seen[key]
+		require.False(t, dup && !bytes.Equal(samples[j], attr), "samples %d and %d have the same encoding", j, i)
+		seen[key] = i
+	}
+	assert.Equal(t, int64(64*64), func() int64 {
+		var s int64
+		for _, x := range encode(extreme(0x88)) {
+			s += x * x
+		}
+
+		return s
+	}(), "the bound ‖m‖₂ ≤ 64 is tight")
+
+	// AttrsOK, the P1 bound on all five attributes: all zero passes, all 0x88 does not
+	zero := make([][]byte, anoncreds.NAttrs)
+	big := make([][]byte, anoncreds.NAttrs)
+	for i := range zero {
+		zero[i], big[i] = make([]byte, anoncreds.AttrLen), extreme(0x88)
+	}
+	ok, err := anoncreds.AttrsOK(zero)
+	require.NoError(t, err)
+	assert.True(t, ok)
+	ok, err = anoncreds.AttrsOK(big)
+	require.NoError(t, err)
+	assert.False(t, ok, "5 x 64^2 exceeds 91^2")
+}
+
+// mustCommitNym returns the nym of the commitment to attr with opening.
+func mustCommitNym(t *testing.T, attr, opening []byte) []byte {
+	t.Helper()
+	c, err := anoncreds.CommitWithOpening(attr, opening)
+	require.NoError(t, err)
+	defer c.Clear()
+
+	return bytes.Clone(c.Nym)
+}
+
+// encodingKey returns v as a map key.
+func encodingKey(v []int64) []byte {
+	out := make([]byte, 0, 8*len(v))
+	for _, x := range v {
+		out = binary.LittleEndian.AppendUint64(out, uint64(x)) //nolint:gosec // a bijection, not an arithmetic conversion
+	}
+
+	return out
 }

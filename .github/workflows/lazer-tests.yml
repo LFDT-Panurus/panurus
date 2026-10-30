@@ -65,5 +65,19 @@ jobs:
       - name: Build and install lazer
         run: make lazer-install
 
+      # lazer-check compares the sha256 of every patch with .lazer/REVISION:
+      # an install built from another patch set must be refused.
+      - name: lazer-check refuses a changed patch set
+        run: |
+          patch_file=x/token/services/identity/lazer/patches/0006-tbox-fiat-shamir-h-z3-z4.patch
+          printf 'x' >> "$patch_file"
+          if make lazer-check; then
+            echo "lazer-check accepted a patch set that differs from the installed one"
+            git checkout -- "$patch_file"
+            exit 1
+          fi
+          git checkout -- "$patch_file"
+          make lazer-check
+
       - name: Run unit tests
         run: make lazer-test

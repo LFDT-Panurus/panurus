@@ -13,9 +13,9 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
-// Crafted inputs. Each targets a decoder that used to read past the end of
-// its input (lazer src/coder.c: the unary codes of the hints and of the
-// gaussian elements). Proofs start with a fixed-width part (tB, h, tA1, c),
+// Crafted inputs. Each targets a decoder that, without the bounds of lazer
+// patch 0001, reads past the end of its input (src/coder.c: the unary codes
+// of the hints and of the gaussian elements). Proofs start with a fixed-width part (tB, h, tA1, c),
 // which zero bytes decode, followed by the hints.
 
 // craftHintRun returns n zero bytes except for "11" at the first hint of a
