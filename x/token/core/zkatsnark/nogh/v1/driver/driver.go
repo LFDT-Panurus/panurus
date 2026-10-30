@@ -205,7 +205,6 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 		deserializer,
 		d.tracerProvider,
 		tokensService,
-		tokensService,
 		orchestrator,
 		val,
 	)

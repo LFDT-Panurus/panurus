@@ -17,11 +17,11 @@ package pp
 
 import (
 	"crypto/sha256"
-	"errors"
 	"fmt"
 
 	mathlib "github.com/IBM/mathlib"
 	"github.com/consensys/gnark-crypto/ecc"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
 
 	"github.com/LFDT-Panurus/panurus/token/core"
@@ -260,7 +260,7 @@ func (pp *PublicParams) Serialize() ([]byte, error) {
 		ExtraParams:            pp.ExtraParams,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("pp: serialize failed: %w", err)
+		return nil, errors.Wrap(err, "pp: serialize failed")
 	}
 
 	return pp3.Marshal(&pp2.PublicParameters{
@@ -275,12 +275,12 @@ func (pp *PublicParams) Serialize() ([]byte, error) {
 func DeserializePublicParams(raw []byte) (*PublicParams, error) {
 	container, err := pp3.Unmarshal(raw)
 	if err != nil {
-		return nil, fmt.Errorf("pp: deserialize failed: %w", err)
+		return nil, errors.Wrap(err, "pp: deserialize failed")
 	}
 
 	pb := &snarkpp.PublicParameters{}
 	if err := proto.Unmarshal(container.Raw, pb); err != nil {
-		return nil, fmt.Errorf("pp: deserialize failed: %w", err)
+		return nil, errors.Wrap(err, "pp: deserialize failed")
 	}
 
 	auditors := make([]driver.Identity, len(pb.AuditorIdentities))
@@ -333,7 +333,7 @@ func DeserializePublicParams(raw []byte) (*PublicParams, error) {
 	}
 
 	if err := p.Validate(); err != nil {
-		return nil, fmt.Errorf("pp: deserialized params failed validation: %w", err)
+		return nil, errors.Wrap(err, "pp: deserialized params failed validation")
 	}
 
 	return p, nil
@@ -355,32 +355,32 @@ func (pp *PublicParams) Validate() error {
 		return errors.New("pp: Label must not be empty")
 	}
 	if pp.SchemeVersion <= 0 {
-		return fmt.Errorf("pp: SchemeVersion must be positive, got %d", pp.SchemeVersion)
+		return errors.Errorf("pp: SchemeVersion must be positive, got %d", pp.SchemeVersion)
 	}
 	if pp.ProofSystem != "groth16" && pp.ProofSystem != "plonk" && pp.ProofSystem != "plonkfri" {
-		return fmt.Errorf("pp: unsupported ProofSystem %q", pp.ProofSystem)
+		return errors.Errorf("pp: unsupported ProofSystem %q", pp.ProofSystem)
 	}
 	if pp.Curve != ecc.BLS12_381 && pp.Curve != ecc.BN254 {
-		return fmt.Errorf("pp: unsupported Curve %s", pp.Curve)
+		return errors.Errorf("pp: unsupported Curve %s", pp.Curve)
 	}
 	if pp.ProofSystem == "plonkfri" && pp.Curve != ecc.BN254 {
-		return fmt.Errorf("pp: ProofSystem %q supports only Curve %s, got %s", pp.ProofSystem, ecc.BN254, pp.Curve)
+		return errors.Errorf("pp: ProofSystem %q supports only Curve %s, got %s", pp.ProofSystem, ecc.BN254, pp.Curve)
 	}
 	if pp.MaxBits <= 0 {
-		return fmt.Errorf("pp: MaxBits must be positive, got %d", pp.MaxBits)
+		return errors.Errorf("pp: MaxBits must be positive, got %d", pp.MaxBits)
 	}
 	if pp.MaxBits > params.MaxAllowedBits {
-		return fmt.Errorf("pp: MaxBits must be at most %d, got %d", params.MaxAllowedBits, pp.MaxBits)
+		return errors.Errorf("pp: MaxBits must be at most %d, got %d", params.MaxAllowedBits, pp.MaxBits)
 	}
 	if len(pp.IdemixIssuerPublicKeys) == 0 {
 		return errors.New("pp: expected at least one idemix issuer public key")
 	}
 	for i, key := range pp.IdemixIssuerPublicKeys {
 		if key == nil {
-			return fmt.Errorf("pp: idemix issuer public key at index %d is nil", i)
+			return errors.Errorf("pp: idemix issuer public key at index %d is nil", i)
 		}
 		if len(key.PublicKey) == 0 {
-			return fmt.Errorf("pp: idemix issuer public key at index %d has empty public key", i)
+			return errors.Errorf("pp: idemix issuer public key at index %d has empty public key", i)
 		}
 	}
 
