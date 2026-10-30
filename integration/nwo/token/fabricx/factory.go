@@ -108,7 +108,13 @@ func (t *installTask) result() error {
 	return t.err
 }
 
+// PrepareNamespace adds the token namespace of the passed TMS to its backend topology.
+// Transient TMSs are skipped, as the Fabric chaincode backend does: they share the namespace of a
+// non-transient TMS and only carry public parameters that a test installs later with UpdatePublicParams.
 func (b *Backend) PrepareNamespace(tms *tokentopology.TMS) {
+	if tms.Transient {
+		return
+	}
 	switch n := tms.BackendTopology.(type) {
 	case *fabrictopology.Topology:
 		orgs := fabric.GetOrgs(tms)
@@ -161,7 +167,13 @@ func addNamespace(n *fabrictopology.Topology, tms *tokentopology.TMS, orgs ...st
 // recording is kept and later ones are ignored. Two TMSs that collide on their ID (e.g. the
 // same network, channel, namespace and driver), or a re-run of the network bring-up, therefore
 // do not fail the run, and the first outcome stays observable.
+//
+// Transient TMSs are skipped and nothing is recorded for them, as the Fabric chaincode backend does:
+// their public parameters are installed by a later UpdatePublicParams (e.g. in the upgrade tests).
 func (b *Backend) InstallPublicParams(tms *tokentopology.TMS, ppRaw []byte) error {
+	if tms.Transient {
+		return nil
+	}
 	if b.ClientProvider == nil {
 		return errors.Errorf("no client provider available, cannot install public params on [%s]", tms.ID())
 	}

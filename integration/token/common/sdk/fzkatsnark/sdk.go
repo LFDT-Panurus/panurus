@@ -9,6 +9,7 @@ package fzkatsnark
 import (
 	"errors"
 
+	fabtoken "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/driver"
 	"github.com/LFDT-Panurus/panurus/token/sdk"
 	tokensdk "github.com/LFDT-Panurus/panurus/token/sdk/dig"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx"
@@ -39,12 +40,18 @@ func (p *SDK) FabricEnabled() bool {
 	return p.ConfigService().GetBool("fabric.enabled")
 }
 
+// Install registers the ZKAT-SNARK and fabtoken token/validator drivers and the fabricx network
+// services, then installs the wrapped SDK. The fabtoken drivers are needed by the fabtoken -> ZKAT-SNARK
+// upgrade scenarios, whose network starts with fabtoken public parameters; the driver in use is
+// selected by the public parameters, so the extra drivers are inert on pure ZKAT-SNARK networks.
 func (p *SDK) Install() error {
 	err := errors.Join(
 		// token driver
 		sdk.RegisterTokenDriverDependencies(p.Container()),
 		p.Container().Provide(zkatsnark.NewTokenDriver, dig.Group("token-drivers")),
 		p.Container().Provide(zkatsnark.NewValidatorDriver, dig.Group("validator-drivers")),
+		p.Container().Provide(fabtoken.NewTokenDriver, dig.Group("token-drivers")),
+		p.Container().Provide(fabtoken.NewValidatorDriver, dig.Group("validator-drivers")),
 
 		// fabricx
 		p.Container().Provide(fabricx.NewDriver, dig.Group("network-drivers")),

@@ -19,6 +19,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
 	gzkatsnarkv1 "github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatsnarkv1"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/model"
 	token3 "github.com/LFDT-Panurus/panurus/integration/token"
 	common2 "github.com/LFDT-Panurus/panurus/integration/token/common"
@@ -1289,8 +1290,17 @@ func TestStress(network *integration.Infrastructure, auditorId string, selector 
 	charlieTransferPool.Wait()
 }
 
+// TestTokensUpgrade runs TestTokensUpgradeWithAlias against the extra TMS with alias "dlog-32bits".
 func TestTokensUpgrade(network *integration.Infrastructure, auditorId string, onRestart OnRestartFunc, sel *token3.ReplicaSelector) {
-	// we start with fabtoken 16bits, performs a few operation, and then switch
+	TestTokensUpgradeWithAlias(network, auditorId, onRestart, sel, "dlog-32bits")
+}
+
+// TestTokensUpgradeWithAlias covers the issuer-mediated (burn-and-re-issue) upgrade of fabtoken tokens.
+// The network starts with the fabtoken driver; alice receives a token, then the public parameters are
+// switched to those of the extra TMS with the passed alias. The fabtoken token cannot be spent in place
+// under the new driver, so alice upgrades it with the issuer's help and then transfers it to bob.
+func TestTokensUpgradeWithAlias(network *integration.Infrastructure, auditorId string, onRestart OnRestartFunc, sel *token3.ReplicaSelector, alias topology.TMSAlias) {
+	// we start with fabtoken, perform a few operations, and then switch driver
 	auditor := sel.Get(auditorId)
 	issuer := sel.Get("issuer")
 	alice := sel.Get("alice")
@@ -1318,12 +1328,14 @@ func TestTokensUpgrade(network *integration.Infrastructure, auditorId string, on
 	CheckOwnerStore(network, nil, issuer, alice, bob, charlie, manager)
 	CheckAuditorStore(network, auditor, "", nil)
 
-	// switch to dlog 32bits, perform a few operations
-	tms := GetTMSByAlias(network, "dlog-32bits")
+	// switch to the TMS with the passed alias, perform a few operations
+	tms := GetTMSByAlias(network, alias)
 	ppBytes, err := os.ReadFile(tokenPlatform.PublicParametersFile(tms))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	gomega.Expect(ppBytes).NotTo(gomega.BeNil())
-	UpdatePublicParams(network, ppBytes, tms)
+	// wait for every node to pick the new public parameters up: on backends that propagate them
+	// asynchronously (e.g. fabricx), the checks below would otherwise run against the old driver
+	UpdatePublicParamsAndWait(network, ppBytes, tms, issuer, auditor, alice, bob, charlie, manager)
 
 	gomega.Eventually(DoesWalletExist).WithArguments(network, issuer, "", views.IssuerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
 	gomega.Eventually(DoesWalletExist).WithArguments(network, issuer, "pineapple", views.IssuerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeFalse())
@@ -1363,8 +1375,17 @@ func TestTokensUpgrade(network *integration.Infrastructure, auditorId string, on
 	CheckBalanceAndHolding(network, bob, "", "EUR", 110, auditor)
 }
 
+// TestLocalTokensUpgrade runs TestLocalTokensUpgradeWithAlias against the extra TMS with alias "dlog-32bits".
 func TestLocalTokensUpgrade(network *integration.Infrastructure, auditorId string, onRestart OnRestartFunc, sel *token3.ReplicaSelector) {
-	// we start with fabtoken 16bits, performs a few operation, and then switch
+	TestLocalTokensUpgradeWithAlias(network, auditorId, onRestart, sel, "dlog-32bits")
+}
+
+// TestLocalTokensUpgradeWithAlias covers the in-place upgrade of fabtoken tokens.
+// The network starts with the fabtoken driver; alice receives a token, then the public parameters are
+// switched to those of the extra TMS with the passed alias. The fabtoken token is spendable in place
+// under the new driver, so alice transfers it to bob without any upgrade step.
+func TestLocalTokensUpgradeWithAlias(network *integration.Infrastructure, auditorId string, onRestart OnRestartFunc, sel *token3.ReplicaSelector, alias topology.TMSAlias) {
+	// we start with fabtoken, perform a few operations, and then switch driver
 	auditor := sel.Get(auditorId)
 	issuer := sel.Get("issuer")
 	alice := sel.Get("alice")
@@ -1392,12 +1413,14 @@ func TestLocalTokensUpgrade(network *integration.Infrastructure, auditorId strin
 	CheckOwnerStore(network, nil, issuer, alice, bob, charlie, manager)
 	CheckAuditorStore(network, auditor, "", nil)
 
-	// switch to dlog 32bits, perform a few operations
-	tms := GetTMSByAlias(network, "dlog-32bits")
+	// switch to the TMS with the passed alias, perform a few operations
+	tms := GetTMSByAlias(network, alias)
 	ppBytes, err := os.ReadFile(tokenPlatform.PublicParametersFile(tms))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	gomega.Expect(ppBytes).NotTo(gomega.BeNil())
-	UpdatePublicParams(network, ppBytes, tms)
+	// wait for every node to pick the new public parameters up: on backends that propagate them
+	// asynchronously (e.g. fabricx), the checks below would otherwise run against the old driver
+	UpdatePublicParamsAndWait(network, ppBytes, tms, issuer, auditor, alice, bob, charlie, manager)
 
 	gomega.Eventually(DoesWalletExist).WithArguments(network, issuer, "", views.IssuerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
 	gomega.Eventually(DoesWalletExist).WithArguments(network, issuer, "pineapple", views.IssuerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeFalse())
