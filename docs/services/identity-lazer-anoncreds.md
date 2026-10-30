@@ -7,20 +7,14 @@ and you should be comfortable with basic linear algebra over polynomial rings. E
 concept the scheme uses is introduced in [Background](#2-background) before it is needed.
 
 For how Panurus uses the scheme (pseudonyms, signatures, audit), see
-[Lazer: post-quantum anonymous identities](identity-lazer.md). This page is about the cryptography
-underneath.
+[Lazer: post-quantum anonymous identities](identity-lazer.md). For the fixes Panurus applies to the lazer library,
+and a closer look at the proof-system mechanics they touch, see [Local patches to lazer](identity-lazer-patches.md).
+This page is about the cryptography underneath.
 
 !!! warning "Status: experimental"
     The scheme is a research-grade construction. The parameters of the attribute commitments have not had a
     concrete security review (see [Limitations and open issues](#11-limitations-and-open-issues)), and the
     unforgeability argument has not been formally proven. Do not use it in production.
-
-!!! note "Fixed: credential-less forgery"
-    An earlier version of the scheme (also lazer's Python reference `cbdc.py`) let anyone produce a valid
-    presentation **without any issued credential** whenever every revealed attribute was zero, which includes the
-    Panurus configuration (nothing revealed). The current code adds a public non-zero target $\mathbf{c}_0$ to the
-    credential equation. [§10.1](#101-unforgeability-of-credentials) describes the attack and the fix. Credentials
-    issued before the fix do not verify any more and must be reissued.
 
 ---
 
@@ -65,7 +59,9 @@ would break them through Shor's algorithm.
 The scheme in `anoncreds` is a **post-quantum** anonymous credential. Its security rests on lattice problems
 (Module-SIS, Module-LWE and NTRU). It is a C port of the reference `python/cbdc/cbdc.py` in the
 [lazer](https://github.com/lazer-crypto/lazer) library [LSS24]. That is why the C identifiers carry the
-prefix `cbdc_`. The construction combines three ingredients:
+prefix `cbdc_`. It differs from that reference in one essential point: the credential equation has a public non-zero target
+$\mathbf{c}_0$ ([§5.3](#53-issuer-blind-signing-cbdc_issuer_issue), [§10.1](#101-unforgeability-of-credentials)).
+The construction combines three ingredients:
 
 1. a **blind signature** in the style of Beullens, Lyubashevsky, Nguyen and Seiler [BLNS23a]: the issuer signs a
    lattice commitment to the attributes with a **Falcon-512** trapdoor [Falcon, GPV08], without seeing the
@@ -174,7 +170,7 @@ does not use Falcon as a signature on messages**: the issuer calls the preimage 
 $34\,034\,726$ is exactly Falcon-512's acceptance bound and shows up literally in the code and in the $P_2$
 parameters ($\sqrt{34034726}\approx 5833.9$).
 
-### 2.5 Zero-knowledge proofs from lattices (LNP / lazer)
+### 2.5 Zero-knowledge proofs from lattices: LNP and lazer
 
 The proofs are produced by lazer's *linear-relation* front end (`lin_prover_*`, `lin_verifier_*`), built on the
 LNP proof system [LNP22]. Abstractly, for a public $\mathbf{A}\in\mathcal{R}_p^{n'\times n}$ and
@@ -196,24 +192,29 @@ Points worth knowing:
   coefficients include 0, so the **zero vector always meets every constraint**. If a statement is homogeneous
   ($\mathbf{u}=\mathbf{0}$), then $\mathbf{w}=\mathbf{0}$ is a valid witness and the proof says nothing. A
   statement is only meaningful when $\mathbf{u}$ is a non-zero value that no short vector can reach without
-  secret knowledge. This is the root cause of the break described in
-  [§10.1](#101-unforgeability-of-credentials).
+  secret knowledge. This is why the credential equation needs the public target $\mathbf{c}_0$
+  ([§10.1](#101-unforgeability-of-credentials)).
 - **Proving mod $p$ inside a larger modulus.** The proof system works over $\mathcal{R}_q$ with a much larger
-  prime $q$ ($q\approx2^{43}$ for $P_1$, $2^{51}$ for $P_2$, $2^{38}$ for the SoK). A relation mod $p$ is lifted
-  as $\mathbf{A}\mathbf{w}+\mathbf{u}=p\,\mathbf{v}$ with a quotient vector $\mathbf{v}$ that has one
-  entry per row, and an (approximate) $\ell_\infty$ bound on $\mathbf{v}$ is proven so that nothing wraps
+  prime $q$ ($q\approx2^{43}$ for $P_1$, $2^{51}$ for $P_2$, $2^{38}$ for popen, see [§8](#8-the-proof-systems-and-their-parameters)). A relation mod $p$ is lifted
+  as $\mathbf{A}\mathbf{w}+\mathbf{u}=p\,\mathbf{s}_4$ with a quotient vector $\mathbf{s}_4$ that has one
+  entry per row, and an (approximate) $\ell_\infty$ bound on $\mathbf{s}_4$ is proven so that nothing wraps
   around mod $q$. That is why the generated headers report "approximate infinity: dimension 8 / 14 / 2", one
   per row of the respective statement. `cbdc_params_ok` checks those row counts against the constants of the
   scheme.
 - **ABDLOP commitments.** Internally the prover commits to the witness with the ABDLOP commitment of
   [LNP22], which combines Ajtai [Ajt96] and BDLOP [BDLOP18] commitments, and then runs a Σ-protocol-like
-  interaction made non-interactive with Fiat–Shamir [FS86].
+  interaction made non-interactive with Fiat–Shamir [FS86]. Many scalar equations (the norm and binary
+  constraints, the projections of the approximate range proof) are compressed into a few by random linear
+  combinations. The mechanics that matter for soundness are explained in
+  [Local patches to lazer](identity-lazer-patches.md#background-the-toolbox-protocol-in-lazer).
 - **Fiat–Shamir with aborts** [Lyu09, Lyu12]. To be zero-knowledge, the responses go through *rejection
   sampling*, so the prover sometimes restarts. The header comments give the expected number of runs
-  ("repetition rate": about 9.5 for $P_1$, 6.6 for $P_2$, 9.8 for the SoK). These assume the bimodal $\mathbf{z}_2$
-  rejection; with the one-time rejection of local patch 0010 the $\mathbf{z}_2$ step accepts about half as often,
-  so expect roughly twice as many runs.
-- **Context binding (signatures of knowledge).** `lin_prover_prove_ctx` hashes an extra context string
+  ("repetition rate": about 9.5 for $P_1$, 6.6 for $P_2$, 9.8 for popen). The generator multiplies
+  $M_1M_2M_3M_4$, that is, it counts an acceptance probability of $1/M_2$ for $\mathbf{z}_2$; the prover uses the
+  one-time rejection of [LNS21] there, which accepts about half as often, so expect roughly twice as many runs
+  ([patch 0010](identity-lazer-patches.md#0010-prover-zk-z2-rejection-beta-signs)).
+- **Context binding (signatures of knowledge).** `lin_prover_prove_ctx_bnd` (and `lin_verifier_verify_ctx_bnd` on
+  the verifier side) hashes an extra context string
   `ctx` into the Fiat–Shamir challenge. The proof is then a *signature of knowledge* [CL06] on `ctx`: it can
   only be produced by someone who knows a witness, and it does not verify for any other `ctx`.
 
@@ -286,7 +287,7 @@ matrices are expanded uniformly in $\mathcal{R}_p$ from a seed and a domain sepa
 | $\mathbf{c}_0$ | $8\times1$ | $\mathrm{SHAKE128}(\texttt{"panurus/lazer/anoncreds/c0/v1"}\Vert pk)$, 0 | public non-zero target, per issuer (`cbdc_derive_c0`) |
 
 The seeds $\mathsf{seed}_1,\mathsf{seed}_2,\mathsf{seed}_3$ also seed the public randomness of the proof
-systems $P_1$, $P_2$ and the SoK (`lin_prover_init(…, cbdc_p1pp, …)` and so on). Because everything comes from
+systems $P_1$, $P_2$ and popen (`lin_pp_init (cbdc_p1lpp, cbdc_p1pp, p1_param)` and so on). Because everything comes from
 public seeds through an extendable-output function, nobody knows a trapdoor for these matrices. That is what
 binding needs.
 
@@ -307,10 +308,10 @@ So $32$ bytes $\to 64$ coefficients, which is exactly one ring element. The map 
 attributes give distinct polynomials. The norms that matter:
 
 - per attribute, $\lVert m_i\rVert_\infty\le 8$, so $\lVert m_i\rVert_2\le\sqrt{64\cdot 64}=64$ always (this is
-  the bound used in $P_2$ and in the SoK);
+  the bound used in $P_2$ and in popen);
 - for all five, a uniformly random byte string gives $\mathbb{E}\lVert\mathbf{m}\rVert_2^2=320\cdot 21.5=6880$,
   i.e. $\lVert\mathbf{m}\rVert_2\approx 83$. $P_1$ requires $\lVert\mathbf{m}\rVert_2\le 91$, which a random
-  vector violates with small probability (about $5\cdot10^{-5}$ by a quick simulation). `cbdc_attrs_ok` /
+  vector violates with small probability (about $5\cdot10^{-5}$, by a simulation that is not part of the repository). `cbdc_attrs_ok` /
   `AttrsOK` checks this beforehand, and the caller resamples the hidden attribute (in Panurus, `usk`) if it
   fails.
 
@@ -357,7 +358,7 @@ shows at the same time that:
 - the revealed attributes really are the ones inside $\mathbf{t}$, because $\mathbf{m}_{\mathrm{pub}}$ is fixed
   by the issuer's own input.
 
-$P_1$ is *not* bound to a context string (`lin_prover_prove` without `ctx`). See
+$P_1$ is *not* bound to a context string (`lin_prover_prove_ctx_bnd` with `ctx = NULL`). See
 [§10.6](#106-remarks-on-the-issuance-protocol).
 
 ### 5.3 Issuer: blind signing (`cbdc_issuer_issue`)
@@ -469,7 +470,7 @@ $\mathbf{w}=(x,\boldsymbol\rho)$ with
 $$\begin{pmatrix}\mathbf{0} & \mathbf{A}'_{\mathrm{com}}\end{pmatrix}\mathbf{w}+(\mathbf{a}_0\,a-\mathsf{nym})=\mathbf{0},\qquad\lVert x\rVert_2\le64,\quad\lVert\boldsymbol\rho\rVert_2\le39,$$
 
 that is, $\mathsf{nym}-\mathbf{a}_0a=\mathbf{A}'_{\mathrm{com}}\boldsymbol\rho$ for a short $\boldsymbol\rho$. The honest
-witness is $(0,\boldsymbol\rho)$. It reuses the parameters of the SoK unchanged (same $2\times11$ shape; the
+witness is $(0,\boldsymbol\rho)$. It reuses the popen parameters of the SoK unchanged (same $2\times11$ shape; the
 statement is set at run time and hashed into the challenge). The zeroed column is essential: a plain SoK
 on $\mathsf{nym}-\mathbf{a}_0a$ would extract an opening to $a+x'$ for some short $x'$, which says nothing about
 $a$. The prover first checks that the commitment opens to $a$, so it never runs on a false statement.
@@ -549,7 +550,7 @@ equation and norm bound (`cbdc_cred_ok`, shared with `CredVerify`), and that eac
 its index (`cbdc_com_ok`). On a false statement the LNP prover's rejection sampling never terminates normally and
 can crash the process. The check makes such misuse return an error instead.
 
-The proof is produced with `lin_prover_prove_ctx`, so $P_2$ is a signature of knowledge on `ctx`. Panurus sets
+The proof is produced with `lin_prover_prove_ctx_bnd` and a context, so $P_2$ is a signature of knowledge on `ctx`. Panurus sets
 `ctx` = domain ‖ SHA-256(issuer public key) to tie a presentation to one issuer (`identityContext` in
 `schema.go`). Another application could bind it to a nonce or a message instead.
 
@@ -557,7 +558,7 @@ The proof is produced with `lin_prover_prove_ctx`, so $P_2$ is a signature of kn
 
 The verifier checks the index sets, decodes each nym (exact length, canonical encoding), encodes the revealed
 attributes, rebuilds $(\mathbf{A},\mathbf{u})$ from *its own* copy of $\mathbf{B}$, the revealed attributes, the
-nyms and the index list, and runs `lin_verifier_verify_ctx`. The proof must also consume exactly `preslen`
+nyms and the index list, and runs `lin_verifier_verify_ctx_bnd`. The proof must also consume exactly `preslen`
 bytes. Since the verifier builds the statement, every public input (key, revealed values, nyms, indices,
 `ctx`) is authenticated by the proof. Panurus goes further and *hardcodes* $\mathsf{Com}=(0,2,3)$ in the
 verifier instead of reading it from the signature. It takes $\mathsf{nym}_2$ (`nymEID`) from the identity and
@@ -571,9 +572,12 @@ presentation made for one identity fails for any other.
 The three parameter sets are generated by lazer's `scripts/lin-codegen.sage` from the Python files in
 `anoncreds/params/` into `anoncreds_params.h` (see
 [identity-lazer.md › Proof system parameters](identity-lazer.md#proof-system-parameters)). The table collects
-the figures reported in the generated header:
+the figures reported in the generated header. The third proof system, called popen, has one parameter set for
+the SoK of a nym opening ([§6.2](#62-signature-of-knowledge-of-an-opening)) and the proof that a nym commits to a
+public attribute ([§6.3](#63-proof-that-a-nym-commits-to-a-public-attribute)). The security figures (knowledge
+error, assumptions, root Hermite factors) are computed by lazer's parameter generator, not by this module.
 
-| | $P_1$ (issuance) | $P_2$ (presentation) | SoK (nym opening) |
+| | $P_1$ (issuance) | $P_2$ (presentation) | popen (nym opening, equality of opening) |
 |---|---|---|---|
 | statement $\mathbf{A}$ over $\mathcal{R}_p$ | $8\times21$ | $14\times75$ | $2\times11$ |
 | norm constraints | $\ell_2$: $[109, 91]$ | binary $\tau$; $\ell_2$: $109$, $5833.9$, $5\times64$, $3\times39$ | $\ell_2$: $[64, 39]$ |
@@ -585,15 +589,15 @@ the figures reported in the generated header:
 | expected repetitions ² | 9.46 | 6.59 | 9.82 |
 | proof size | ≈ 19.8 KiB | ≈ 36.9 KiB | ≈ 16.5 KiB |
 
-¹ As computed by the code generator for the protocol. It holds for this build only with the local patches
-0006-0009 ([module documentation](identity-lazer.md#local-patches)): without them, upstream lazer's toolbox
-did not bind `h`, `z3` and `z4` in the Fiat–Shamir transcript (lazer-crypto/lazer#28), checked only the sum of
-the exact-$\ell_2$ equations (#25), reused one challenge pair for every accumulator (#24, a soundness error of
-about $q^{-2}$ for that step instead of $q^{-\lambda}$) and did not bound $\mathbf{z}_{21}$ (#26).
+¹ As computed by the code generator for the LNP protocol, for $P_1$, $P_2$ and popen alike. The implementation
+meets it because of local patches 0006–0009 ([Local patches to lazer](identity-lazer-patches.md)): upstream lazer does not absorb $h$,
+$\mathbf{z}_3$ and $\mathbf{z}_4$ into the Fiat–Shamir transcript before the challenges that bind them, checks
+only the sum of the exact-$\ell_2$ equations, uses one challenge pair for all $\lambda/2$ accumulators (a soundness
+error of about $q^{-2}$ for that step instead of $q^{-\lambda}$, with $\lambda=4$) and does not bound
+$\mathbf{z}_{21}$.
 
-² As reported by the code generator, which assumes the bimodal $\mathbf{z}_2$ rejection. With local patch 0010
-the $\mathbf{z}_2$ step uses the one-time rejection Rej1, which accepts with probability about $1/(2M_2)$ instead of
-$1/M_2$: expect roughly twice as many repetitions.
+² As reported by the code generator. The $\mathbf{z}_2$ step uses the one-time rejection Rej1 of [LNS21] (local patch
+0010), which accepts with probability about $1/(2M_2)$ instead of $1/M_2$: expect roughly twice as many repetitions.
 
 A root Hermite factor around $1.0043$–$1.0044$ is the usual target for roughly 128-bit security against
 lattice reduction. Check concrete claims with the lattice estimator [APS15]. Note that these figures cover the
@@ -602,7 +606,7 @@ rows over $\mathcal{R}_p$, $p=12289$) is a separate assumption, and it is much w
 
 Two consistency constants of `anoncreds.h` must match the parameters: `CBDC_COM_ROWS = 2` (rows of
 $\mathbf{A}_{\mathrm{com}}$) and `CBDC_MAXCOM = 3`. `cbdc_params_ok` (`cbdc_params_check` reports which check
-failed) checks that the number of rows of $P_1$, $P_2$ and SoK statements is $8$, $8+3\cdot2$ and $2$, and it
+failed) checks that the number of rows of $P_1$, $P_2$ and popen statements is $8$, $8+3\cdot2$ and $2$, and it
 also cross-checks everything else that `anoncreds.c` hard-codes against the generated tables: the ring degree
 and modulus, the witness length (21, 75, 11), the binary part ($\boldsymbol\tau$, elements 16–23 of $P_2$),
 and, for each $\ell_2$ group, the witness elements it covers and its squared bound (`CBDC_L2SQR_BND_*` in
@@ -625,9 +629,9 @@ because a mismatch would produce unsound statements, or statements the prover ca
   (`coder_enc_grandom3`, parameter $\lceil\log_2(165/1.55)\rceil=7$, matching Falcon's $\sigma$). This needs
   about 9.4 bits per coefficient on average, so a credential is about 1.3 KB (the buffer bound is 3000 bytes).
 - **Proofs** use lazer's own encoding. Buffers are sized at $1.2\times$ the nominal proof length
-  (`CBDC_PROOFLEN`). The prover writes at most that many bytes (`lin_prover_prove_ctx_bnd`, from a local lazer
-  patch); a proof that would not fit is discarded and proven again with fresh coins (`cbdc_prove`), and the
-  operation fails if it never fits. Every encoder of `anoncreds.c` is bounded in the same way.
+  (`CBDC_PROOFLEN`). The prover writes at most that many bytes (`lin_prover_prove_ctx_bnd`, local patch 0001); a
+  proof that would not fit is discarded and proven again with fresh coins (`cbdc_prove`), up to
+  `CBDC_PROVE_TRIES` (4) attempts, and the operation fails if none fits. Every encoder of `anoncreds.c` is bounded in the same way.
 
 ### 9.2 Defensive decoding
 
@@ -635,15 +639,14 @@ Every input that can come from another party is treated as hostile:
 
 - fixed-length inputs (nyms, openings, user state) must have the exact length;
 - variable-length inputs are bounded by their maximum (`cbdc_maxlen_*`) and decoded in place by a bounded
-  coder (`coder_dec_begin_bnd`, `lin_verifier_verify_ctx_bnd`). lazer's decoder used to scan the unary codes
-  of the hints and of the Gaussian elements without a bound, so that a crafted proof made it read past the end
-  of any buffer (an earlier version copied inputs into a buffer with 64 bytes of zero padding, which a long
-  unary run crossed); the bounded coder stops at the end of the input and decoding fails, see the local
-  patches in [the module documentation](identity-lazer.md#local-patches). No copy or padding is needed;
+  coder (`coder_dec_begin_bnd`, `lin_verifier_verify_ctx_bnd`, local patch
+  [0001](identity-lazer-patches.md#0001-coder-bounds-checks)). The unary codes of the hints and of the Gaussian
+  elements have no length of their own, so an unbounded decoder runs past the end of a crafted input; the bounded
+  coder stops at the end of the input and decoding fails. No copy or padding of the input is needed;
 - decoders (`cbdc_dec_vec`, `cbdc_dec_cred`) and proof verifiers must consume their input exactly (canonical
   encodings, no trailing bytes);
 - decoded openings and user states are checked against their norm bounds;
-- issuer keys are validated without exiting: a malformed public key (header byte, a coefficient $\ge q$) makes
+- issuer keys are validated without exiting (local patch [0002](identity-lazer-patches.md#0002-blindsig-no-exit)): a malformed public key (header byte, a coefficient $\ge q$) makes
   `cbdc_user_init`, `cbdc_verifier_init` and `cbdc_issuer_init` fail, and `cbdc_issuer_init` also checks that the
   private key decodes and matches the public key;
 - the prover is never run on a false statement: the credential (`cbdc_cred_ok`) and every commitment
@@ -652,34 +655,37 @@ Every input that can come from another party is treated as hostile:
 - states track whether they are initialized and masked: export before masking, and every function on a state
   whose initialization failed or that was cleared, fail instead of dereferencing freed memory;
 - the Go layer checks lengths again, returns `ErrInvalid` on a cleared object and never panics on malformed
-  input. Fuzz targets cover every decoder of untrusted input (`FuzzSokVerify`, `FuzzPresVer`, `FuzzIssue`,
-  `FuzzCredVerify`, `FuzzImport`, `FuzzCommitWithOpening`, `FuzzNewVerifier`), with their inputs placed right
-  before an inaccessible page so that an out-of-bounds read crashes.
+  input. The regression tests and fuzz targets for these decoders are listed in
+  [identity-lazer.md › Tests](identity-lazer.md#tests).
 
 Secrets are wiped before their memory is released: the issuer key on `cbdc_issuer_clear`, the masking
 randomness $\mathbf{r}$ and the encoded attributes on `cbdc_user_clear` (and when a new masking or import
 replaces them), the opening $\boldsymbol\rho$ on `cbdc_commit_clear`, seeds, witnesses and decoded credentials
-after use, and the prover's copy of the witness in lazer (local patch). The Go wrapper wipes its copies of the
-attributes.
+after use, and the prover's copy of the witness in lazer (local patch
+[0003](identity-lazer-patches.md#0003-zeroize-secrets)). The Go wrapper wipes its copies of the attributes.
 
 ### 9.3 Concurrency
 
-Public parameters are read-only after the `pthread_once` initialization. Lazer functions that convert their
-operands in place (for example, into NTT form) always get a private copy (`cbdc_mat_copy`), and so do the
-operands taken from a user state ($\mathbf{r}$, $\mathbf{m}$, $\mathbf{c}_0$, $\mathbf{B}_2$). The public
-matrices of the three proof systems are expanded once and converted to the CRT domain at initialization
-(`lin_pp_init`, local patch 0011); every prover and verifier borrows them (`lin_prover_init_pp`,
-`lin_verifier_init_pp`) and only uses them as the left operand of products, so nothing writes them.
+lazer computes products in the CRT (NTT) domain and converts the operands of a product in place, even those it
+only reads. The scheme is organized so that shared data is never such an operand:
 
-`cbdc_user_presgen` and `cbdc_user_credverify` therefore only read the user state, and may run concurrently
-on one state: each presentation sets up its own $P_2$ prover and clears it, which wipes the witness.
-`cbdc_user_maskattrs`, `cbdc_user_import`, `cbdc_user_export` and `cbdc_user_clear` write the state and are
-exclusive (the Go `User` enforces it with a read-write lock). A `Verifier` holds a verifier state with the
-statement and must not be used concurrently (Panurus keeps a pool of them).
+- The scheme's matrices $\mathbf{A}_r,\mathbf{A}_m,\mathbf{A}_\tau,\mathbf{A}_{\mathrm{com}}$ are read-only after the
+  `pthread_once` initialization. Every operation that would convert them, and every statement setter, gets a private
+  copy (`cbdc_mat_copy`), and so do the operands taken from a user state ($\mathbf{r}$, $\mathbf{m}$,
+  $\mathbf{c}_0$, $\mathbf{B}_2$).
+- The public matrices of the three proof systems are expanded once at initialization and converted to the CRT
+  domain (`lin_pp_init`, local patch [0011](identity-lazer-patches.md#0011-lin-shared-public-params)). Every prover
+  and verifier borrows them (`lin_prover_init_pp`, `lin_verifier_init_pp`) and uses them only as the left operand
+  of products, whose conversion is then a no-op, so nothing writes them.
+- Every prover lives for one call: `cbdc_user_maskattrs` sets up and clears the $P_1$ prover, `cbdc_user_presgen`
+  the $P_2$ prover, and the SoK and equality-of-opening provers likewise. Clearing a prover wipes its witness.
 
-Concurrent proofs also need lazer's discrete Gaussian sampler to be free of global state, which it is with
-local patch 0004: before, its sign-bit buffer was process-global (see [the module
-documentation](identity-lazer.md#local-patches)).
+`cbdc_user_presgen` and `cbdc_user_credverify` therefore only read the user state and may run concurrently on one
+state. `cbdc_user_maskattrs`, `cbdc_user_import`, `cbdc_user_export` and `cbdc_user_clear` write it and are
+exclusive (the Go `User` enforces this with a read-write lock). A verifier state holds the statement being checked
+and must not be used concurrently (Panurus keeps a pool of them). Concurrent proofs also need a discrete Gaussian
+sampler without global state, which local patch [0004](identity-lazer-patches.md#0004-grandom-sampler-state)
+provides.
 
 ---
 
@@ -694,17 +700,16 @@ formal treatment of the underlying blind signature is in [BLNS23a], and of the c
 *Goal:* no coalition of users that obtained $Q$ credentials can present a credential on an attribute vector
 that was never issued.
 
-#### A past attack: the zero witness
+#### Why a non-zero target is needed: the zero-witness attack
 
-This subsection describes the scheme **before** $\mathbf{c}_0$ was added. It shows why $\mathbf{c}_0$ is
-essential. In that version, the only public term in the first 8 rows of $P_2$ was
-$\mathbf{u}_{0..7}=\mathbf{A}_m\mathbf{m}_{\mathrm{pub}}$. Whenever every revealed attribute encodes to $0$, and in
-particular when **nothing is revealed** (Panurus always presents with $\mathsf{Rev}=\emptyset$), these rows are
-homogeneous:
+Consider the scheme without $\mathbf{c}_0$, as in lazer's Python reference `cbdc.py`. The only public term in the
+first 8 rows of $P_2$ is then $\mathbf{u}_{0..7}=\mathbf{A}_m\mathbf{m}_{\mathrm{pub}}$. Whenever every revealed
+attribute encodes to $0$, and in particular when **nothing is revealed** (Panurus always presents with
+$\mathsf{Rev}=\emptyset$), these rows are homogeneous:
 
 $$\mathbf{A}_r\mathbf{r}+\mathbf{A}_\tau\boldsymbol\tau-\mathbf{s}_1-\mathbf{B}\mathbf{s}_2+\mathbf{A}_m^{\mathrm{priv}}\mathbf{m}_{\mathrm{priv}}=\mathbf{0}.$$
 
-All constraints are upper bounds ([§2.5](#25-zero-knowledge-proofs-from-lattices-lnp--lazer)), so
+All constraints are upper bounds ([§2.5](#25-zero-knowledge-proofs-from-lattices-lnp-and-lazer)), so
 $(\mathbf{r},\boldsymbol\tau,\mathbf{s}_1,\mathbf{s}_2,\mathbf{m})=\mathbf{0}$ is a valid witness. The commitment
 rows then say only $\mathbf{A}'_{\mathrm{com}}\boldsymbol\rho_j=\mathsf{nym}_j$, which holds for any
 $\mathsf{nym}_j=\mathsf{Com}(0;\boldsymbol\rho_j)$. Anyone who knows only the issuer **public** key can therefore:
@@ -716,43 +721,43 @@ $\mathsf{nym}_j=\mathsf{Com}(0;\boldsymbol\rho_j)$. Anyone who knows only the is
 3. In Panurus, sign any message with a SoK of the opening $(0,\boldsymbol\rho_1)$ of `nymSK`. The resulting
    identity and signature pass `Verifier.Verify`.
 
-This was reproduced end to end through the exported API. The forged nyms commit to $0$, so the auditor's `Match`
-fails for any real enrollment id: the forged identities are unauditable, but they verify. The flaw comes from
-porting [BLNS23a] to credentials. In lazer's blind signature (`src/blindsig.c`) the target of $P_2$ is
+The forged nyms commit to $0$, so audit matching fails for any real enrollment id: the forged identities are
+unauditable, but they verify. The gap comes from porting [BLNS23a] to credentials. In lazer's blind signature (`src/blindsig.c`) the target of $P_2$ is
 $\mathbf{A}_m\mu$ for a public, non-zero message $\mu$, so the statement is never homogeneous. The credential
-version moved every attribute to the witness and lost that anchor.
+version moves every attribute to the witness and loses that anchor.
 
 Revealing an attribute is not a sufficient mitigation, because a revealed value of 32 zero bytes encodes to the
 zero polynomial and gives $\mathbf{u}=\mathbf{0}$ again.
 
-#### The fix: a public non-zero target
+#### The public target $\mathbf{c}_0$
 
-The code derives a public uniform constant $\mathbf{c}_0\in\mathcal{R}_p^8$ from the issuer key,
-$\mathbf{c}_0=\mathrm{XOF}(\texttt{"panurus/lazer/anoncreds/c0/v1"}\,\Vert\,pk)$ (`cbdc_derive_c0`). Then:
+The scheme derives a public uniform constant $\mathbf{c}_0\in\mathcal{R}_p^8$ from the issuer key,
+$\mathbf{c}_0=\mathrm{XOF}(\texttt{"panurus/lazer/anoncreds/c0/v1"}\,\Vert\,pk)$ (`cbdc_derive_c0`), and uses it
+throughout:
 
 - the issuer samples a preimage of $\mathbf{t}+\mathbf{A}_\tau\boldsymbol\tau+\mathbf{c}_0$;
-- the credential equation becomes
+- the credential equation is
   $\mathbf{A}_r\mathbf{r}+\mathbf{A}_\tau\boldsymbol\tau+\mathbf{A}_m\mathbf{m}+\mathbf{c}_0=\mathbf{s}_1+\mathbf{B}\mathbf{s}_2$;
-- $P_2$ puts $\mathbf{c}_0$ into $\mathbf{u}_{0..7}$, and `CredVerify` adds it.
+- $P_2$ has $\mathbf{c}_0$ in $\mathbf{u}_{0..7}$, and `CredVerify` includes it.
 
-$P_1$ and all dimensions (and so all parameters) are unchanged. A forger without a credential must now find a
-short preimage of a uniform target, which is an NTRU/M-SIS inhomogeneous problem (a Falcon-like forgery).
+$\mathbf{c}_0$ costs nothing: $P_1$ does not involve it, and the dimensions (and so all parameters) are those of
+the scheme without it. A forger without a credential has to find a short preimage of a uniform target, which is an NTRU/M-SIS inhomogeneous problem (a Falcon-like forgery).
 Combining issued credentials does not help either. In $\mathsf{cred}_1+\mathsf{cred}_2-\mathsf{cred}_3$ the
 coefficient of $\mathbf{c}_0$ stays $1$, but $\boldsymbol\tau_1+\boldsymbol\tau_2-\boldsymbol\tau_3$ is not binary,
 and $\lVert(\mathbf{s}_1,\mathbf{s}_2)\rVert$ grows by about $\sqrt3$ beyond Falcon's tight bound. This is exactly
 the role of the binary $\boldsymbol\tau$ and the exact norm proofs in [BLNS23a].
 
 A *hidden* random "nonce attribute" would not work, because a forger simply sets it to 0. A *revealed* one would
-link presentations. The fix restores the structure of [BLNS23a], but its one-more-unforgeability theorem is
-stated for a random-oracle message, so the reduction should be re-checked before anyone claims a proof. As a
-regression check, a proof produced for the zero witness against the old statement is rejected by the fixed
-verifier, and `TestZeroWitnessForgery` (in `anoncreds`) and `TestForgeryWithoutCredential` (in `lazer`) make sure
-the forgery stays impossible.
+link presentations. The public target restores the structure of [BLNS23a], but its one-more-unforgeability theorem
+is stated for a random-oracle message, so the reduction should be re-checked before anyone claims a proof.
+`TestZeroWitnessForgery` (in `anoncreds`) and `TestForgeryWithoutCredential` (in `lazer`) check that the zero
+witness yields neither a credential that verifies nor a presentation or signature.
 
 #### Intuition
 
 Knowledge soundness of $P_2$ lets a reduction extract $(\mathbf{r},\boldsymbol\tau,\mathbf{s}_1,\mathbf{s}_2,\mathbf{m})$
-that satisfy the credential equation with the *exact* bounds. Together with the soundness of $P_1$
+that satisfy the credential equation with the *exact* bounds, each block within its own bound (this is what
+[patch 0007](identity-lazer-patches.md#0007-tbox-l2-equation-domains) guarantees). Together with the soundness of $P_1$
 (the issuer only signs well-formed commitments), that is a one-more forgery of the underlying blind signature.
 
 ### 10.2 Correct attribute disclosure
@@ -802,29 +807,28 @@ under a different `ctx`, a different nym and a different issuer.
 
 ## 11. Limitations and open issues
 
-1. **Unforgeability is argued, not proven.** The credential-less forgery of the earlier version is fixed with
-   $\mathbf{c}_0$ ([§10.1](#101-unforgeability-of-credentials)), but no formal reduction for the credential scheme
-   with a fixed public target exists yet.
+1. **Unforgeability is argued, not proven.** The public target $\mathbf{c}_0$ rules out the zero witness
+   ([§10.1](#101-unforgeability-of-credentials)), but no formal reduction for the credential scheme with a fixed
+   public target exists yet.
 2. **Commitment binding strength.** $\mathbf{A}_{\mathrm{com}}\in\mathcal{R}_p^{2\times11}$ with $p=12289$ gives,
    by a rough estimate, about 80-bit core-SVP hardness for norm-150 collisions. That affects audit soundness.
    Finding an opening, which is what signature forgery needs, is about 120 bits ([§6.2](#62-signature-of-knowledge-of-an-opening)). Before any production use, run the lattice estimator [APS15]. If needed, raise `CBDC_COM_ROWS` and
    regenerate the `popen` and `p2` parameters.
-3. **Size.** A presentation is about 37 KB and a SoK about 16 KB, far larger than pairing-based credentials
+3. **Size.** A presentation is about 36.9 KiB and a SoK about 16.5 KiB, far larger than pairing-based credentials
    (a few hundred bytes). The linear-size LNP proofs [LNP22] dominate. Succinct lattice proofs (LaBRADOR
    [BS23], and the zero-knowledge toolkit built on it [LSS26]) are a possible direction.
 4. **Missing features.** There is no revocation, no scope-exclusive (deterministic) pseudonyms, no predicates
    on attributes (ranges, inequalities), and no verifiable encryption of attributes for an auditor. The
    scheme supports exactly 5 attributes of 32 bytes and at most 3 nyms per presentation.
 5. **Side channels.** The code makes no constant-time claims beyond those of lazer and Falcon.
-6. **Patched lazer.** Bounds checking, non-exiting key decoding and zeroization rely on local patches to lazer
-   ([module documentation](identity-lazer.md#local-patches)) that are not upstream yet.
-7. **Proof-system soundness and zero-knowledge depend on local patches.** The open upstream issues
-   lazer-crypto/lazer#24, #25, #26 and #28 break or weaken the soundness of the toolbox protocol that $P_1$,
-   $P_2$ and the SoK run, and #31 the zero-knowledge of their prover; for $P_2$, #25 let a credential holder
-   exceed the per-block norm bounds, which [§10.1](#101-unforgeability-of-credentials) relies on. They are
-   fixed locally by patches 0006-0010, in the toolbox copy of lazer's `src/lin-proofs.c`. The fixes for #28,
-   #25 and #26 were checked by code review against the issue threads, not by negative regression tests.
-   Proofs made before and after these patches are incompatible.
+6. **Dependence on patched lazer.** Bounds checking, non-exiting key decoding, zeroization, the sampler, the
+   soundness and zero-knowledge of the proof system, and shared read-only public matrices rely on local patches to
+   lazer ([Local patches to lazer](identity-lazer-patches.md)), none of which is merged upstream. Upstream lazer at
+   the pinned commit has open issues (lazer-crypto/lazer#24, #25, #26, #28) that break or weaken the soundness of
+   the toolbox protocol that $P_1$, $P_2$ and popen run, and one (#31) that weakens the zero-knowledge of their
+   prover; for $P_2$, #25 would let a credential holder exceed the per-block norm bounds that §10.1 relies on.
+   Patches 0006–0010 fix them in the toolbox copy of `src/lin-proofs.c` that these proofs run. The fixes for #28,
+   #25 and #26 were checked by code review against the issue threads, not by negative tests with a cheating prover.
 
 ---
 
@@ -850,8 +854,8 @@ under a different `ctx`, a different nym and a different issuer.
 
 A complete runnable example of every step is `anoncreds/cmd/anoncreds_demo/main.go`. The test file
 `anoncreds_test.go` shows the negative cases (wrong context, swapped nyms, foreign nyms, overlapping indices,
-corrupted or truncated proofs, other issuer); `regression_test.go` the crafted inputs and misuse cases of §9.2,
-and `fuzz_test.go` the fuzz targets.
+corrupted or truncated proofs, other issuer, the zero witness); `regression_test.go` the crafted inputs and misuse
+cases of §9.2, `concurrency_test.go` the concurrency checks of §9.3, and `fuzz_test.go` the fuzz targets.
 
 ---
 
@@ -909,6 +913,7 @@ and `fuzz_test.go` the fuzz targets.
 **Zero-knowledge proofs and the lazer library**
 
 - [BDLOP18] C. Baum, I. Damgård, V. Lyubashevsky, S. Oechsner, C. Peikert. *More Efficient Commitments from Structured Lattice Assumptions.* SCN 2018. [ePrint 2016/997](https://eprint.iacr.org/2016/997).
+- [LNS21] V. Lyubashevsky, N. K. Nguyen, G. Seiler. *Shorter Lattice-Based Zero-Knowledge Proofs via One-Time Commitments.* PKC 2021. [ePrint 2020/1448](https://eprint.iacr.org/2020/1448).
 - [LNP22] V. Lyubashevsky, N. K. Nguyen, M. Plançon. *Lattice-Based Zero-Knowledge Proofs and Applications: Shorter, Simpler, and More General.* CRYPTO 2022. [ePrint 2022/284](https://eprint.iacr.org/2022/284).
 - [BS23] W. Beullens, G. Seiler. *LaBRADOR: Compact Proofs for R1CS from Module-SIS.* CRYPTO 2023. [ePrint 2022/1341](https://eprint.iacr.org/2022/1341).
 - [LSS24] V. Lyubashevsky, G. Seiler, P. Steuer. *The LaZer Library: Lattice-Based Zero Knowledge and Succinct Proofs for Quantum-Safe Privacy.* ACM CCS 2024. [ePrint 2024/1846](https://eprint.iacr.org/2024/1846). Code: [github.com/lazer-crypto/lazer](https://github.com/lazer-crypto/lazer).

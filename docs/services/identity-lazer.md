@@ -6,9 +6,9 @@ Idemix, but is built on a lattice-based anonymous credential
 ([lazer](https://github.com/lazer-crypto/lazer), CBDC scheme) instead of pairings.
 
 !!! warning "Status: experimental"
-    The module is not wired into any token driver, there is no revocation, and the
-    commitment parameters have not been through a lattice-estimator review
-    (see [Open issues](#open-issues)). Do not use it in production.
+    The module is not wired into any token driver, there is no revocation, the unforgeability of
+    credentials is argued but not proven, and the commitment parameters have not been through a
+    lattice-estimator review (see [Open issues](#open-issues)). Do not use it in production.
 
 Code: `x/token/services/identity/lazer` (a separate Go module, because it uses cgo).
 
@@ -22,7 +22,8 @@ Code: `x/token/services/identity/lazer` (a separate Go module, because it uses c
 ## Scheme
 
 For a full technical description of the underlying cryptography (lattices, issuance, proofs, security) see
-[The Lazer Anonymous Credential Scheme](identity-lazer-anoncreds.md).
+[The Lazer Anonymous Credential Scheme](identity-lazer-anoncreds.md). The fixes Panurus applies to the lazer
+library are described in [Local patches to lazer](identity-lazer-patches.md).
 
 A credential is issued by the issuer (a Falcon-512 key pair, `lazergen ca-keygen`) on five
 32-byte attributes:
@@ -160,7 +161,7 @@ of the wallet. The opening is therefore encrypted at rest:
 
 `DeserializeSigner` decodes the signer info strictly (canonical JSON, `version` 2, fixed lengths,
 presentation length), decrypts the opening and recomputes `nymSK` from `usk` and the opening. A signer
-info that does not decrypt (another wallet, another identity, tampering) or of an older version is
+info that does not decrypt (another wallet, another identity, tampering) or has another version is
 refused. The plaintext opening only lives in memory, in the returned `Signer`.
 
 What ties a pseudonym to the wallet is the presentation, bound to the credential of the wallet.
@@ -201,43 +202,49 @@ provisioning goroutine, so `WrappedKeyManager.Close` cancels it: a generation wa
 fails with "key manager closed", one in progress completes, and the goroutine exits. Identities
 still in the cache are not served.
 
-### Concurrent identity generation
+## Concurrency and memory
 
-Generating an identity is mostly generating its presentation. lazer converts the operands of a product to
-the CRT domain in place, even those it only reads, and its prover states hold the statement and the
-witness, so a prover state, or anything a product reads, cannot be shared by concurrent proofs as is. The
-module therefore splits what is shared from what is per call:
+Generating an identity is mostly generating its presentation, a $P_2$ proof. lazer converts the operands of a
+product to the CRT domain in place, even those it only reads, and a prover state holds the statement and the
+witness. The module therefore separates what the process shares, read-only, from what each call owns:
 
-- The public matrices of each proof system (P1, P2, SoK/equality-of-opening) are expanded once per process
-  and converted to the CRT domain (`lin_pp_init`, lazer patch 0011). Every prover and verifier borrows them
-  (`lin_prover_init_pp`, `lin_verifier_init_pp`): after the conversion they are only the left operand of
-  products, so nothing writes them. They take about 20 MB per process.
-- The wallet state (`anoncreds.User`: the public key, the masking randomness and the attributes) is only
-  read by `PresGen` and `CredVerify`, which work on copies of what a product converts, so they may run
-  concurrently on one `User`. Each presentation sets up its own P2 prover from the shared matrices and
-  clears it, which wipes the witness. `MaskAttrs`, `Import`, `Export` and `Clear` are exclusive: they wait
-  for the presentations in progress. The issuance prover (P1) is set up and cleared inside `MaskAttrs`, so a user holds no
-  prover state between calls.
-- A `ProverLimiter` (`prover.go`) bounds the presentations generated at the same time. Each one needs a few
-  MB while it runs (its prover and its scratch space); a wallet holds no prover state between calls.
-  `KeyManagerProvider` shares one limiter of `DefaultProverLimit()` (`min(GOMAXPROCS, 4)`) among all the key
-  managers it creates, so this does not grow with the number of wallets; a key manager built directly with
-  `NewKeyManager` has its own unless `WithProverLimiter` is passed. GOMAXPROCS alone would not bound the
-  work: a goroutine in a cgo call does not count against it.
-- `Identity` waits for a free slot; it fails if its context is done or the key manager is closed first.
-  `Close` waits for all the presentations in progress before it releases the wallet state.
+- **Public matrices, per process.** The public matrices of each proof system ($P_1$, $P_2$ and popen, the last
+  shared by the SoK and the equality-of-opening proof) are expanded once, at the first use of the `anoncreds`
+  package, and converted to the CRT domain (`lin_pp_init`, lazer patch 0011). Every prover and verifier borrows
+  them (`lin_prover_init_pp`, `lin_verifier_init_pp`) and only uses them as the left operand of products, so
+  nothing writes them. They take about 20 MB per process.
+- **Provers, per call.** Each presentation sets up its own $P_2$ prover from the shared matrices (about 3 MB) and
+  clears it at the end, which wipes the witness. The issuance prover ($P_1$) lives only inside `MaskAttrs`. A wallet
+  holds no prover state between calls.
+- **Wallet state, one per key manager.** The `anoncreds.User` of a key manager (public key, masking randomness and
+  attributes) is behind a read-write lock: `PresGen` and `CredVerify` only read it, working on private copies of
+  whatever a product converts, and run concurrently; `MaskAttrs`, `Import`, `Export` and `Clear` are exclusive and
+  wait for the presentations in progress.
+- **Verifiers.** A C verifier state holds the statement being checked and is not shared; each `Deserializer`
+  keeps a pool of up to 4 idle verifiers (`presVerifier` in `identity.go`), each about 2.7 MB on top of the shared
+  matrices.
+- **Prover limiter.** A `ProverLimiter` (`prover.go`) bounds the presentations generated at the same time.
+  `KeyManagerProvider` shares one limiter of `DefaultProverLimit()` = `min(GOMAXPROCS, 4)` among all the key
+  managers it creates, so the number of concurrent provers does not grow with the number of wallets; a key manager
+  built with `NewKeyManager` has its own limiter unless `WithProverLimiter` is passed. GOMAXPROCS alone would not
+  bound the work, because a goroutine in a cgo call does not count against it.
+- **Cancellation and close.** `Identity` waits for a free slot and fails if its context is done or the key manager
+  is closed first. `Close` (like `User.Clear`) waits for all the presentations in progress before it releases the
+  wallet state.
 
-Concurrent proofs rely on lazer patch 0004 (the discrete gaussian sampler kept its sign bits in
-process-global variables) and on 0011. Go's race detector does not see the C code: the tests check that the
-shared matrices are unchanged after concurrent proving (`TestUserConcurrentUse`), and that proofs with fixed
-coins are the same with shared or private matrices (`TestSharedPublicParamsSameProofs`).
+Concurrent proofs rely on two properties of the patched lazer: the discrete Gaussian sampler keeps no global state
+(patch 0004), and nothing writes the shared matrices (patch 0011, see its
+[invariant](identity-lazer-patches.md#0011-lin-shared-public-params)). Go's race detector does not see the C code,
+so the tests check them directly: `TestUserConcurrentUse` compares a digest of the shared matrices before and after
+concurrent proving and verification, and `TestSharedPublicParamsSameProofs` checks that proofs with fixed coins are
+identical with shared and with private matrices.
 
 ## Benchmarks
 
-`make lazer-bench` prints the sizes of identities, signatures, audit infos and signer infos, and the time
-of generating identities, signing and verifying. The `TestParallelBenchmarkLazer*` tests in
-`km_bench_test.go` measure throughput with concurrent workers, and `BenchmarkKmIdentityParallel` generates
-identities with one key manager from parallel goroutines:
+`make lazer-bench` prints the sizes of identities, signatures, audit infos and signer infos and benchmarks
+generating identities, signing and verifying. The `TestParallelBenchmarkLazer*` tests in `km_bench_test.go`
+measure throughput with concurrent workers, and `BenchmarkKmIdentityParallel` generates identities with one key
+manager from parallel goroutines:
 
 ```bash
 cd x/token/services/identity/lazer
@@ -247,19 +254,18 @@ go test -run '^$' -bench '^BenchmarkLazer$' -benchtime=60s .
 go test -run '^$' -bench '^BenchmarkMatchIdentity$' -benchtime=700x -count=3 .
 ```
 
-Verifiers do not cache presentation checks, so every verification and every audit match pays for the full
-presentation check; `BenchmarkMatchIdentity` measures the audit matching. Run the benchmarks on an idle
-machine and compare runs of the same build only: the numbers depend heavily on the machine and the build.
-Sizes: identity 225 B, signature about 53.4 KB, audit info about 75 KB, signer info about 51 KB (the last
-three base64 in JSON or DER, dominated by the presentation).
+Verifiers do not cache presentation checks, so every verification and every audit match pays for a full
+presentation check; `BenchmarkMatchIdentity` measures audit matching. Run the benchmarks on an idle machine and
+compare runs of the same build only. Sizes: identity 225 B, signature about 53.4 KB, audit info about 75 KB, signer
+info about 51 KB (the last three base64 in JSON or DER, dominated by the presentation).
 
 ## Building and testing
 
-The CBDC credential scheme itself (`anoncreds/anoncreds.c`, `anoncreds/anoncreds.h`) is part of this module and is compiled
-by cgo together with the Go package. It uses the lazer library (`lazer.h`, `liblazer.a`) from the lazer
-repository, which `make lazer-install` builds and installs; lazer itself contains no CBDC code. It needs
-`gcc`/`clang`, `make`, `cmake`, `unzip`, `patch`, `git`, GMP and MPFR, and builds on linux/amd64
-and on arm64 (e.g. macOS on Apple silicon).
+The CBDC credential scheme (`anoncreds/anoncreds.c`, `anoncreds/anoncreds.h`) is part of this module and is
+compiled by cgo together with the Go package. It uses the lazer library (`lazer.h`, `liblazer.a`), which
+`make lazer-install` builds from the lazer repository with the local patches and installs; lazer itself contains
+no CBDC code. The build needs `gcc`/`clang`, `make`, `cmake`, `unzip`, `patch`, `git`, GMP and MPFR, and works on
+linux/amd64 and on arm64 (for example macOS on Apple silicon).
 
 ```bash
 # apt-get install -y build-essential cmake unzip patch git libgmp-dev libmpfr-dev
@@ -273,95 +279,106 @@ make lazer-bench                       # sizes and benchmarks
 make lazer-clean                       # remove ./.lazer
 ```
 
-Variables (see `lazer.mk`): `LAZER_REPO`, `LAZER_COMMIT`, `LAZER_REF`, `LAZER_SRC`, and `LAZER_CFLAGS`, which is empty by default so that lazer's own optimization and architecture flags are used (overriding them, e.g. with `-O2`, is not recommended, see below). Everything
-is installed under `./.lazer` (git-ignored): `include/lazer.h`, `include/src/moduli.h`,
-`lib/liblazer.a`, `lib/libhexl.a`. The scheme is compiled against that `lazer.h`, so it must be built with the
-same lazer that built `liblazer.a`. The cgo directives of the `anoncreds` package refer to that
-directory, so after `make lazer-install` plain `go test ./...` in
-`x/token/services/identity/lazer` works too. Without it the module does not compile, which
-is why it is not part of `GO_MODULES` and not covered by `make unit-tests`.
+Variables (see `lazer.mk`): `LAZER_REPO`, `LAZER_COMMIT`, `LAZER_REF`, `LAZER_SRC`, and `LAZER_CFLAGS`, which is
+empty by default so that lazer's own optimization and architecture flags are used (overriding them, for example
+with `-O2`, is not recommended, see [Open issues](#open-issues)). Everything is installed under `./.lazer`
+(git-ignored): `include/lazer.h`, `include/src/moduli.h`, `lib/liblazer.a`, `lib/libhexl.a` and `REVISION`. The
+scheme is compiled against that `lazer.h`, so it must be built with the same lazer that built `liblazer.a`. The cgo
+directives of the `anoncreds` package refer to that directory, so after `make lazer-install` plain `go test ./...`
+in `x/token/services/identity/lazer` works too. Without it the module does not compile, which is why it is not part
+of `GO_MODULES` and not covered by `make unit-tests`.
+
+**CI.** `lazer-tests.yml` runs `make lazer-install` and `make lazer-test` on Linux amd64 (`ubuntu-latest`) and
+arm64 (`ubuntu-24.04-arm`). The `fuzz-lazer` job of `nightly-fuzz.yml` runs the fuzz targets of the module. Neither
+caches `./.lazer`: lazer is built with `-march=native` (and HEXL picks AVX-512 when present), so a build from one
+runner may not run on another. CI builds Linux only; macOS (arm64, Homebrew) is built and tested locally, not in
+CI.
 
 ### lazer revision
 
-By default `make lazer-install` builds a pinned lazer commit, `LAZER_COMMIT` in `lazer.mk`, of `LAZER_REPO`
-(`https://github.com/lazer-crypto/lazer.git`). It is currently `b958e247a2fdb9593b3c25c9603c6c5305c19420`, the head
-of upstream `main`. [lazer-crypto/lazer#33](https://github.com/lazer-crypto/lazer/pull/33) adds arm64/macOS support
-and fixes `int_mod` for zero-padded multi-limb moduli. Until it is merged, it is carried as the local patch
-`0000-lazer-pr33-arm64-int-mod.patch` (see [Local patches](#local-patches)) instead of building the PR head from the
-fork it comes from: a commit that only exists on a fork can become unfetchable if that branch is force-pushed or
-deleted. Once the PR is merged, delete patch 0000 and set `LAZER_COMMIT` to the merge commit.
+By default `make lazer-install` builds the pinned commit `LAZER_COMMIT` of `LAZER_REPO`
+(`https://github.com/lazer-crypto/lazer.git`), `b958e247a2fdb9593b3c25c9603c6c5305c19420` on upstream `main`. The
+arm64/macOS support and the `int_mod` fix of [lazer-crypto/lazer#33](https://github.com/lazer-crypto/lazer/pull/33),
+an open pull request, are carried as patch 0000 rather than built from the fork the pull request comes from: a
+commit that only exists on a fork can become unfetchable if its branch is force-pushed or deleted. When the pull
+request is merged, patch 0000 is deleted and `LAZER_COMMIT` set to the merge commit.
 
-There are two ways to build something else:
+Two variables build something else:
 
 - `LAZER_REF=<branch or tag>` builds that ref of `LAZER_REPO` instead of the pinned commit.
 - `LAZER_SRC=<dir>` builds a copy of a local checkout.
 
-Either way the local patches are applied, starting with 0000. A source that already contains lazer-crypto/lazer#33
-(the `adecaro/lazer` fork, the PR branch, or upstream `main` once the PR is merged) therefore fails to patch; build
-it without patch 0000.
+Either way the local patches are applied, starting with 0000, so a source that already contains
+lazer-crypto/lazer#33 (the `adecaro/lazer` fork, the pull-request branch, or upstream `main` once it is merged)
+fails to patch; build it without patch 0000.
 
-#### Local patches
+### Local patches
 
-Fixes to lazer that Panurus needs are not pushed upstream first: they live in this repository as patch files in
-`x/token/services/identity/lazer/patches/`. `make lazer-install` (in `lazer-fetch`) applies them in lexical order
-to the copy of the sources in `./.lazer/build`, for a fetched revision and for `LAZER_SRC` alike; a `LAZER_SRC`
-checkout itself is never modified. Patching is strict (`patch --forward --strip=1 --fuzz=0`): a patch that does
-not apply exactly, or was already applied, fails the build, so a patch that no longer fits a new lazer revision
-cannot be silently skipped or misapplied.
+Fixes to lazer that Panurus needs live in this repository as patch files in
+`x/token/services/identity/lazer/patches/`. [Local patches to lazer](identity-lazer-patches.md) describes each of
+them in detail: the defect, why it matters for the scheme, the fix and its compatibility.
 
-| Patch | What it does |
+| Patch | Summary |
 |---|---|
-| `0000-lazer-pr33-arm64-int-mod.patch` | The two commits of [lazer-crypto/lazer#33](https://github.com/lazer-crypto/lazer/pull/33), as `git format-patch` mails: `int_mod` (`src/int.c`) strips the zero top limbs of the modulus before `mpn_sec_div_r`, which requires a non-zero top limb (the result was undefined, and wrong on arm64); and lazer builds and runs on arm64 and macOS (portable `config.h` target and `lazer-in2.h` carry helpers, ARMv8 AES in `src/aes256ctr.c`, `src/hexl.patch` for Intel HEXL, arch-dependent Makefile flags, Homebrew GMP/MPFR). On x86-64 the compiler flags and code paths are unchanged. |
-| `0001-coder-bounds-checks.patch` | Bounds for `src/coder.c`: `coder_dec_begin_bnd`/`coder_enc_begin_bnd` start a coder that never reads or writes past the buffer; an access that would sets a sticky error (`coder_get_err`) and decoding fails. Every read and write path is covered (bytes, fixed-width, hints and gaussian unary codes, end marker, sparse vectors). `lin_verifier_verify_ctx_bnd` and `lin_prover_prove_ctx_bnd` (`src/lin-proofs.c`) use them for proofs. Without it, a crafted proof, presentation, credential or masked attributes made the decoders read past the end of the input. |
-| `0002-blindsig-no-exit.patch` | `falcon_decode_pubkey_chk`, `falcon_preimage_sample_chk` and `falcon_check_keypair` (`src/blindsig.c`) validate Falcon keys and return an error instead of calling `exit()`; secret temporaries are wiped. |
-| `0003-zeroize-secrets.patch` | `bytes_clear` cannot be optimized away, `poly_wipe`/`polyvec_wipe`/`polymat_wipe` zero secrets before they are freed, and the LNP prover wipes its witness, its copies and its expanded coins. |
-| `0004-grandom-sampler-state.patch` | Two defects of the discrete gaussian sampler (`src/grandom.c`, `src/intvec.c`) the provers draw their masking vectors from. `gaussian155` kept its sign bits in function-level `static` variables: shared by all threads (a data race between concurrent proofs), carried from one rng stream to the next and never wiped. For `log2o >= 24`, `_intvec_grandom` reseeded the rng with the same seed and domain for every element, so the elements of a vector shared their uniform part and coins: 64 elements with `log2o = 30` took about 2 distinct values. The presentation mask `y4` (`log2stdev4 = 30`) was affected, which undermines the zero-knowledge of presentations generated before the fix. The sign-bit buffer now belongs to the caller and a vector is sampled from one stream; the distribution of a sample is unchanged and verifiers are not affected. |
-| `0005-lin-prover-wipe-witness.patch` | `lin_prover_wipe_witness` wipes the witness and the prover randomness of a prover state and keeps its public part, so that a prover reused for many proofs does not keep the last witness. |
-| `0006-tbox-fiat-shamir-h-z3-z4.patch` | [lazer-crypto/lazer#28](https://github.com/lazer-crypto/lazer/issues/28): three prover messages of the toolbox protocol were not bound by the challenges meant to bind them. `h` was never hashed, so `mu` and the final challenge did not depend on it; `z3` and `z4` were never hashed, and the challenges compressing their equations came from the hash before them; and those challenges also came from the hash before `tg`. `h`, `z3` and `z4` are now absorbed (their own proof encodings; `coder_grandom3_nbits` in `src/coder.c` sizes the `z3`/`z4` buffer), and the `z3`/`z4` challenges come from the hash after `tg`. The JL matrices `R`, `R'` stay derived from the hash before `z3`/`z4`. Ported from the fix in the issue thread. |
-| `0007-tbox-l2-equation-domains.patch` | [lazer-crypto/lazer#25](https://github.com/lazer-crypto/lazer/issues/25): the exact-ℓ2 equations shared one challenge domain, so only their sum was checked and norm could move from one block to another. Equation `i` now uses domain `dom + i`, which stays below the next domain in use. |
-| `0008-tbox-accumulator-challenge-pairs.patch` | [lazer-crypto/lazer#24](https://github.com/lazer-crypto/lazer/issues/24): `___schwartz_zippel_accumulate2` gave all `lambda / 2` accumulator pairs the same challenges. It now draws a `lambda × M` matrix and pair `i` uses rows `2i` and `2i + 1`. |
-| `0009-quad-verify-bound-z21.patch` | [lazer-crypto/lazer#26](https://github.com/lazer-crypto/lazer/issues/26): `lnp_quad_verify` and `abdlop_verify` bounded only `z22`, not `z21`, while the parameters assume a bound on all of `z2`. They now check `‖z21‖² + ‖w − γ·w1‖² ≤ Bsqr`. Honest proofs and the transcript are unchanged. |
-| `0010-prover-zk-z2-rejection-beta-signs.patch` | [lazer-crypto/lazer#31](https://github.com/lazer-crypto/lazer/issues/31), prover-only: the `z2` rejection (`rej2 == 2`) used the bimodal test with `σ1²` and no sign; it now uses the one-time rejection Rej1 of Lyubashevsky–Nguyen–Seiler, "Shorter lattice-based zero-knowledge proofs via one-time commitments" (`rej_onetime`, `src/rejection.c`) with `σ2²`, which roughly doubles the expected `z2` attempts. The toolbox prover's β4 sign read an always-zero bit on every fourth attempt; it now reads the next unused bit, and the sign bits are wiped. |
-| `0011-lin-shared-public-params.patch` | `lin_pp_init` expands the public matrices of a proof system once and converts them to the CRT domain; `lin_prover_init_pp` / `lin_verifier_init_pp` set up provers and verifiers that borrow them (the parameters come from the `lin_pp_t`). After the conversion nothing writes the matrices, so provers and verifiers sharing them may run concurrently, and setting one up no longer expands the matrices. `lin_prover_init` / `lin_verifier_init` are unchanged; proofs do not change. See [Concurrent identity generation](#concurrent-identity-generation). |
+| `0000-lazer-pr33-arm64-int-mod` | [lazer-crypto/lazer#33](https://github.com/lazer-crypto/lazer/pull/33): `int_mod` with zero-padded moduli, arm64 and macOS builds |
+| `0001-coder-bounds-checks` | bounded decoders and encoders, so that crafted proofs, credentials and masked attributes cannot cause out-of-bounds reads |
+| `0002-blindsig-no-exit` | Falcon keys are validated with an error instead of `exit()`; key temporaries are wiped |
+| `0003-zeroize-secrets` | non-elidable wiping; the prover wipes its witness, copies and expanded randomness |
+| `0004-grandom-sampler-state` | discrete Gaussian sampler without global state and with one random stream per vector (zero-knowledge of presentations, concurrent proofs) |
+| `0005-lin-prover-wipe-witness` | `lin_prover_wipe_witness` for reused prover states |
+| `0006-tbox-fiat-shamir-h-z3-z4` | [#28](https://github.com/lazer-crypto/lazer/issues/28): $h$, $\mathbf{z}_3$, $\mathbf{z}_4$ are absorbed into the Fiat–Shamir transcript before the challenges that bind them |
+| `0007-tbox-l2-equation-domains` | [#25](https://github.com/lazer-crypto/lazer/issues/25): every exact-$\ell_2$ equation gets its own challenges, so each block bound is enforced |
+| `0008-tbox-accumulator-challenge-pairs` | [#24](https://github.com/lazer-crypto/lazer/issues/24): independent challenges for each of the $\lambda/2$ accumulator pairs |
+| `0009-quad-verify-bound-z21` | [#26](https://github.com/lazer-crypto/lazer/issues/26): the verifier bounds all of $\mathbf{z}_2=(\mathbf{z}_{21},\mathbf{z}_{22})$ |
+| `0010-prover-zk-z2-rejection-beta-signs` | [#31](https://github.com/lazer-crypto/lazer/issues/31): one-time rejection for $\mathbf{z}_2$ and a uniform $\beta_4$ sign (prover only) |
+| `0011-lin-shared-public-params` | `lin_pp_t`: public matrices expanded and CRT-converted once, borrowed read-only by provers and verifiers |
 
-Patches 0006-0008 change `src/lin-proofs.c`, not `src/lnp-tbox.c`: `lin_prover_prove` and
-`lin_verifier_verify` run a private copy of the toolbox protocol in `lin-proofs.c`, so a fix to `lnp-tbox.c`
-alone, as proposed upstream, does not reach the proofs this module makes. 0009 and 0010 change the shared
-`src/lnp-quad.c`, `src/abdlop.c` and `src/rejection.c`. 0006-0008 change the transcript: presentations, SoKs
-and equality-of-opening proofs made before and after them do not verify against each other. Credentials, nyms,
-parameters and proof sizes are unchanged.
+Patches 0006–0008 change the transcript: proofs made with and without them do not verify against each other.
+Credentials, nyms, parameters and proof sizes do not depend on the patches.
 
-`make lazer-check` (run by `lazer-test` and `lazer-bench`) fails if the installed lazer was not built with
-exactly the patches in the directory (it compares their sha256 with `./.lazer/REVISION`), so a build made before
-a patch was added cannot be used by mistake.
+**How they are applied.** `make lazer-install` (in `lazer-fetch`) applies the patches in lexical order to the copy
+of the sources in `./.lazer/build`, for a fetched revision and for `LAZER_SRC` alike; a `LAZER_SRC` checkout itself
+is never modified. Patching is strict (`patch --forward --strip=1 --fuzz=0`): a patch that does not apply exactly,
+or is already applied, fails the build, so a patch that does not fit a lazer revision cannot be skipped or
+misapplied silently.
 
-To change a patch, apply the series to a pristine checkout of `LAZER_COMMIT`, edit, and regenerate the patch
-with `git diff` or `git format-patch --no-signature` (paths `a/...`, `b/...`, relative to the lazer root; no
-signature, so that the sha256 of a patch does not depend on the git version that produced it). Patches must not
-touch the Falcon or Intel HEXL sources under `third_party/`: lazer's own Makefile extracts them and applies
-`src/falcon.patch` and `src/hexl.patch` (added by patch 0000) at build time, after `lazer-fetch`. A change to them
-goes into those files. When moving to a new lazer revision, drop the patches that are merged upstream and refresh the
-others.
+**What was built.** `make lazer-install` records the build in `./.lazer/REVISION`: for a fetched build the
+repository, ref and commit; for `LAZER_SRC` the source directory and the checkout's `HEAD`, marked
+`(with uncommitted changes)` if the working tree is dirty; then the applied patches with their sha256.
+`make lazer-check`, run by `lazer-test`, `lazer-test-short` and `lazer-bench`, prints it and fails unless the
+installed lazer was built with exactly the patches in the directory, so a build with a different patch set cannot
+be used by mistake.
 
-`make lazer-install` records what it built in `./.lazer/REVISION`, and `make lazer-check` (run by the test
-targets) prints it. For a fetched build, this is the repository, ref and commit. For `LAZER_SRC`, it is the
-source directory and the checkout's `HEAD`, marked `(with uncommitted changes)` if the working tree is dirty.
-Both are followed by the applied patches with their sha256. `lazer-tests.yml` runs the unit tests on Linux
-amd64 and arm64 (`ubuntu-24.04-arm`), so the arm64 support of patch 0000 is built and tested in CI. CI (`lazer-tests.yml`, and the `fuzz-lazer` job of
-`nightly-fuzz.yml`) does not cache `./.lazer`: lazer is built with `-march=native`, so every run builds it from
-scratch.
+**Changing a patch.** Apply the series to a pristine checkout of `LAZER_COMMIT`, edit, and regenerate the patch with
+`git diff` or `git format-patch --no-signature` (paths `a/...`, `b/...` relative to the lazer root; no signature, so
+that the sha256 of a patch does not depend on the git version). Patches must not touch the Falcon or Intel HEXL
+sources under `third_party/`: lazer's own Makefile extracts them and applies `src/falcon.patch` and `src/hexl.patch`
+(added by patch 0000) at build time, after `lazer-fetch`, so a change to them goes into those files. When moving to
+a new lazer revision, drop the patches that are merged upstream and refresh the others.
 
-The tests cover, among others: identity and signature round trips, unlinkability, signatures under
-the wrong identity or issuer, swapped nyms, audit matching and reuse, signers of another wallet,
-remote wallets, invalid credentials, malformed inputs and fuzzing, and the provider flow.
+### Tests
 
-The `anoncreds` package has regression tests for crafted inputs that used to read out of bounds, malformed
-issuer keys, misuse of the API (export before masking, use after `Clear`, a SoK for another attribute) and the
-parameter check, and fuzz targets for every decoder of untrusted input (`FuzzSokVerify`, `FuzzPresVer`,
-`FuzzIssue`, `FuzzCredVerify`, `FuzzImport`, `FuzzCommitWithOpening`, `FuzzNewVerifier`). Tests and fuzz
-targets place their inputs right before an inaccessible page, so a read past the input crashes instead of
-passing silently. The nightly fuzz workflow runs them, and the fuzz targets of the module root, in its
-`fuzz-lazer` job:
+The module tests cover, among others: identity and signature round trips, unlinkability, signatures under the wrong
+identity or issuer, swapped nyms, audit matching and reuse, signers of another wallet, remote wallets, invalid
+credentials, forgery without a credential (`TestForgeryWithoutCredential`), malformed inputs, concurrent identity
+generation and `Close`, and the provider flow. Further tests pin the documented properties: the sizes of
+identities, signatures, audit and signer infos (`TestSizesWithinStatedBounds`), the shared limiter of a provider and
+its default (`TestKeyManagerProviderSharesOneLimiter`, `TestDefaultProverLimit`), the verifier pool
+(`TestVerifierPoolKeepsAtMostFourIdle`), the revocation handle carried by each signature
+(`TestRevocationHandleIsBoundPerSignature`) and the attribute encoding (`TestAttributeEncodingBoundAndInjective`).
+`TestKnownAnswerProofs` (`anoncreds`) pins the proof transcript with fixed coins: a build whose patches change the
+transcript fails it. The `lazer-tests` workflow also checks that `make lazer-check` refuses an install built from a
+different patch set.
+
+The `anoncreds` package has regression tests for crafted inputs aimed at the decoders, malformed issuer keys, misuse
+of the API (export before masking, use after `Clear`, a SoK for another attribute), the zero-witness forgery
+(`TestZeroWitnessForgery`), the parameter check, the Gaussian sampler and concurrent use of one `User`. Fuzz targets
+cover every decoder of untrusted input: `FuzzSokVerify`, `FuzzEqOpeningVerify`, `FuzzPresVer`, `FuzzIssue`,
+`FuzzCredVerify`, `FuzzImport`, `FuzzCommitWithOpening` and `FuzzNewVerifier` in `anoncreds`, and
+`FuzzDeserializers`, `FuzzDeserializeAuditInfo`, `FuzzSignerInfoDecode` and `FuzzNewConfigFromRaw` in the module
+root. The `anoncreds` fuzz targets and its out-of-bounds regression tests place their inputs right before an
+inaccessible page (`newGuard` in `guard_test.go`), so that a read past the input crashes instead of passing
+silently. The `fuzz-lazer` job of the nightly fuzz workflow runs all of them:
 
 ```bash
 cd x/token/services/identity/lazer
@@ -378,8 +395,8 @@ go run ./cmd/lazergen signerconfig -ca /tmp/ca -out /tmp/alice -eid alice -ou or
 
 ### Proof system parameters
 
-`anoncreds/anoncreds_params.h` is generated by lazer's `scripts/lin-codegen.sage` (needs SageMath) from the three files in
-`anoncreds/params/` (`anoncreds_p1_params.py`, `anoncreds_p2_params.py`, `anoncreds_popen_params.py`):
+`anoncreds/anoncreds_params.h` is generated by lazer's `scripts/lin-codegen.sage` (needs SageMath) from the three
+files in `anoncreds/params/` (`anoncreds_p1_params.py`, `anoncreds_p2_params.py`, `anoncreds_popen_params.py`):
 
 ```bash
 cd <lazer>/scripts
@@ -390,9 +407,9 @@ for p in p1 p2 popen; do sage lin-codegen.sage <panurus>/x/token/services/identi
 The parameters must agree with `anoncreds.h` and the witness layout of `anoncreds.c`: dimensions (`CBDC_COM_ROWS`,
 `CBDC_MAXCOM`, the witness length and the rows of each statement), the binary part (τ) and every squared ℓ2 bound
 that the C code checks before proving (`CBDC_L2SQR_BND_*`: 109², 91², 34034726, 64², 39²). `cbdc_params_check`
-compares all of them with the generated `l2Bsqr`, `n`, `Es` and `Ps` tables; the library aborts at initialization
-if they differ, and `TestParamsMatchConstants`/`TestParamsCheck` fail. lazer's Python reference (`python/cbdc/cbdc.py`) uses its own copy of these
-files and is the reference for the scheme, not part of this module.
+compares all of them with the generated `l2Bsqr`, `n`, `Es` and `Ps` tables; the library aborts at initialization if
+they differ, and `TestParamsMatchConstants`/`TestParamsCheck` fail. lazer's Python reference
+(`python/cbdc/cbdc.py`) has its own copy of these files and is not part of this module.
 
 ## Layout
 
@@ -402,61 +419,46 @@ files and is the reference for the scheme, not part of this module.
 | `config.go` | configuration and on-disk layout |
 | `identity.go` | identity and signature encodings, verifier pool |
 | `km.go`, `kmp.go` | `KeyManager`, `KeyManagerProvider`, identity cache wrapper |
-| `prover.go` | `ProverLimiter`, see [Concurrent identity generation](#concurrent-identity-generation) |
+| `prover.go` | `ProverLimiter`, see [Concurrency and memory](#concurrency-and-memory) |
 | `deserializer.go`, `audit.go` | verifier/matcher deserializers, `AuditInfo` |
 | `strictjson.go` | strict and canonical JSON decoding of audit infos, signer infos and configurations |
 | `issuer.go`, `cmd/lazergen` | issuer key generation and wallet issuance for tools and tests |
 | `anoncreds/anoncreds.c`, `anoncreds/anoncreds.h` | the CBDC credential scheme in C, built on lazer (derived from lazer, MIT, see `anoncreds/LICENSE.lazer`) |
 | `anoncreds/anoncreds.go` | cgo binding of the scheme, with tests and a demo in `anoncreds/cmd/anoncreds_demo` |
 | `anoncreds/anoncreds_params.h`, `anoncreds/params/` | proof system parameters: the generated header and the `.py` files it is generated from |
+| `patches/` | the local patches to lazer, see [Local patches](#local-patches) |
 
 ## Open issues
 
-**Advisory: presentations generated before lazer patch 0004.** Before the patch, lazer's discrete Gaussian
-sampler gave the 64 coefficients of each polynomial of the presentation mask `y4` (`log2stdev4 = 30`) about
-two distinct values (see `0004-grandom-sampler-state.patch` in [Local patches](#local-patches)). That mask
-hides the projections of the P2 witness, so a published presentation made with an unpatched build may leak
-information about it: the credential, the masking randomness, the hidden attributes (including `usk`) and the
-commitment openings. Treat identities, signatures and audit infos generated with such a build as possibly
-exposing their wallet: re-issue the credentials of those wallets with a new `usk` and stop using their
-pseudonyms. The defect is in upstream lazer as well and must be reported to its maintainers.
-
-0. **Unforgeability argument.** A credential-less forgery present in an earlier version (and in lazer's
-   `cbdc.py`) is fixed by a public non-zero target in the credential equation, see
-   [the scheme description, §10.1](identity-lazer-anoncreds.md#101-unforgeability-of-credentials). Credentials
-   issued before that fix must be reissued. A formal reduction is still missing.
-1. **Commitment binding.** The commitment key is 2x11 over Z_12289[X]/(X^64+1). A rough estimate
-   gives about 80-bit core-SVP for finding two openings (collision norm up to 150) and about
-   120 bit for extracting an opening. A break lets a user open `nymEID`/`nymRH` to a false
-   enrollment id or revocation handle, or prove a false enrollment id with `eid_proof` (audit evasion);
-   it does not allow linking. Since the identity is `nymEID` alone, extracting an opening of a victim's
-   `nymEID` would also let a holder of a credential with the same enrollment id sign for it. Before any production use, run the lattice estimator and, if needed, increase
-   `CBDC_COM_ROWS` in `anoncreds/anoncreds.h` and regenerate the `popen` and `p2` parameters.
-2. **Size.** A signature is about 53.4 KB (the identity is 225 B).
-3. **Patched lazer.** The build carries local fixes to lazer (bounds-checked decoders, non-exiting key
-   decoding, zeroization, the discrete gaussian sampler, the toolbox soundness and zero-knowledge issues, see
-   [Local patches](#local-patches)). The sampler defects fixed by 0004 are in upstream lazer too, and affect
-   presentations generated before the fix (see the patch).
-   The open upstream issues lazer-crypto/lazer#24, #25, #26, #28 and #31 are fixed locally by 0006-0010, in
-   the toolbox copy of `src/lin-proofs.c` that the proofs run; fixes to upstream `src/lnp-tbox.c` alone would
-   not cover this build. Proofs made before and after the patches are incompatible. The fixes for #28, #25
-   and #26 were checked by code review against the issue threads and the reporters' fix commits; they are not
-   covered by negative regression tests (tests that a cheating proof is rejected), and #24 has no dedicated
-   test either: the honest-proof tests show that the patched prover and verifier agree. Entry points of
-   `liblazer.a` that this module does not use stay unpatched: lazer's own toolbox in `src/lnp-tbox.c`
-   (`lnp_prover_prove` / `lnp_verifier_verify`) still has #24, #25, #28 and the β4 sign defect, and
-   `src/lnp-quad-eval.c` does not hash `h` before `lnp_quad_many_*` either. These fixes should
-   be upstreamed, and lazer's
-   remaining unchecked entry points (e.g. `signer_sign`, `verifier_vrfy`, `user_sign` of its own blind
-   signature, which this module does not use) still use the unbounded coder.
-4. **Secrets in memory.** Secrets are wiped on `Clear` and after use, in C and in the Go wrapper, but copies
-   made by the Go runtime (e.g. when growing slices, or by the garbage collector) cannot be wiped, and memory is
-   not locked against swapping.
-5. **Build flags.** lazer's own `tests/abdlop-test` has a randomized check (`tests/abdlop-test.c:146`, marked "sometimes fails" upstream) that a perturbed commitment is rejected. On amd64 it fails in a few percent of the runs with lazer's default `-O3`, but in about 90% with `-O2` (gcc). On arm64 with clang, `-O2` and `-O3` give the same low rate, and an ASan/UBSan build of lazer found no memory errors. The cause is not understood; the tests of this module pass in both builds, but use the default flags and do not rely on other flag sets until it is.
+1. **Unforgeability argument.** The credential equation has a public non-zero target $\mathbf{c}_0$, derived from
+   the issuer key, so that the all-zero witness does not satisfy it (see
+   [the scheme description, §10.1](identity-lazer-anoncreds.md#101-unforgeability-of-credentials)). A formal
+   reduction for the credential scheme with this target is still missing.
+2. **Commitment binding.** The commitment key is 2x11 over Z_12289[X]/(X^64+1). A rough estimate gives about 80-bit
+   core-SVP for finding two openings (collision norm up to 150) and about 120 bit for extracting an opening. A break
+   lets a user open `nymEID`/`nymRH` to a false enrollment id or revocation handle, or prove a false enrollment id
+   with `eid_proof` (audit evasion); it does not allow linking. Since the identity is `nymEID` alone, extracting an
+   opening of a victim's `nymEID` would also let a holder of a credential with the same enrollment id sign for it.
+   Before any production use, run the lattice estimator and, if needed, increase `CBDC_COM_ROWS` in
+   `anoncreds/anoncreds.h` and regenerate the `popen` and `p2` parameters.
+3. **Size.** A signature is about 53.4 KB (the identity is 225 B).
+4. **Patched lazer.** The build depends on the local patches; none of them is merged upstream. The fixes for #28,
+   #25 and #26 were checked by code review, not by negative tests with a cheating prover, and #24 has no dedicated
+   test. Entry points of `liblazer.a` that this module does not use keep the upstream defects (see
+   [Scope and testing of 0006–0010](identity-lazer-patches.md#scope-and-testing-of-00060010)).
+5. **Secrets in memory.** Secrets are wiped on `Clear` and after use, in C and in the Go wrapper, but copies made by
+   the Go runtime (for example when growing slices, or by the garbage collector) cannot be wiped, and memory is not
+   locked against swapping.
+6. **Build flags.** lazer's own `tests/abdlop-test` has a randomized check (`tests/abdlop-test.c:146`, marked
+   "sometimes fails" upstream) that a perturbed commitment is rejected. In local runs (an observation, not a CI
+   measurement), on amd64 it fails in a few percent of the
+   runs with lazer's default `-O3`, but in about 90% with `-O2` (gcc). On arm64 with clang, `-O2` and `-O3` give the
+   same low rate, and an ASan/UBSan build of lazer found no memory errors. The cause is not understood; the tests of
+   this module pass in both builds, but use the default flags and do not rely on other flag sets until it is.
 
 ## Not done
 
-Driver, public-parameter (`IdemixIssuerPublicKeys` equivalent) and integration (`nwo`) wiring,
-a SKI cleanup provider, revocation (the RH is committed but not checked against a list), a
-per-message presentation signature mode, and sending the presentation once per transaction (with
-one signature per pseudonym each signature carries its own presentation, about 37 KB).
+Driver, public-parameter (`IdemixIssuerPublicKeys` equivalent) and integration (`nwo`) wiring, a SKI cleanup
+provider, revocation (the RH is committed but not checked against a list), a per-message presentation signature
+mode, and sending the presentation once per transaction (with one signature per pseudonym each signature carries
+its own presentation, about 36.9 KiB).
