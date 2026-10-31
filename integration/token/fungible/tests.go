@@ -1169,6 +1169,19 @@ func TestMaliciousTransactions(net *integration.Infrastructure, sel *token3.Repl
 	IssueCash(net, "", "USD", 110, alice, sel.Get(""), true, issuer)
 	CheckBalance(net, alice, "", "USD", 110)
 
+	// MaliciousTransfer gets a first transaction endorsed and then asks for a second, different
+	// token request to be endorsed under the same transaction id. With FSC-based endorsement, the
+	// endorser has already filed a validation record for that id when it approved the first request,
+	// and it refuses to file another one: the attack is stopped at endorsement and never reaches the
+	// ledger, so there is no committed transaction whose status can be checked.
+	if len(GetEndorsers(net, sel)) > 0 {
+		MaliciousTransferCash(net, alice, "", "USD", 2, bob, sel.Get(""), nil, "failed to sign transaction", "failed to append metadata for", "failed to insert validation record for tx")
+		CheckBalance(net, alice, "", "USD", 110)
+		CheckBalance(net, bob, "", "USD", 0)
+
+		return
+	}
+
 	txID := MaliciousTransferCash(net, alice, "", "USD", 2, bob, sel.Get(""), nil)
 	txStatusAlice := GetTXStatus(net, alice, txID)
 	gomega.Expect(txStatusAlice.ValidationCode).To(gomega.BeEquivalentTo(ttx.Deleted))
