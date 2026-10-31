@@ -35,26 +35,7 @@ type serverConfig struct {
 }
 
 func main() {
-	config := serverConfig{
-		CCID:               os.Getenv("CHAINCODE_ID"),
-		CCaddress:          os.Getenv("CHAINCODE_SERVER_ADDRESS"),
-		LogLevel:           os.Getenv("CHAINCODE_LOG_LEVEL"),
-		LogFormat:          os.Getenv("CHAINCODE_LOG_FORMAT"),
-		TLS:                os.Getenv("CHAINCODE_TLS"),
-		TLSKey:             os.Getenv("CHAINCODE_TLS_KEY"),
-		TLSCert:            os.Getenv("CHAINCODE_TLS_CERT"),
-		TLSCACertsFilePath: os.Getenv("CHAINCODE_TLS_CA_CERTS"),
-	}
-
-	if len(config.LogLevel) == 0 {
-		config.LogLevel = "info"
-	}
-	if len(config.TLS) == 0 && len(config.TLSKey) > 0 {
-		config.TLS = "true"
-	}
-	if len(config.LogFormat) == 0 {
-		config.LogFormat = "%{color}%{time:2006-01-02 15:04:05.000 MST} [%{module}] %{shortfunc} -> %{level:.4s} %{id:03x}%{color:reset} %{message}"
-	}
+	config := loadServerConfig()
 
 	logging.Init(logging.Config{
 		Format:  config.LogFormat,
@@ -78,23 +59,7 @@ func main() {
 		if os.Getenv("DEVMODE_ENABLED") != "" {
 			fmt.Println("starting up in devmode...")
 		}
-		err := shim.Start(
-			&tcc.TokenChaincode{
-				QueryLimits: queryLimits,
-				TokenServicesFactory: func(bytes []byte) (tcc.PublicParameters, tcc.Validator, error) {
-					ppm, err := is.PublicParametersFromBytes(bytes)
-					if err != nil {
-						return nil, nil, err
-					}
-					v, err := is.NewValidator(ppm)
-					if err != nil {
-						return nil, nil, err
-					}
-
-					return ppm, token.NewValidator(v), nil
-				},
-			},
-		)
+		err := shim.Start(newTokenChaincode(queryLimits, is))
 		assertNoError(err, "cannot start chaincode")
 	} else {
 		fmt.Println("Token Chaincode CCID : " + config.CCID)
@@ -102,49 +67,90 @@ func main() {
 		fmt.Println("Running Token Chaincode as service ...")
 
 		// prepare TLS properties
-		tlsProps := shim.TLSProperties{
-			Disabled: false,
-		}
-		enabled, err := strconv.ParseBool(config.TLS)
-		assertNoError(err, "cannot parse [%s]", config.TLS)
-		if enabled {
-			tlsKeyRaw, err := os.ReadFile(config.TLSKey)
-			assertNoError(err, "cannot read tls key at [%s]", config.TLSKey)
-			tlsCertRaw, err := os.ReadFile(config.TLSCert)
-			assertNoError(err, "cannot read tls cert at [%s]", config.TLSKey)
-			tlsCACertsRaw, err := os.ReadFile(config.TLSCACertsFilePath)
-			assertNoError(err, "cannot read tls ca certs at [%s]", config.TLSCACertsFilePath)
-
-			tlsProps.Key = tlsKeyRaw
-			tlsProps.Cert = tlsCertRaw
-			tlsProps.ClientCACerts = tlsCACertsRaw
-		} else {
-			tlsProps.Disabled = true
-		}
+		tlsProps := loadTLSProperties(config)
 
 		server := &shim.ChaincodeServer{
-			CCID:    config.CCID,
-			Address: config.CCaddress,
-			CC: &tcc.TokenChaincode{
-				QueryLimits: queryLimits,
-				TokenServicesFactory: func(bytes []byte) (tcc.PublicParameters, tcc.Validator, error) {
-					ppm, err := is.PublicParametersFromBytes(bytes)
-					if err != nil {
-						return nil, nil, err
-					}
-					v, err := is.NewValidator(ppm)
-					if err != nil {
-						return nil, nil, err
-					}
-
-					return ppm, token.NewValidator(v), nil
-				},
-			},
+			CCID:     config.CCID,
+			Address:  config.CCaddress,
+			CC:       newTokenChaincode(queryLimits, is),
 			TLSProps: tlsProps,
 		}
 		err = server.Start()
 		assertNoError(err, "Error starting Token Chaincode")
 	}
+}
+
+// loadServerConfig reads the chaincode server configuration from the environment and fills in
+// the defaults for the log level, the log format and TLS.
+func loadServerConfig() serverConfig {
+	config := serverConfig{
+		CCID:               os.Getenv("CHAINCODE_ID"),
+		CCaddress:          os.Getenv("CHAINCODE_SERVER_ADDRESS"),
+		LogLevel:           os.Getenv("CHAINCODE_LOG_LEVEL"),
+		LogFormat:          os.Getenv("CHAINCODE_LOG_FORMAT"),
+		TLS:                os.Getenv("CHAINCODE_TLS"),
+		TLSKey:             os.Getenv("CHAINCODE_TLS_KEY"),
+		TLSCert:            os.Getenv("CHAINCODE_TLS_CERT"),
+		TLSCACertsFilePath: os.Getenv("CHAINCODE_TLS_CA_CERTS"),
+	}
+
+	if len(config.LogLevel) == 0 {
+		config.LogLevel = "info"
+	}
+	if len(config.TLS) == 0 && len(config.TLSKey) > 0 {
+		config.TLS = "true"
+	}
+	if len(config.LogFormat) == 0 {
+		config.LogFormat = "%{color}%{time:2006-01-02 15:04:05.000 MST} [%{module}] %{shortfunc} -> %{level:.4s} %{id:03x}%{color:reset} %{message}"
+	}
+
+	return config
+}
+
+// newTokenChaincode returns the token chaincode, building its public parameters and validator
+// with the passed validator driver service.
+func newTokenChaincode(queryLimits tcc.QueryLimits, is *core.ValidatorDriverService) *tcc.TokenChaincode {
+	return &tcc.TokenChaincode{
+		QueryLimits: queryLimits,
+		TokenServicesFactory: func(bytes []byte) (tcc.PublicParameters, tcc.Validator, error) {
+			ppm, err := is.PublicParametersFromBytes(bytes)
+			if err != nil {
+				return nil, nil, err
+			}
+			v, err := is.NewValidator(ppm)
+			if err != nil {
+				return nil, nil, err
+			}
+
+			return ppm, token.NewValidator(v), nil
+		},
+	}
+}
+
+// loadTLSProperties returns the TLS properties of the chaincode server, reading the key, the
+// certificate and the client CA certificates from disk when TLS is enabled.
+func loadTLSProperties(config serverConfig) shim.TLSProperties {
+	tlsProps := shim.TLSProperties{
+		Disabled: false,
+	}
+	enabled, err := strconv.ParseBool(config.TLS)
+	assertNoError(err, "cannot parse [%s]", config.TLS)
+	if enabled {
+		tlsKeyRaw, err := os.ReadFile(config.TLSKey)
+		assertNoError(err, "cannot read tls key at [%s]", config.TLSKey)
+		tlsCertRaw, err := os.ReadFile(config.TLSCert)
+		assertNoError(err, "cannot read tls cert at [%s]", config.TLSKey)
+		tlsCACertsRaw, err := os.ReadFile(config.TLSCACertsFilePath)
+		assertNoError(err, "cannot read tls ca certs at [%s]", config.TLSCACertsFilePath)
+
+		tlsProps.Key = tlsKeyRaw
+		tlsProps.Cert = tlsCertRaw
+		tlsProps.ClientCACerts = tlsCACertsRaw
+	} else {
+		tlsProps.Disabled = true
+	}
+
+	return tlsProps
 }
 
 // init makes -cover instrumented builds of this binary keep flushing their
