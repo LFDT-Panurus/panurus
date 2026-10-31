@@ -229,7 +229,11 @@ For tests involving Fabric-X (starts with `fabricx`), you need additional setup:
 ```bash
 make fxconfig configtxgen fabricx-docker-images
 make integration-tests-fabricx-dlog-t1
+make integration-tests-fabricx-zkatsnark-t1
 ```
+
+The per-label targets of each fabricx suite (e.g. `integration-tests-fabricx-zkatsnark-t17`)
+are listed in `fabricx.mk`.
 
 ## Cleaning Up
 
