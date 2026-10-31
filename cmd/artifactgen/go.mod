@@ -11,8 +11,8 @@ replace (
 require (
 	github.com/LFDT-Panurus/panurus v0.10.1
 	github.com/LFDT-Panurus/panurus/integration v0.0.0-00010101000000-000000000000
-	github.com/hyperledger-labs/fabric-smart-client v0.26.0
-	github.com/hyperledger-labs/fabric-smart-client/integration v0.26.0
+	github.com/hyperledger-labs/fabric-smart-client v0.27.0
+	github.com/hyperledger-labs/fabric-smart-client/integration v0.27.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.12.1
@@ -109,7 +109,7 @@ require (
 	github.com/libp2p/go-buffer-pool v0.1.0 // indirect
 	github.com/libp2p/go-cidranger v1.1.0 // indirect
 	github.com/libp2p/go-flow-metrics v0.3.0 // indirect
-	github.com/libp2p/go-libp2p v0.50.0 // indirect
+	github.com/libp2p/go-libp2p v0.51.0 // indirect
 	github.com/libp2p/go-libp2p-asn-util v0.4.1 // indirect
 	github.com/libp2p/go-libp2p-kad-dht v0.42.2 // indirect
 	github.com/libp2p/go-libp2p-kbucket v0.9.0 // indirect

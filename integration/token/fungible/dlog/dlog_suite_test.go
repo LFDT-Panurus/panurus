@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/LFDT-Panurus/panurus/integration"
+	token2 "github.com/LFDT-Panurus/panurus/integration/token"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -22,6 +23,8 @@ func TestEndToEnd(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "EndToEnd Fungible (DLOG) Suite")
 }
+
+var _ = AfterSuite(token2.CleanupBuildArtifacts)
 
 func StartPortDlog() int {
 	return integration.ZKATDLogFungible.StartPortForNode()
