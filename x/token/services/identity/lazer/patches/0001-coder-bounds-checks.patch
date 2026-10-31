@@ -1,0 +1,1021 @@
+From: Panurus maintainers
+Subject: [PATCH 1/3] coder, lin-proofs: bounds-checked decoding and encoding
+
+The decoders of src/coder.c scan unary codes (coder_dec_ghint,
+coder_dec_grandom) and read fixed-width fields without knowing where the
+input ends, so a crafted proof makes the verifier read past the end of its
+buffer (any remote signer can trigger this). The encoders likewise write
+without knowing the capacity of the output.
+
+Add an optional bound to coder_state_t:
+- coder_dec_begin_bnd / coder_enc_begin_bnd start a coder that never reads
+  or writes at or past in + inlen / out + outlen;
+- an access that would do so sets a sticky error flag (coder_get_err), every
+  later operation is a no-op and coder_dec_end fails;
+- every read and write path is checked: bytes, urandom (fixed width), ghint,
+  grandom (unary + binary), end marker, and the sparse urandom5/6 (whose
+  header-controlled length is also checked against nelems_max).
+coder_dec_begin / coder_enc_begin keep the previous, unbounded behaviour.
+
+lin-proofs: lnp_tbox_decproof / lnp_tbox_encproof take a length,
+lin_verifier_verify_ctx_bnd reads at most prooflen bytes and
+lin_prover_prove_ctx_bnd fails (returns 0) instead of overflowing when the
+proof does not fit. The unbounded entry points are wrappers passing
+SIZE_MAX.
+
+Panurus-local patch, applied by `make lazer-install` (lazer.mk).
+
+diff --git a/src/coder.c b/src/coder.c
+index eff3448..353825b 100644
+--- a/src/coder.c
++++ b/src/coder.c
+@@ -2,13 +2,68 @@
+ 
+ static inline void _inc_idx (unsigned int *byte, unsigned int *bit);
+ static inline void _inc_idx_zero (uint8_t *buf, unsigned int *byte,
+-                                  unsigned int *bit);
++                                  unsigned int *bit, size_t avail, int *oob);
+ static unsigned int _uencode (uint8_t **byte, unsigned int *bit,
+                               const intvec_t v, UNUSED const int_t m,
+-                              unsigned int mbits);
++                              unsigned int mbits, size_t avail, int *oob);
+ static unsigned int _udecode (intvec_t v, const uint8_t **byte,
+                               unsigned int *bit, const int_t m,
+-                              unsigned int mbits);
++                              unsigned int mbits, size_t avail, int *oob);
++
++/*
++ * Bounds checking (panurus patch). A coder started with coder_dec_begin_bnd
++ * or coder_enc_begin_bnd never reads or writes a byte at or past the end of
++ * the buffer it was given. An access that would do so sets the error flag of
++ * the state instead, every later operation on the state is a no-op, and
++ * coder_dec_end fails. Coders started with coder_dec_begin or
++ * coder_enc_begin are unbounded, as before.
++ */
++
++/* bytes that may be read starting at state->in */
++static inline size_t
++_avail_in (const coder_state_t state)
++{
++  if (!state->bounded)
++    return SIZE_MAX;
++  if (state->in == NULL || state->end == NULL || state->in >= state->end)
++    return 0;
++  return (size_t)(state->end - state->in);
++}
++
++/* bytes that may be written starting at state->out */
++static inline size_t
++_avail_out (const coder_state_t state)
++{
++  if (!state->bounded)
++    return SIZE_MAX;
++  if (state->out == NULL || state->oend == NULL || state->out >= state->oend)
++    return 0;
++  return (size_t)(state->oend - state->out);
++}
++
++/* read byte i of buf, or 0 and set *oob if i is out of bounds */
++static inline uint8_t
++_rd (const uint8_t *buf, size_t i, size_t avail, int *oob)
++{
++  if (UNLIKELY (i >= avail))
++    {
++      *oob = 1;
++      return 0;
++    }
++  return buf[i];
++}
++
++/* buf[i] |= val, or set *oob if i is out of bounds */
++static inline void
++_wr_or (uint8_t *buf, size_t i, uint8_t val, size_t avail, int *oob)
++{
++  if (UNLIKELY (i >= avail))
++    {
++      *oob = 1;
++      return;
++    }
++  buf[i] |= val;
++}
+ 
+ void
+ coder_enc_begin (coder_state_t state, uint8_t *out)
+@@ -17,6 +72,10 @@ coder_enc_begin (coder_state_t state, uint8_t *out)
+   state->in = NULL;
+   state->byte_off = 0;
+   state->bit_off = 0;
++  state->end = NULL;
++  state->oend = NULL;
++  state->bounded = 0;
++  state->err = 0;
+ }
+ 
+ void
+@@ -26,6 +85,35 @@ coder_dec_begin (coder_state_t state, const uint8_t *in)
+   state->in = in;
+   state->byte_off = 0;
+   state->bit_off = 0;
++  state->end = NULL;
++  state->oend = NULL;
++  state->bounded = 0;
++  state->err = 0;
++}
++
++/* As coder_enc_begin, but never write more than outlen bytes to out. */
++void
++coder_enc_begin_bnd (coder_state_t state, uint8_t *out, size_t outlen)
++{
++  coder_enc_begin (state, out);
++  state->bounded = 1;
++  state->oend = (out != NULL ? out + outlen : NULL);
++}
++
++/* As coder_dec_begin, but never read more than inlen bytes from in. */
++void
++coder_dec_begin_bnd (coder_state_t state, const uint8_t *in, size_t inlen)
++{
++  coder_dec_begin (state, in);
++  state->bounded = 1;
++  state->end = (in != NULL ? in + inlen : NULL);
++}
++
++/* Returns 1 if an access was out of bounds (or decoding failed), else 0. */
++int
++coder_get_err (coder_state_t state)
++{
++  return state->err != 0;
+ }
+ 
+ unsigned int
+@@ -41,6 +129,13 @@ coder_enc_bytes (coder_state_t state, const uint8_t *bytes,
+   /* encoding bytes first avoids bit shifting */
+   ASSERT_ERR (state->bit_off == 0);
+ 
++  if (state->err)
++    return;
++  if (state->bit_off != 0 || nbytes > _avail_out (state))
++    {
++      state->err = 1;
++      return;
++    }
+   memcpy (state->out, bytes, nbytes);
+   state->byte_off += nbytes;
+   state->out += nbytes;
+@@ -53,10 +148,20 @@ coder_enc_ghint (coder_state_t state, const intvec_t ghint)
+   unsigned int i, j, _bit;
+   unsigned int nbytes = 0;
+   uint8_t *_byte;
++  const size_t avail = _avail_out (state);
++  int oob = 0;
+ 
+   ASSERT_ERR (state->out != NULL);
+   ASSERT_ERR (state->in == NULL);
+ 
++  if (state->err)
++    return;
++  if (avail == 0)
++    {
++      state->err = 1;
++      return;
++    }
++
+   _byte = state->out;
+   _bit = state->bit_off;
+ 
+@@ -68,46 +173,51 @@ coder_enc_ghint (coder_state_t state, const intvec_t ghint)
+     elem = int_get_i64 (intvec_get_elem_src (ghint, i));
+     if (elem == 0)
+       {
+-        _inc_idx_zero (_byte, &nbytes, &_bit);
+-        _inc_idx_zero (_byte, &nbytes, &_bit);
++        _inc_idx_zero (_byte, &nbytes, &_bit, avail, &oob);
++        _inc_idx_zero (_byte, &nbytes, &_bit, avail, &oob);
+       }
+     else if (elem == 1)
+       {
+-        _inc_idx_zero (_byte, &nbytes, &_bit);
+-        _byte[nbytes] |= (1 << _bit);
+-        _inc_idx_zero (_byte, &nbytes, &_bit);
++        _inc_idx_zero (_byte, &nbytes, &_bit, avail, &oob);
++        _wr_or (_byte, nbytes, (uint8_t)(1 << _bit), avail, &oob);
++        _inc_idx_zero (_byte, &nbytes, &_bit, avail, &oob);
+       }
+     else if (elem == -1)
+       {
+-        _byte[nbytes] |= (1 << _bit);
+-        _inc_idx_zero (_byte, &nbytes, &_bit);
+-        _inc_idx_zero (_byte, &nbytes, &_bit);
++        _wr_or (_byte, nbytes, (uint8_t)(1 << _bit), avail, &oob);
++        _inc_idx_zero (_byte, &nbytes, &_bit, avail, &oob);
++        _inc_idx_zero (_byte, &nbytes, &_bit, avail, &oob);
+       }
+     else if (elem >= 2)
+       {
+-        _byte[nbytes] |= (1 << _bit);
+-        _inc_idx_zero (_byte, &nbytes, &_bit);
+-        _byte[nbytes] |= (1 << _bit);
+-        _inc_idx_zero (_byte, &nbytes, &_bit);
+-        for (j = 0; j < 2 * elem - 4; j++)
++        _wr_or (_byte, nbytes, (uint8_t)(1 << _bit), avail, &oob);
++        _inc_idx_zero (_byte, &nbytes, &_bit, avail, &oob);
++        _wr_or (_byte, nbytes, (uint8_t)(1 << _bit), avail, &oob);
++        _inc_idx_zero (_byte, &nbytes, &_bit, avail, &oob);
++        for (j = 0; j < 2 * elem - 4 && !oob; j++)
+           {
+-            _inc_idx_zero (_byte, &nbytes, &_bit);
++            _inc_idx_zero (_byte, &nbytes, &_bit, avail, &oob);
+           }
+-        _byte[nbytes] |= (1 << _bit);
+-        _inc_idx_zero (_byte, &nbytes, &_bit);
++        _wr_or (_byte, nbytes, (uint8_t)(1 << _bit), avail, &oob);
++        _inc_idx_zero (_byte, &nbytes, &_bit, avail, &oob);
+       }
+     else
+       {
+-        _byte[nbytes] |= (1 << _bit);
+-        _inc_idx_zero (_byte, &nbytes, &_bit);
+-        _byte[nbytes] |= (1 << _bit);
+-        _inc_idx_zero (_byte, &nbytes, &_bit);
+-        for (j = 0; j < 2 * (-elem) - 3; j++)
++        _wr_or (_byte, nbytes, (uint8_t)(1 << _bit), avail, &oob);
++        _inc_idx_zero (_byte, &nbytes, &_bit, avail, &oob);
++        _wr_or (_byte, nbytes, (uint8_t)(1 << _bit), avail, &oob);
++        _inc_idx_zero (_byte, &nbytes, &_bit, avail, &oob);
++        for (j = 0; j < 2 * (-elem) - 3 && !oob; j++)
+           {
+-            _inc_idx_zero (_byte, &nbytes, &_bit);
++            _inc_idx_zero (_byte, &nbytes, &_bit, avail, &oob);
+           }
+-        _byte[nbytes] |= (1 << _bit);
+-        _inc_idx_zero (_byte, &nbytes, &_bit);
++        _wr_or (_byte, nbytes, (uint8_t)(1 << _bit), avail, &oob);
++        _inc_idx_zero (_byte, &nbytes, &_bit, avail, &oob);
++      }
++    if (oob)
++      {
++        state->err = 1;
++        return;
+       }
+   }
+ 
+@@ -124,6 +234,11 @@ coder_dec_ghint (coder_state_t state, intvec_t ghint)
+   unsigned int nbytes = 0;
+   const uint8_t *_byte;
+   int bit0, bit1, j;
++  const size_t avail = _avail_in (state);
++  int oob = 0;
++
++  if (state->err)
++    return;
+ 
+   _byte = state->in;
+   _bit = state->bit_off;
+@@ -132,10 +247,15 @@ coder_dec_ghint (coder_state_t state, intvec_t ghint)
+   {
+     elem = intvec_get_elem (ghint, i);
+ 
+-    bit0 = !!(_byte[nbytes] & (1 << _bit));
++    bit0 = !!(_rd (_byte, nbytes, avail, &oob) & (1 << _bit));
+     _inc_idx (&nbytes, &_bit);
+-    bit1 = !!(_byte[nbytes] & (1 << _bit));
++    bit1 = !!(_rd (_byte, nbytes, avail, &oob) & (1 << _bit));
+     _inc_idx (&nbytes, &_bit);
++    if (oob)
++      {
++        state->err = 1;
++        return;
++      }
+ 
+     if (bit0 == 0 && bit1 == 0)
+       {
+@@ -152,8 +272,14 @@ coder_dec_ghint (coder_state_t state, intvec_t ghint)
+     else
+       {
+         j = 0;
+-        while (!(_byte[nbytes] & (1 << _bit)))
++        while (!(_rd (_byte, nbytes, avail, &oob) & (1 << _bit)))
+           {
++            if (oob)
++              {
++                /* the unary run reaches the end of the input */
++                state->err = 1;
++                return;
++              }
+             j++;
+             _inc_idx (&nbytes, &_bit);
+           }
+@@ -177,10 +303,27 @@ coder_enc_urandom (coder_state_t state, const intvec_t v, const int_t m,
+ {
+   unsigned int nbits;
+ 
++  const size_t avail = _avail_out (state);
++  int oob = 0;
++
+   ASSERT_ERR (state->out != NULL);
+   ASSERT_ERR (state->in == NULL);
+ 
+-  nbits = _uencode (&(state->out), &(state->bit_off), v, m, mbits);
++  if (state->err)
++    return;
++  if (avail == 0)
++    {
++      state->err = 1;
++      return;
++    }
++
++  nbits = _uencode (&(state->out), &(state->bit_off), v, m, mbits, avail,
++                    &oob);
++  if (oob)
++    {
++      state->err = 1;
++      return;
++    }
+   state->byte_off += (nbits >> 3);
+ }
+ 
+@@ -219,11 +362,21 @@ coder_enc_grandom (coder_state_t state, const intvec_t v, unsigned int log2o)
+   long z, z0, z1;
+   int_srcptr elem;
+   uint8_t *_byte;
++  const size_t avail = _avail_out (state);
++  int oob = 0;
+ 
+   ASSERT_ERR (state->out != NULL);
+   ASSERT_ERR (state->in == NULL);
+   // XXX ASSERT_ERR (v->nlimbs == 1);
+ 
++  if (state->err)
++    return;
++  if (avail == 0)
++    {
++      state->err = 1;
++      return;
++    }
++
+   _byte = state->out;
+   _bit = state->bit_off;
+ 
+@@ -255,21 +408,26 @@ coder_enc_grandom (coder_state_t state, const intvec_t v, unsigned int log2o)
+     /* z1: unitary encoding */
+ 
+     nones = (z1 <= 0 ? -2 * z1 : 2 * z1 - 1);
+-    for (j = 0; j < nones; j++)
++    for (j = 0; j < nones && !oob; j++)
+       {
+-        _byte[nbytes] |= (1 << _bit); /* ones */
+-        _inc_idx_zero (_byte, &nbytes, &_bit);
++        _wr_or (_byte, nbytes, (uint8_t)(1 << _bit), avail, &oob); /* ones */
++        _inc_idx_zero (_byte, &nbytes, &_bit, avail, &oob);
+       }
+-    _inc_idx_zero (_byte, &nbytes, &_bit); /* final zero */
++    _inc_idx_zero (_byte, &nbytes, &_bit, avail, &oob); /* final zero */
+ 
+     /* z0: binary encoding (two's complement) */
+ 
+     for (j = 0; j < log2ao; j++)
+       {
+-        _byte[nbytes] |= ((z0 & 1) << _bit);
++        _wr_or (_byte, nbytes, (uint8_t)((z0 & 1) << _bit), avail, &oob);
+ 
+         z0 >>= 1;
+-        _inc_idx_zero (_byte, &nbytes, &_bit);
++        _inc_idx_zero (_byte, &nbytes, &_bit, avail, &oob);
++      }
++    if (oob)
++      {
++        state->err = 1;
++        return;
+       }
+   }
+ 
+@@ -288,10 +446,15 @@ coder_dec_grandom (coder_state_t state, intvec_t v, unsigned int log2o)
+   unsigned int nbytes = 0;
+   unsigned int i, j, _bit, nones;
+   int_ptr elem;
++  const size_t avail = _avail_in (state);
++  int oob = 0;
+ 
+   ASSERT_ERR (state->out == NULL);
+   ASSERT_ERR (state->in != NULL);
+ 
++  if (state->err)
++    return;
++
+   _byte = state->in;
+   _bit = state->bit_off;
+ 
+@@ -299,7 +462,8 @@ coder_dec_grandom (coder_state_t state, intvec_t v, unsigned int log2o)
+   {
+     /* z1: unitary encoding */
+ 
+-    for (nones = 0; (_byte[nbytes] & (1 << _bit)) > 0; nones++)
++    for (nones = 0; (_rd (_byte, nbytes, avail, &oob) & (1 << _bit)) > 0;
++         nones++)
+       _inc_idx (&nbytes, &_bit);
+     _inc_idx (&nbytes, &_bit); /* final zero */
+ 
+@@ -309,10 +473,18 @@ coder_dec_grandom (coder_state_t state, intvec_t v, unsigned int log2o)
+     z0 = 0;
+     for (j = 0; j < log2ao; j++)
+       {
+-        z0 |= ((((long)_byte[nbytes] & ((long)1 << _bit)) >> _bit) << j);
++        z0 |= ((((long)_rd (_byte, nbytes, avail, &oob) & ((long)1 << _bit))
++                >> _bit)
++               << j);
+ 
+         _inc_idx (&nbytes, &_bit);
+       }
++    if (oob)
++      {
++        /* a unary run or a binary part reaches the end of the input */
++        state->err = 1;
++        return;
++      }
+ 
+     if ((z0 & ((limb_t)1 << (log2ao - 1))) > 0)
+       z0 |= (((unsigned long)~0) << log2ao); /* sign-extend */
+@@ -338,6 +510,14 @@ coder_enc_end (coder_state_t state)
+   ASSERT_ERR (state->out != NULL);
+   ASSERT_ERR (state->in == NULL);
+ 
++  if (state->err)
++    return;
++  if (_avail_out (state) == 0)
++    {
++      state->err = 1;
++      return;
++    }
++
+   _byte = state->out;
+   _bit = state->bit_off;
+ 
+@@ -356,6 +536,13 @@ coder_dec_bytes (coder_state_t state, uint8_t *bytes, unsigned int nbytes)
+ {
+   if (UNLIKELY (state->bit_off != 0))
+     return 1;
++  if (state->err)
++    return 1;
++  if (nbytes > _avail_in (state))
++    {
++      state->err = 1;
++      return 1;
++    }
+ 
+   memcpy (bytes, state->in, nbytes);
+   state->byte_off += nbytes;
+@@ -369,10 +556,22 @@ coder_dec_urandom (coder_state_t state, intvec_t v, const int_t m,
+ {
+   unsigned int nbits;
+ 
++  const size_t avail = _avail_in (state);
++  int oob = 0;
++
+   ASSERT_ERR (state->out == NULL);
+   ASSERT_ERR (state->in != NULL);
+ 
+-  nbits = _udecode (v, &(state->in), &(state->bit_off), m, mbits);
++  if (state->err)
++    return 1;
++
++  nbits = _udecode (v, &(state->in), &(state->bit_off), m, mbits, avail,
++                    &oob);
++  if (oob)
++    {
++      state->err = 1;
++      return 1;
++    }
+   state->byte_off += (nbits >> 3);
+   return nbits == 0 ? 1 : 0;
+ }
+@@ -392,6 +591,14 @@ coder_dec_end (coder_state_t state)
+   _byte = state->in;
+   _bit = state->bit_off;
+ 
++  /* an earlier access was out of bounds, or the padding byte is missing */
++  if (state->err || _avail_in (state) == 0)
++    {
++      state->err = 1;
++      state->in = NULL;
++      return 0;
++    }
++
+   /* check final one and possibly trailing zeros */
+   if ((_byte[0] & ((uint8_t)(~0) << _bit)) == ((uint8_t)1 << _bit))
+     {
+@@ -416,14 +623,18 @@ _inc_idx (unsigned int *byte, unsigned int *bit)
+ }
+ 
+ static inline void
+-_inc_idx_zero (uint8_t *buf, unsigned int *byte, unsigned int *bit)
++_inc_idx_zero (uint8_t *buf, unsigned int *byte, unsigned int *bit,
++               size_t avail, int *oob)
+ {
+   (*bit)++;
+   if (*bit > 7)
+     {
+       *bit = 0;
+       (*byte)++;
+-      buf[*byte] = 0;
++      if (UNLIKELY (*byte >= avail))
++        *oob = 1;
++      else
++        buf[*byte] = 0;
+     }
+ }
+ 
+@@ -432,7 +643,7 @@ _inc_idx_zero (uint8_t *buf, unsigned int *byte, unsigned int *bit)
+  */
+ static unsigned int
+ _uencode (uint8_t **byte, unsigned int *bit, const intvec_t v,
+-          UNUSED const int_t m, unsigned int mbits)
++          UNUSED const int_t m, unsigned int mbits, size_t avail, int *oob)
+ {
+   unsigned int i, j, k, _bit, nbits = 0, _mbits;
+   unsigned int nbytes = 0;
+@@ -469,10 +680,10 @@ _uencode (uint8_t **byte, unsigned int *bit, const intvec_t v,
+ 
+         for (k = 0; k < MIN (NBITS_LIMB, _mbits); k++)
+           {
+-            _byte[nbytes] |= ((limb & 1) << _bit);
++            _wr_or (_byte, nbytes, (uint8_t)((limb & 1) << _bit), avail, oob);
+ 
+             limb >>= 1;
+-            _inc_idx_zero (_byte, &nbytes, &_bit);
++            _inc_idx_zero (_byte, &nbytes, &_bit, avail, oob);
+             nbits++;
+           }
+ 
+@@ -480,6 +691,8 @@ _uencode (uint8_t **byte, unsigned int *bit, const intvec_t v,
+         if (_mbits == 0)
+           break;
+       }
++    if (*oob)
++      return 0;
+   }
+ 
+   *byte = _byte + nbytes;
+@@ -489,7 +702,7 @@ _uencode (uint8_t **byte, unsigned int *bit, const intvec_t v,
+ 
+ static unsigned int
+ _udecode (intvec_t v, const uint8_t **byte, unsigned int *bit, const int_t m,
+-          unsigned int mbits)
++          unsigned int mbits, size_t avail, int *oob)
+ {
+   INT_T (zero, 1);
+   unsigned int i, j, k, _bit, nbits = 0, _mbits;
+@@ -516,7 +729,9 @@ _udecode (intvec_t v, const uint8_t **byte, unsigned int *bit, const int_t m,
+ 
+         for (k = 0; k < MIN (NBITS_LIMB, _mbits); k++)
+           {
+-            limb |= ((((limb_t)_byte[nbytes] & ((limb_t)1 << _bit)) >> _bit)
++            limb |= ((((limb_t)_rd (_byte, nbytes, avail, oob)
++                       & ((limb_t)1 << _bit))
++                      >> _bit)
+                      << k);
+ 
+             _inc_idx (&nbytes, &_bit);
+@@ -526,6 +741,8 @@ _udecode (intvec_t v, const uint8_t **byte, unsigned int *bit, const int_t m,
+         _mbits -= k;
+         elem->limbs[j] = limb;
+       }
++    if (*oob)
++      return 0;
+   }
+ 
+   if (!intvec_lt (v, m))
+@@ -661,6 +878,14 @@ coder_enc_urandom5 (coder_state_t state, spolymat_t v, const int_t m,
+   ASSERT_ERR (v->sorted);
+   ASSERT_ERR (v->nelems <= UINT16_MAX);
+ 
++  if (state->err)
++    return;
++  if (_avail_out (state) == 0)
++    {
++      state->err = 1;
++      return;
++    }
++
+   _byte = state->out;
+   _bit = state->bit_off;
+ 
+@@ -679,10 +904,13 @@ coder_enc_urandom5 (coder_state_t state, spolymat_t v, const int_t m,
+   for (i = 0; i < len * 2 * 8; i++)
+     {
+       if (ptr[i / 8] & (1 << (i % 8)))
+-        _byte[nbytes] |= (1 << _bit);
++        _wr_or (_byte, nbytes, (uint8_t)(1 << _bit), _avail_out (state),
++                &state->err);
+ 
+-      _inc_idx_zero (_byte, &nbytes, &_bit);
++      _inc_idx_zero (_byte, &nbytes, &_bit, _avail_out (state), &state->err);
+     }
++  if (state->err)
++    return;
+ 
+   state->byte_off += nbytes;
+   state->bit_off = _bit;
+@@ -721,6 +949,14 @@ coder_enc_urandom6 (coder_state_t state, spolyvec_t v, const int_t m,
+   ASSERT_ERR (v->sorted);
+   ASSERT_ERR (v->nelems <= UINT16_MAX);
+ 
++  if (state->err)
++    return;
++  if (_avail_out (state) == 0)
++    {
++      state->err = 1;
++      return;
++    }
++
+   _byte = state->out;
+   _bit = state->bit_off;
+ 
+@@ -737,10 +973,13 @@ coder_enc_urandom6 (coder_state_t state, spolyvec_t v, const int_t m,
+   for (i = 0; i < len * 2 * 8; i++)
+     {
+       if (ptr[i / 8] & (1 << (i % 8)))
+-        _byte[nbytes] |= (1 << _bit);
++        _wr_or (_byte, nbytes, (uint8_t)(1 << _bit), _avail_out (state),
++                &state->err);
+ 
+-      _inc_idx_zero (_byte, &nbytes, &_bit);
++      _inc_idx_zero (_byte, &nbytes, &_bit, _avail_out (state), &state->err);
+     }
++  if (state->err)
++    return;
+ 
+   state->byte_off += nbytes;
+   state->bit_off = _bit;
+@@ -770,6 +1009,8 @@ coder_dec_urandom5 (coder_state_t state, spolymat_t v, const int_t m,
+   ASSERT_ERR (state->in != NULL);
+ 
+   spolymat_set_empty (v);
++  if (state->err)
++    return;
+ 
+   _byte = state->in;
+   _bit = state->bit_off;
+@@ -778,7 +1019,7 @@ coder_dec_urandom5 (coder_state_t state, spolymat_t v, const int_t m,
+   ptr = (uint8_t *)&header;
+   for (i = 0; i < 16; i++)
+     {
+-      if (_byte[nbytes] & (1 << _bit))
++      if (_rd (_byte, nbytes, _avail_in (state), &state->err) & (1 << _bit))
+         ptr[i / 8] |= (1 << (i % 8));
+ 
+       _inc_idx (&nbytes, &_bit);
+@@ -786,18 +1027,26 @@ coder_dec_urandom5 (coder_state_t state, spolymat_t v, const int_t m,
+   nelems = le16toh (header);
+ 
+   ASSERT_ERR (nelems <= v->nelems_max);
++  if (state->err || nelems > v->nelems_max)
++    {
++      state->err = 1;
++      return;
++    }
+ 
+   len = nelems * 2;
+-  uint16_t buf[len];
++  uint16_t buf[len + 1];
+ 
++  memset (buf, 0, sizeof (buf));
+   ptr = (uint8_t *)buf;
+   for (i = 0; i < len * 2 * 8; i++)
+     {
+-      if (_byte[nbytes] & (1 << _bit))
++      if (_rd (_byte, nbytes, _avail_in (state), &state->err) & (1 << _bit))
+         ptr[i / 8] |= (1 << (i % 8));
+ 
+       _inc_idx (&nbytes, &_bit);
+     }
++  if (state->err)
++    return;
+ 
+   state->byte_off += nbytes;
+   state->bit_off = _bit;
+@@ -829,6 +1078,8 @@ coder_dec_urandom6 (coder_state_t state, spolyvec_t v, const int_t m,
+   ASSERT_ERR (state->in != NULL);
+ 
+   spolyvec_set_empty (v);
++  if (state->err)
++    return;
+ 
+   _byte = state->in;
+   _bit = state->bit_off;
+@@ -837,7 +1088,7 @@ coder_dec_urandom6 (coder_state_t state, spolyvec_t v, const int_t m,
+   ptr = (uint8_t *)&header;
+   for (i = 0; i < 16; i++)
+     {
+-      if (_byte[nbytes] & (1 << _bit))
++      if (_rd (_byte, nbytes, _avail_in (state), &state->err) & (1 << _bit))
+         ptr[i / 8] |= (1 << (i % 8));
+ 
+       _inc_idx (&nbytes, &_bit);
+@@ -845,18 +1096,26 @@ coder_dec_urandom6 (coder_state_t state, spolyvec_t v, const int_t m,
+   nelems = le16toh (header);
+ 
+   ASSERT_ERR (nelems <= v->nelems_max);
++  if (state->err || nelems > v->nelems_max)
++    {
++      state->err = 1;
++      return;
++    }
+ 
+   len = nelems;
+-  uint16_t buf[len];
++  uint16_t buf[len + 1];
+ 
++  memset (buf, 0, sizeof (buf));
+   ptr = (uint8_t *)buf;
+   for (i = 0; i < len * 2 * 8; i++)
+     {
+-      if (_byte[nbytes] & (1 << _bit))
++      if (_rd (_byte, nbytes, _avail_in (state), &state->err) & (1 << _bit))
+         ptr[i / 8] |= (1 << (i % 8));
+ 
+       _inc_idx (&nbytes, &_bit);
+     }
++  if (state->err)
++    return;
+ 
+   state->byte_off += nbytes;
+   state->bit_off = _bit;
+diff --git a/src/lazer-in2.h b/src/lazer-in2.h
+index 1649fac..edd4fd4 100644
+--- a/src/lazer-in2.h
++++ b/src/lazer-in2.h
+@@ -439,6 +439,15 @@ typedef struct
+   uint8_t *out;
+   unsigned int byte_off;
+   unsigned int bit_off;
++  /*
++   * Bounds (panurus patch): if bounded is set, no byte at or past end is
++   * read (decoding) or written (encoding); err is set instead and the
++   * operation fails.
++   */
++  const uint8_t *end;
++  uint8_t *oend;
++  int bounded;
++  int err;
+ } coder_state_struct;
+ typedef coder_state_struct coder_state_t[1];
+ typedef coder_state_struct *coder_state_ptr;
+@@ -1364,9 +1373,13 @@ void lin_toisoring (polymat_t r1, polyvec_t r0, polymat_t r1prime,
+                     polyvec_t r0prime);
+ 
+ #define CODER_STATE_T(__name__)                                               \
+-  coder_state_t __name__ = { { NULL, NULL, 0, 0 } }
++  coder_state_t __name__ = { { NULL, NULL, 0, 0, NULL, NULL, 0, 0 } }
+ void coder_enc_begin (coder_state_t state, uint8_t *out);
+ void coder_dec_begin (coder_state_t state, const uint8_t *in);
++void coder_enc_begin_bnd (coder_state_t state, uint8_t *out, size_t outlen);
++void coder_dec_begin_bnd (coder_state_t state, const uint8_t *in,
++                          size_t inlen);
++int coder_get_err (coder_state_t state);
+ void coder_enc_end (coder_state_t state);
+ int coder_dec_end (coder_state_t state);
+ unsigned int coder_get_offset (coder_state_t state);
+@@ -1599,6 +1612,10 @@ void lin_prover_prove (lin_prover_state_t state, uint8_t *proof, size_t *len,
+ void lin_prover_prove_ctx (lin_prover_state_t state, uint8_t *proof,
+                            size_t *len, const uint8_t coins[32],
+                            const uint8_t *ctx, size_t ctxlen);
++int lin_prover_prove_ctx_bnd (lin_prover_state_t state, uint8_t *proof,
++                              size_t prooflen, size_t *len,
++                              const uint8_t coins[32], const uint8_t *ctx,
++                              size_t ctxlen);
+ void lin_prover_clear (lin_prover_state_t state);
+ void lin_verifier_init (lin_verifier_state_t state, const uint8_t ppseed[32],
+                         const lin_params_t params);
+@@ -1610,6 +1627,10 @@ int lin_verifier_verify (lin_verifier_state_t state, const uint8_t *proof,
+                          size_t *len);
+ int lin_verifier_verify_ctx (lin_verifier_state_t state, const uint8_t *proof,
+                              size_t *len, const uint8_t *ctx, size_t ctxlen);
++int lin_verifier_verify_ctx_bnd (lin_verifier_state_t state,
++                                 const uint8_t *proof, size_t prooflen,
++                                 size_t *len, const uint8_t *ctx,
++                                 size_t ctxlen);
+ void lin_verifier_clear (lin_verifier_state_t state);
+ 
+ void print_stopwatch_user_maskmsg (unsigned int indent);
+diff --git a/src/lin-proofs.c b/src/lin-proofs.c
+index 013f5ba..8ac8e4c 100644
+--- a/src/lin-proofs.c
++++ b/src/lin-proofs.c
+@@ -4077,10 +4077,14 @@ __lnp_clear (__lnp_state_t state)
+   poly_free (state->c);
+ }
+ 
+-static void
+-lnp_tbox_encproof (uint8_t *out, size_t *len, polyvec_t tA1, polyvec_t tB,
+-                   polyvec_t h, poly_t c, polyvec_t z1, polyvec_t z21,
+-                   polyvec_t hint, polyvec_t z3, polyvec_t z4,
++/*
++ * outlen is the capacity of out, SIZE_MAX for unbounded. Returns 1 on
++ * success, 0 if the encoding does not fit (panurus patch).
++ */
++static int
++lnp_tbox_encproof (uint8_t *out, size_t outlen, size_t *len, polyvec_t tA1,
++                   polyvec_t tB, polyvec_t h, poly_t c, polyvec_t z1,
++                   polyvec_t z21, polyvec_t hint, polyvec_t z3, polyvec_t z4,
+                    const lnp_tbox_params_t params)
+ {
+   polyring_srcptr Rq = params->tbox->ring;
+@@ -4095,7 +4099,10 @@ lnp_tbox_encproof (uint8_t *out, size_t *len, polyvec_t tA1, polyvec_t tB,
+   size_t prooflen;
+   INT_T (mod, q->nlimbs);
+ 
+-  coder_enc_begin (cstate, out);
++  if (outlen == SIZE_MAX)
++    coder_enc_begin (cstate, out);
++  else
++    coder_enc_begin_bnd (cstate, out, outlen);
+ 
+   /* full-sized elements (log2q bits) */
+   polyvec_fromcrt (tB);
+@@ -4146,19 +4153,31 @@ lnp_tbox_encproof (uint8_t *out, size_t *len, polyvec_t tA1, polyvec_t tB,
+ 
+   coder_enc_end (cstate);
+ 
++  if (coder_get_err (cstate))
++    {
++      if (len != NULL)
++        *len = 0;
++      return 0;
++    }
++
+   prooflen = coder_get_offset (cstate);
+   ASSERT_ERR (prooflen % 8 == 0);
+   (prooflen) >>= 3; /* nbits to nbytes */
+ 
+   if (len != NULL)
+     *len = prooflen;
++  return 1;
+ }
+ 
++/*
++ * inlen is the length of in, SIZE_MAX for unbounded: the decoder never reads
++ * past in + inlen (panurus patch).
++ */
+ static int
+-lnp_tbox_decproof (size_t *len, const uint8_t *in, polyvec_t tA1, polyvec_t tB,
+-                   polyvec_t h, poly_t c, polyvec_t z1, polyvec_t z21,
+-                   polyvec_t hint, polyvec_t z3, polyvec_t z4,
+-                   const lnp_tbox_params_t params)
++lnp_tbox_decproof (size_t *len, const uint8_t *in, size_t inlen,
++                   polyvec_t tA1, polyvec_t tB, polyvec_t h, poly_t c,
++                   polyvec_t z1, polyvec_t z21, polyvec_t hint, polyvec_t z3,
++                   polyvec_t z4, const lnp_tbox_params_t params)
+ {
+   polyring_srcptr Rq = params->tbox->ring;
+   int_srcptr q = Rq->q;
+@@ -4172,7 +4191,10 @@ lnp_tbox_decproof (size_t *len, const uint8_t *in, polyvec_t tA1, polyvec_t tB,
+   int succ = 0, rc;
+   INT_T (mod, q->nlimbs);
+ 
+-  coder_dec_begin (cstate, in);
++  if (inlen == SIZE_MAX)
++    coder_dec_begin (cstate, in);
++  else
++    coder_dec_begin_bnd (cstate, in, inlen);
+ 
+   /* full-sized elements (log2q bits) */
+   rc = coder_dec_urandom3 (cstate, tB, q, log2q);
+@@ -4221,7 +4243,7 @@ lnp_tbox_decproof (size_t *len, const uint8_t *in, polyvec_t tA1, polyvec_t tB,
+   coder_dec_grandom3 (cstate, z4, params->log2stdev4);
+ 
+   rc = coder_dec_end (cstate);
+-  if (rc != 1)
++  if (rc != 1 || coder_get_err (cstate))
+     {
+       //printf ("XXX decoding failed.\n");
+       goto ret;
+@@ -4410,9 +4432,10 @@ __verify_statement (_lnp_prover_state_t state_, const lin_params_t lparam)
+ }
+ #endif
+ 
+-static void
+-_lin_prover_prove (lin_prover_state_t state__, uint8_t *proof, size_t *len,
+-                   const uint8_t seed[32], const uint8_t *ctx, size_t ctxlen)
++static int
++_lin_prover_prove (lin_prover_state_t state__, uint8_t *proof,
++                   size_t prooflen_max, size_t *len, const uint8_t seed[32],
++                   const uint8_t *ctx, size_t ctxlen)
+ {
+   lin_params_srcptr linparam = state__->state->params;
+   _lnp_prover_state_ptr state_ = state__->lnp_state;
+@@ -4424,6 +4447,7 @@ _lin_prover_prove (lin_prover_state_t state__, uint8_t *proof, size_t *len,
+   const uint8_t *seedsubproto = expseed + 32;
+   shake128_state_t hstate;
+   size_t prooflen;
++  int rc;
+   INT_T (lo, 1);
+   INT_T (hi, 1);
+ 
+@@ -4468,20 +4492,23 @@ _lin_prover_prove (lin_prover_state_t state__, uint8_t *proof, size_t *len,
+                    seedsubproto, params);
+ 
+   /* encode commitment and proof */
+-  lnp_tbox_encproof (proof, &prooflen, state->tA1, state->tB, state->h,
+-                     state->c, state->z1, state->z21, state->hint, state->z3,
+-                     state->z4, params);
++  rc = lnp_tbox_encproof (proof, prooflen_max, &prooflen, state->tA1,
++                          state->tB, state->h, state->c, state->z1,
++                          state->z21, state->hint, state->z3, state->z4,
++                          params);
+ 
+   if (len != NULL)
+     *len = prooflen;
+ 
+   STOPWATCH_STOP (stopwatch_lnp_prover_prove);
+   DEBUG_PRINTF (DEBUG_PRINT_FUNCTION_RETURN, "%s end", __func__);
++  return rc;
+ }
+ 
+ static int
+ _lin_verifier_verify (lin_verifier_state_t state__, const uint8_t *proof,
+-                      size_t *len, const uint8_t *ctx, size_t ctxlen)
++                      size_t prooflen_max, size_t *len, const uint8_t *ctx,
++                      size_t ctxlen)
+ {
+   lin_params_srcptr linparam = state__->state->params;
+   _lnp_verifier_state_ptr state_ = state__->lnp_state;
+@@ -4496,7 +4523,8 @@ _lin_verifier_verify (lin_verifier_state_t state__, const uint8_t *proof,
+   DEBUG_PRINTF (DEBUG_PRINT_FUNCTION_ENTRY, "%s begin", __func__);
+ 
+   /* decode commitment and proof */
+-  b = lnp_tbox_decproof (&prooflen, proof, state->tA1, state->tB, state->h,
++  b = lnp_tbox_decproof (&prooflen, proof, prooflen_max, state->tA1,
++                         state->tB, state->h,
+                          state->c, state->z1, state->z21, state->hint,
+                          state->z3, state->z4, params);
+   if (len != NULL)
+@@ -4815,10 +4843,25 @@ void
+ lin_prover_prove_ctx (lin_prover_state_t state, uint8_t *proof, size_t *len,
+                       const uint8_t coins[32], const uint8_t *ctx,
+                       size_t ctxlen)
++{
++  lin_prover_prove_ctx_bnd (state, proof, SIZE_MAX, len, coins, ctx, ctxlen);
++}
++
++/*
++ * As lin_prover_prove_ctx, but writes at most prooflen bytes to proof
++ * (SIZE_MAX for unbounded). Returns 1 on success, 0 if the proof does not fit
++ * in prooflen bytes (panurus patch).
++ */
++int
++lin_prover_prove_ctx_bnd (lin_prover_state_t state, uint8_t *proof,
++                          size_t prooflen, size_t *len,
++                          const uint8_t coins[32], const uint8_t *ctx,
++                          size_t ctxlen)
+ {
+   _lnp_prover_state_ptr __lnp_state = state->lnp_state;
+   _lin_state_ptr lin_state = state->state;
+   uint8_t coins_[32];
++  int rc;
+ 
+   DEBUG_PRINTF (DEBUG_PRINT_FUNCTION_ENTRY, "%s begin", __func__);
+ 
+@@ -4829,10 +4872,11 @@ lin_prover_prove_ctx (lin_prover_state_t state, uint8_t *proof, size_t *len,
+   // XXX do this earlier ?
+   _lnp_prover_set_statement_arp (__lnp_state, lin_state->Ds, lin_state->Dm,
+                                  lin_state->u);
+-  _lin_prover_prove (state, proof, len, coins != NULL ? coins : coins_, ctx,
+-                     ctxlen);
++  rc = _lin_prover_prove (state, proof, prooflen, len,
++                          coins != NULL ? coins : coins_, ctx, ctxlen);
+ 
+   DEBUG_PRINTF (DEBUG_PRINT_FUNCTION_RETURN, "%s end", __func__);
++  return rc;
+ }
+ 
+ void
+@@ -4903,6 +4947,20 @@ lin_verifier_verify (lin_verifier_state_t state, const uint8_t *proof,
+ int
+ lin_verifier_verify_ctx (lin_verifier_state_t state, const uint8_t *proof,
+                          size_t *len, const uint8_t *ctx, size_t ctxlen)
++{
++  return lin_verifier_verify_ctx_bnd (state, proof, SIZE_MAX, len, ctx,
++                                      ctxlen);
++}
++
++/*
++ * As lin_verifier_verify_ctx, but reads at most prooflen bytes of proof
++ * (SIZE_MAX for unbounded). A proof whose encoding runs past them does not
++ * verify (panurus patch).
++ */
++int
++lin_verifier_verify_ctx_bnd (lin_verifier_state_t state,
++                             const uint8_t *proof, size_t prooflen,
++                             size_t *len, const uint8_t *ctx, size_t ctxlen)
+ {
+   _lnp_verifier_state_ptr __lnp_state = state->lnp_state;
+   _lin_state_ptr lin_state = state->state;
+@@ -4911,7 +4969,7 @@ lin_verifier_verify_ctx (lin_verifier_state_t state, const uint8_t *proof,
+   DEBUG_PRINTF (DEBUG_PRINT_FUNCTION_ENTRY, "%s begin", __func__);
+   _lnp_verifier_set_statement_arp (__lnp_state, lin_state->Ds, lin_state->Dm,
+                                    lin_state->u);
+-  rc = _lin_verifier_verify (state, proof, len, ctx, ctxlen);
++  rc = _lin_verifier_verify (state, proof, prooflen, len, ctx, ctxlen);
+   DEBUG_PRINTF (DEBUG_PRINT_FUNCTION_RETURN, "%s end", __func__);
+   return rc;
+ }

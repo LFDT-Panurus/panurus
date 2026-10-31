@@ -1,0 +1,222 @@
+From: Panurus maintainers
+Subject: [PATCH 2/3] blindsig: decode and check Falcon keys without exit()
+
+falcon_decode_pubkey calls exit(EXIT_FAILURE) on a malformed public key and
+falcon_preimage_sample does the same on a malformed private key, so a bad
+issuer key in a configuration kills the whole process.
+
+Add non-exiting variants:
+- falcon_decode_pubkey_chk: returns -1 (and zeroes h) if the header byte is
+  not 0x09 or a coefficient is >= q;
+- falcon_preimage_sample_chk: returns -1 if the private key does not decode
+  or sampling fails;
+- falcon_check_keypair: returns 0 iff sk is a well-formed private key whose
+  public key is pk.
+The secret temporaries (f, g, F, G, the scratch buffer and the PRNG state)
+are wiped before returning. falcon_decode_pubkey and falcon_preimage_sample
+keep their exiting behaviour for existing callers and are implemented on
+top of the new functions.
+
+Panurus-local patch, applied by `make lazer-install` (lazer.mk).
+
+diff --git a/src/blindsig.c b/src/blindsig.c
+index 9c1c733..d3c3ba4 100644
+--- a/src/blindsig.c
++++ b/src/blindsig.c
+@@ -57,22 +57,171 @@ falcon_keygen (uint8_t sk[PRIVKEYLEN], uint8_t pk[PUBKEYLEN])
+     }
+ }
+ 
++/*
++ * Compressed public key to coefficient representation. Returns 0 on success,
++ * -1 if pk is not a valid Falcon-512 public key (wrong header byte or a
++ * coefficient >= q), in which case h is zeroed (panurus patch).
++ */
++int
++falcon_decode_pubkey_chk (int16_t h[DEG_], const uint8_t pk[PUBKEYLEN])
++{
++  if (pk[0] != (uint8_t)(0x00 + SIGNER_LOGN)
++      || Zf (modq_decode) ((uint16_t *)h, SIGNER_LOGN, pk + 1, PUBKEYLEN - 1)
++             != PUBKEYLEN - 1)
++    {
++      memset (h, 0, DEG_ * sizeof (h[0]));
++      return -1;
++    }
++  return 0;
++}
++
+ /* compressed public key to coefficient representation */
+ void
+ falcon_decode_pubkey (int16_t h[DEG_], const uint8_t pk[PUBKEYLEN])
+ {
+-  if (Zf (modq_decode) ((uint16_t *)h, SIGNER_LOGN, pk + 1, PUBKEYLEN - 1)
+-      != PUBKEYLEN - 1)
++  if (falcon_decode_pubkey_chk (h, pk) != 0)
+     {
+       fprintf (stderr, "falcon decoding of pubkey failed.\n");
+       exit (EXIT_FAILURE);
+     }
+ }
+ 
++/*
++ * Decode the private key elements f, g, F of sk and recompute G. Returns 0 on
++ * success, -1 if sk is malformed (panurus patch).
++ */
++static int
++_falcon_decode_privkey (int8_t f[DEG_], int8_t g[DEG_], int8_t F[DEG_],
++                        int8_t G[DEG_], const uint8_t sk[PRIVKEYLEN],
++                        uint8_t *tmp)
++{
++  int u, v;
++
++  if (sk[0] != (uint8_t)(0x50 + SIGNER_LOGN))
++    return -1;
++
++  u = 1;
++  v = Zf (trim_i8_decode) (f, SIGNER_LOGN, Zf (max_fg_bits)[SIGNER_LOGN],
++                           sk + u, SKBYTES - u);
++  if (v == 0)
++    return -1;
++
++  u += v;
++  v = Zf (trim_i8_decode) (g, SIGNER_LOGN, Zf (max_fg_bits)[SIGNER_LOGN],
++                           sk + u, SKBYTES - u);
++  if (v == 0)
++    return -1;
++
++  u += v;
++  v = Zf (trim_i8_decode) (F, SIGNER_LOGN, Zf (max_FG_bits)[SIGNER_LOGN],
++                           sk + u, SKBYTES - u);
++  if (v == 0)
++    return -1;
++
++  u += v;
++  if (u != SKBYTES)
++    return -1;
++
++  if (!Zf (complete_private) (G, f, g, F, SIGNER_LOGN, tmp))
++    return -1;
++  return 0;
++}
++
++/*
++ * Returns 0 if sk is a well-formed Falcon-512 private key whose public key
++ * is pk, else -1. Never exits (panurus patch).
++ */
++int
++falcon_check_keypair (const uint8_t sk[PRIVKEYLEN],
++                      const uint8_t pk[PUBKEYLEN])
++{
++  __attribute__ ((aligned (8))) uint8_t tmp[72 * DEG_];
++  int8_t f[DEG_], g[DEG_], F[DEG_], G[DEG_];
++  uint16_t h[DEG_], hpk[DEG_];
++  int rv = -1;
++
++  if (falcon_decode_pubkey_chk ((int16_t *)hpk, pk) != 0)
++    goto ret;
++  if (_falcon_decode_privkey (f, g, F, G, sk, tmp) != 0)
++    goto ret;
++  if (!Zf (compute_public) (h, f, g, SIGNER_LOGN, tmp))
++    goto ret;
++  if (memcmp (h, hpk, sizeof (h)) != 0)
++    goto ret;
++  rv = 0;
++ret:
++  bytes_clear (tmp, sizeof (tmp));
++  bytes_clear ((uint8_t *)f, sizeof (f));
++  bytes_clear ((uint8_t *)g, sizeof (g));
++  bytes_clear ((uint8_t *)F, sizeof (F));
++  bytes_clear ((uint8_t *)G, sizeof (G));
++  return rv;
++}
++
++/*
++ * As falcon_preimage_sample, but returns -1 instead of exiting if sk is
++ * malformed or sampling fails, 0 on success. All secret temporaries are
++ * wiped (panurus patch).
++ */
++int
++falcon_preimage_sample_chk (int16_t s1[DEG_], int16_t s2[DEG_],
++                            const int16_t t[DEG_],
++                            const uint8_t sk[PRIVKEYLEN])
++{
++  __attribute__ ((aligned (8))) uint8_t tmp[72 * DEG_];
++  int8_t f[DEG_], g[DEG_], F[DEG_], G[DEG_];
++  uint16_t h[DEG_], tu[DEG_];
++  shake256_context rng;
++  unsigned oldcw;
++  int u, rv = -1;
++
++  shake256_init_prng_from_system (&rng);
++
++  if (_falcon_decode_privkey (f, g, F, G, sk, tmp) != 0)
++    goto err;
++
++  for (u = 0; u < DEG_; u++)
++    tu[u] = t[u] + ((t[u] >> 15) & Q_);
++
++  oldcw = set_fpu_cw (2);
++  Zf (sign_dyn) (s2, (inner_shake256_context *)&rng, f, g, F, G, tu,
++                 SIGNER_LOGN, tmp);
++  set_fpu_cw (oldcw);
++
++  Zf (compute_public) (h, f, g, SIGNER_LOGN, tmp);
++  Zf (to_ntt_monty) (h, SIGNER_LOGN);
++  if (!Zf (reconstruct_s1) (s1, tu, s2, h, SIGNER_LOGN, tmp))
++    goto err;
++
++  rv = 0;
++err:
++  bytes_clear (tmp, sizeof (tmp));
++  bytes_clear ((uint8_t *)f, sizeof (f));
++  bytes_clear ((uint8_t *)g, sizeof (g));
++  bytes_clear ((uint8_t *)F, sizeof (F));
++  bytes_clear ((uint8_t *)G, sizeof (G));
++  bytes_clear ((uint8_t *)&rng, sizeof (rng));
++  return rv;
++}
++
+ /* find (s1,s2) s.t.: (1,h) * (s1,s2)^T = t*/
+ void
+ falcon_preimage_sample (int16_t s1[DEG_], int16_t s2[DEG_],
+                         const int16_t t[DEG_], const uint8_t sk[PRIVKEYLEN])
++{
++  if (falcon_preimage_sample_chk (s1, s2, t, sk) != 0)
++    {
++      fprintf (stderr, "falcon preimage sampling failed.\n");
++      exit (EXIT_FAILURE);
++    }
++}
++
++#ifdef XXX
++/* original implementation, replaced by falcon_preimage_sample_chk */
++static void
++_falcon_preimage_sample_orig (int16_t s1[DEG_], int16_t s2[DEG_],
++                              const int16_t t[DEG_],
++                              const uint8_t sk[PRIVKEYLEN])
+ {
+   __attribute__ ((aligned (8))) uint8_t tmp[72 * DEG_];
+   int8_t f[DEG_], g[DEG_], F[DEG_], G[DEG_];
+@@ -128,6 +277,7 @@ err:
+   fprintf (stderr, "falcon preimage sampling failed.\n");
+   exit (EXIT_FAILURE);
+ }
++#endif
+ 
+ void
+ signer_clear (signer_state_t state)
+diff --git a/src/lazer-in2.h b/src/lazer-in2.h
+index edd4fd4..127c8c1 100644
+--- a/src/lazer-in2.h
++++ b/src/lazer-in2.h
+@@ -1675,6 +1675,10 @@ void falcon_keygen (uint8_t sk[1281], uint8_t pk[897]);
+ void falcon_decode_pubkey (int16_t h[512], const uint8_t pk[897]);
+ void falcon_preimage_sample (int16_t s1[512], int16_t s2[512],
+                              const int16_t t[512], const uint8_t sk[1281]);
++int falcon_decode_pubkey_chk (int16_t h[512], const uint8_t pk[897]);
++int falcon_preimage_sample_chk (int16_t s1[512], int16_t s2[512],
++                                const int16_t t[512], const uint8_t sk[1281]);
++int falcon_check_keypair (const uint8_t sk[1281], const uint8_t pk[897]);
+ 
+ void falcon1024_redc (int16_t c[1024]);
+ void falcon1024_add (int16_t c[1024], const int16_t a[1024], const int16_t b[1024]);

@@ -1,0 +1,68 @@
+From: Panurus maintainers
+Subject: [PATCH 9/10] lnp_quad_verify, abdlop_verify: bound z21
+
+The verifiers bounded only z22 = w - gamma * w1, never z21, the A2' part of
+the opening sent in the proof, while the prover rejects on and the
+parameters assume a bound on all of z2 = (z21, z22)
+(lazer-crypto/lazer#26). They now check
+l2(z21)^2 + l2(w - gamma * w1)^2 <= Bsqr. Honest proofs satisfy it; the
+transcript does not change.
+
+Panurus-local patch, applied by `make lazer-install` (lazer.mk).
+
+diff --git a/src/abdlop.c b/src/abdlop.c
+index ffde7af..66501aa 100644
+--- a/src/abdlop.c
++++ b/src/abdlop.c
+@@ -456,6 +456,7 @@ abdlop_verify (uint8_t hash[32], poly_t c, polyvec_t z1, polyvec_t z21,
+   polyvec_t w1, tmp1;
+   poly_t tmp2, c2;
+   INT_T (l2sqr, nlimbs * 2);
++  INT_T (l2sqrz21, nlimbs * 2);
+   INT_T (bnd, nlimbs * 2);
+   INT_T (linf, nlimbs);
+   INT_T (tmp, 1);
+@@ -534,8 +535,15 @@ abdlop_verify (uint8_t hash[32], poly_t c, polyvec_t z1, polyvec_t z21,
+   if (!b)
+     goto ret;
+ 
++  /*
++   * the prover rejects on l2(z21,z22)^2 <= Bsqr and the parameters bound all
++   * of z2: z21 must be bounded too, not only z22 = w - gamma*w1 (panurus
++   * patch, lazer-crypto/lazer#26). Honest proofs are unaffected.
++   */
+   polyvec_subscale (tmp1, gamma, w1, 0);
+   polyvec_l2sqr (l2sqr, tmp1);
++  polyvec_l2sqr (l2sqrz21, z21);
++  int_add (l2sqr, l2sqr, l2sqrz21);
+   b = int_le (l2sqr, params->Bsqr);
+   if (!b)
+     goto ret;
+diff --git a/src/lnp-quad.c b/src/lnp-quad.c
+index f58cdd0..d2f86a9 100644
+--- a/src/lnp-quad.c
++++ b/src/lnp-quad.c
+@@ -348,6 +348,7 @@ lnp_quad_verify (uint8_t hash[32], poly_t c, polyvec_t z1, polyvec_t z21,
+   const unsigned int log2m = dcompress_get_log2m (dcomp_param);
+   int_srcptr m_ = dcompress_get_m (dcomp_param);
+   INT_T (l2sqr, nlimbs * 2);
++  INT_T (l2sqrz21, nlimbs * 2);
+   INT_T (bnd, nlimbs * 2);
+   INT_T (linf, nlimbs);
+   INT_T (tmp, 1);
+@@ -496,8 +497,15 @@ lnp_quad_verify (uint8_t hash[32], poly_t c, polyvec_t z1, polyvec_t z21,
+     goto ret;
+   }
+ 
++  /*
++   * the prover rejects on l2(z21,z22)^2 <= Bsqr and the parameters bound all
++   * of z2: z21 must be bounded too, not only z22 = w - gamma*w1 (panurus
++   * patch, lazer-crypto/lazer#26). Honest proofs are unaffected.
++   */
+   polyvec_subscale (tmp1, gamma, w1, 0);
+   polyvec_l2sqr (l2sqr, tmp1);
++  polyvec_l2sqr (l2sqrz21, z21);
++  int_add (l2sqr, l2sqr, l2sqrz21);
+   b = int_le (l2sqr, params->Bsqr);
+   if (!b) {
+     //printf("norm bound check failed.");

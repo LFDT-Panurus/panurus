@@ -1,0 +1,83 @@
+name: Lazer Tests
+
+# Unit tests of the experimental post-quantum lazer identity module
+# (x/token/services/identity/lazer). It is a separate Go module that uses cgo and
+# links liblazer.a, so it is not covered by tests.yml / `make unit-tests`.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'x/token/services/identity/lazer/**'
+      - 'lazer.mk'
+      - '.github/workflows/lazer-tests.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'x/token/services/identity/lazer/**'
+      - 'lazer.mk'
+      - '.github/workflows/lazer-tests.yml'
+  workflow_dispatch:
+
+env:
+  GOFLAGS: -mod=mod
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lazer-unit-tests:
+    name: lazer-unit-tests (${{ matrix.arch }})
+    # arm64 exercises the arm64 support carried by patch 0000 (lazer-crypto/lazer#33).
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: "x/token/services/identity/lazer/go.mod"
+          cache-dependency-path: "x/token/services/identity/lazer/go.sum"
+
+      - name: Install lazer build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake unzip patch git libgmp-dev libmpfr-dev
+
+      # Not cached: lazer is built with -march=native (and HEXL picks AVX-512
+      # when present), so a cached build from one runner SIGILLs on another.
+      - name: Build and install lazer
+        run: make lazer-install
+
+      # lazer-check compares the sha256 of every patch with .lazer/REVISION:
+      # an install built from another patch set must be refused.
+      - name: lazer-check refuses a changed patch set
+        run: |
+          patch_file=x/token/services/identity/lazer/patches/0006-tbox-fiat-shamir-h-z3-z4.patch
+          printf 'x' >> "$patch_file"
+          if make lazer-check; then
+            echo "lazer-check accepted a patch set that differs from the installed one"
+            git checkout -- "$patch_file"
+            exit 1
+          fi
+          git checkout -- "$patch_file"
+          make lazer-check
+
+      - name: Run unit tests
+        run: make lazer-test

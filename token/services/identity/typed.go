@@ -78,6 +78,8 @@ func TypeToString(t driver.IdentityType) string {
 		return tdriver.MultiSigIdentityTypeString
 	case tdriver.HTLCScriptIdentityType:
 		return tdriver.HTLCScriptIdentityTypeString
+	case tdriver.LazerIdentityType:
+		return tdriver.LazerIdentityTypeString
 	default:
 		return fmt.Sprintf("Type (%d)", t)
 	}

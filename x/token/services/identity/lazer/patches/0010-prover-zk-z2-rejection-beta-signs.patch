@@ -1,0 +1,126 @@
+From: Panurus maintainers
+Subject: [PATCH 10/10] prover zero-knowledge: z2 rejection, beta4 sign bit
+
+Two prover-side deviations from the distribution the zero-knowledge
+simulator assumes (lazer-crypto/lazer#31):
+
+- the z2 rejection of lnp_quad_prove (rej2 == 2) called the bimodal test
+  with sigma1^2 instead of sigma2^2 and without a sign; it now uses the
+  one-time rejection Rej1 of [LNS21] (rej_onetime) with sigma2^2, for which
+  M2 = exp(1/(2 gamma^2)) was computed. It roughly doubles the expected
+  number of z2 attempts;
+- the beta4 sign of the toolbox prover read bit 8 - nrbits + 1: bit 8 of a
+  byte (always 0) on every fourth attempt, while beta3 of the next attempt
+  reused beta4's bit and the odd bits were never used. It now reads the next
+  unused bit, refilling the byte when needed, and the signs are wiped.
+
+Prover-only: proofs of either version verify with either verifier.
+
+Panurus-local patch, applied by `make lazer-install` (lazer.mk).
+
+diff --git a/src/lazer-in2.h b/src/lazer-in2.h
+index 077bf99..01c6acb 100644
+--- a/src/lazer-in2.h
++++ b/src/lazer-in2.h
+@@ -1438,6 +1438,8 @@ int rej_standard (rng_state_t state, const intvec_t z, const intvec_t v,
+                   const int_t scM, const int_t sigma2);
+ int rej_bimodal (rng_state_t state, const intvec_t z, const intvec_t v,
+                  const int_t scM, const int_t sigma2);
++int rej_onetime (rng_state_t state, const intvec_t z, const intvec_t v,
++                 const int_t scM, const int_t sigma2);
+ 
+ static inline unsigned int dcompress_get_d (const dcompress_params_t params);
+ static inline int_srcptr dcompress_get_gamma (const dcompress_params_t params);
+diff --git a/src/lin-proofs.c b/src/lin-proofs.c
+index f6421de..7a182b8 100644
+--- a/src/lin-proofs.c
++++ b/src/lin-proofs.c
+@@ -1507,7 +1507,14 @@ __lnp_tbox_compute_z34 (uint8_t hash[32], polyvec_t tB, polyvec_t z3,
+           polyvec_mod (ty4, ty4);
+           polyvec_redp (ty4, ty4);
+ 
+-          beta4 = (rbits & (1 << (8 - nrbits + 1))) >> (8 - nrbits + 1);
++          /* the next unused bit: 8 - nrbits + 1 read bit 8 of a byte, always
++             0, on every fourth attempt (panurus patch, lazer-crypto/lazer#31) */
++          if (nrbits == 0)
++            {
++              rng_urandom (rstate_signs, &rbits, 1);
++              nrbits = 8;
++            }
++          beta4 = (rbits & (1 << (8 - nrbits))) >> (8 - nrbits);
+           beta4 = 1 - 2 * beta4; /* {0,1} -> {1,-1} */
+ 
+           // printf ("beta4 %d\n", beta4);
+@@ -1734,6 +1741,10 @@ __lnp_tbox_compute_z34 (uint8_t hash[32], polyvec_t tB, polyvec_t z3,
+ 
+       break;
+     }
++  /* the signs are secret (panurus patch, lazer-crypto/lazer#31) */
++  bytes_clear (&rbits, sizeof (rbits));
++  bytes_clear ((uint8_t *)&beta3, sizeof (beta3));
++  bytes_clear ((uint8_t *)&beta4, sizeof (beta4));
+ 
+   /* update fiat-shamir hash */
+   memcpy (hash, cseed, 32);
+diff --git a/src/lnp-quad.c b/src/lnp-quad.c
+index d2f86a9..886fcdc 100644
+--- a/src/lnp-quad.c
++++ b/src/lnp-quad.c
+@@ -263,9 +263,14 @@ lnp_quad_prove (uint8_t hash[32], polyvec_t tB, poly_t c, polyvec_t z1,
+           if (params->rej2 == 1)
+             rej = rej_standard (rngstate, z2coeffs, cs2coeffs, params->scM2,
+                                 params->stdev2sqr);
++          /*
++           * one-time rejection (Rej1) with sigma2: the bimodal test without
++           * a sign, and with sigma1, did not make z2 independent of s2
++           * (panurus patch, lazer-crypto/lazer#31)
++           */
+           if (params->rej2 == 2)
+-            rej = rej_bimodal (rngstate, z2coeffs, cs2coeffs, params->scM2,
+-                               params->stdev1sqr);
++            rej = rej_onetime (rngstate, z2coeffs, cs2coeffs, params->scM2,
++                               params->stdev2sqr);
+           if (rej)
+             {
+               DEBUG_PRINTF (DEBUG_PRINT_REJ, "%s", "reject compr");
+diff --git a/src/rejection.c b/src/rejection.c
+index 45f7f4a..b36fd4e 100644
+--- a/src/rejection.c
++++ b/src/rejection.c
+@@ -206,3 +206,36 @@ rej_bimodal (rng_state_t state, const intvec_t z, const intvec_t v,
+   mpfr_clear (t6);
+   return reject;
+ }
++
++/*
++ * one-time rejection sampling (Rej1 of [LNS21], "Shorter lattice-based
++ * zero-knowledge proofs via one-time commitments"), as the parameters assume
++ * for rej2 == 2 (M = exp(1/(2*gamma^2))):
++ *
++ * if <z,v> < 0
++ *   reject
++ * u <- [0,1)
++ * if u > exp( (-2*<z,v> + <v,v>) / (2*sigma^2) ) / M
++ *   reject
++ * else
++ *   accept
++ *
++ * u is drawn in either case, so that the use of the random stream does not
++ * depend on the branch (panurus patch, lazer-crypto/lazer#31).
++ */
++int
++rej_onetime (rng_state_t state, const intvec_t z, const intvec_t v,
++             const int_t scM, const int_t sigma2)
++{
++  INT_T (t1, z->nlimbs << 1);
++  int reject;
++
++  ASSERT_ERR (z->nelems == v->nelems);
++  ASSERT_ERR (z->nlimbs == v->nlimbs);
++
++  intvec_dot (t1, z, v); /* <z,v> */
++  reject = rej_standard (state, z, v, scM, sigma2);
++  if (int_sgn (t1) < 0)
++    reject = 1;
++  return reject;
++}
