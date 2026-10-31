@@ -10,9 +10,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"flag"
-	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -28,6 +26,7 @@ import (
 	v1setup "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	tk "github.com/LFDT-Panurus/panurus/token/token"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 )
 
@@ -43,11 +42,6 @@ const (
 // the client's flag.Parse call.
 var TestRoot = flag.String("testRoot", DefaultTestRoot, "path to test data for token transfer verification")
 
-var (
-	once            sync.Once
-	cachedValidator *token.Validator
-)
-
 type transferServiceParams struct {
 	OutputPath string     `json:"test_root_path,omitempty"`
 	TokenData  *TokenData `json:"proof,omitempty"`
@@ -57,11 +51,11 @@ func (p *transferServiceParams) PublicParamsRaw() ([]byte, error) {
 	paramsTxt := filepath.Join(filepath.Dir(filepath.Dir(p.OutputPath)), "params.txt")
 	raw, err := os.ReadFile(paramsTxt)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read params file %s: %w", paramsTxt, err)
+		return nil, errors.Wrapf(err, "failed to read params file %s", paramsTxt)
 	}
 	ppRaw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(raw)))
 	if err != nil {
-		return nil, fmt.Errorf("failed to base64-decode params file: %w", err)
+		return nil, errors.Wrap(err, "failed to base64-decode params file")
 	}
 
 	return ppRaw, nil
@@ -115,7 +109,7 @@ func NewTokenValidationParamsSlice(TestRootPath string) ([]*transferServiceParam
 	testdataPath := filepath.Join(TestRootPath, "testdata.json")
 	testdataRaw, err := os.ReadFile(testdataPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read testdata file %s: %w", testdataPath, err)
+		return nil, errors.Wrapf(err, "failed to read testdata file %s", testdataPath)
 	}
 
 	var allCases map[string]struct {
@@ -123,7 +117,7 @@ func NewTokenValidationParamsSlice(TestRootPath string) ([]*transferServiceParam
 		TXID   string `json:"txid"`
 	}
 	if err := json.Unmarshal(testdataRaw, &allCases); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal testdata file: %w", err)
+		return nil, errors.Wrap(err, "failed to unmarshal testdata file")
 	}
 
 	keys := make([]string, 0, len(allCases))
@@ -133,7 +127,7 @@ func NewTokenValidationParamsSlice(TestRootPath string) ([]*transferServiceParam
 		}
 	}
 	if len(keys) == 0 {
-		return nil, fmt.Errorf("no test cases with prefix %q found in %s", defaultCasePrefix, testdataPath)
+		return nil, errors.Errorf("no test cases with prefix %q found in %s", defaultCasePrefix, testdataPath)
 	}
 	sort.Strings(keys)
 
@@ -143,7 +137,7 @@ func NewTokenValidationParamsSlice(TestRootPath string) ([]*transferServiceParam
 		tokenCase := allCases[key]
 		reqRaw, err := base64.StdEncoding.DecodeString(tokenCase.ReqRaw)
 		if err != nil {
-			return nil, fmt.Errorf("failed to base64-decode req_raw for %s: %w", key, err)
+			return nil, errors.Wrapf(err, "failed to base64-decode req_raw for %s", key)
 		}
 		ret = append(ret, &transferServiceParams{
 			// Synthetic path: <configDir>/<caseFamily>/<idx> for path-based helpers.
@@ -164,15 +158,44 @@ func (*fakeLedger) GetState(_ tk.ID) ([]byte, error) {
 	return nil, errors.New("fakeLedger.GetState is not implemented")
 }
 
+// validatorCache memoizes one validator across views. Not sync.Once: the init
+// error must reach every caller, and a failure must not be memoized.
+type validatorCache struct {
+	mu        sync.Mutex
+	validator *token.Validator
+}
+
+// get returns the memoized validator, building it on first use.
+func (c *validatorCache) get(params *transferServiceParams) (*token.Validator, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.validator != nil {
+		return c.validator, nil
+	}
+
+	ppRaw, err := params.PublicParamsRaw()
+	if err != nil {
+		return nil, err
+	}
+	validator, err := newTokenValidator(ppRaw)
+	if err != nil {
+		return nil, err
+	}
+	c.validator = validator
+
+	return validator, nil
+}
+
 func newTokenValidator(ppRaw []byte) (*token.Validator, error) {
 	is := core.NewValidatorDriverService(driver.DefaultResourceLimits(), fabtoken.NewValidatorDriver(), dlog.NewValidatorDriver())
 	ppm, err := is.PublicParametersFromBytes(ppRaw)
 	if err != nil {
-		return nil, fmt.Errorf("failed to deserialize public parameters: %w", err)
+		return nil, errors.Wrap(err, "failed to deserialize public parameters")
 	}
 	v, err := is.NewValidator(ppm)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create validator: %w", err)
+		return nil, errors.Wrap(err, "failed to create validator")
 	}
 
 	return token.NewValidator(v), nil
@@ -216,13 +239,17 @@ func (q *TokenValidationServiceView) Call(viewCtx view.Context) (any, error) {
 		q.tokenData.TokenRequestRaw,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to verify token request: %w", err)
+		return nil, errors.Wrap(err, "failed to verify token request")
 	}
 
 	return nil, nil
 }
 
-type TokenValidationServiceViewFactory struct{}
+// TokenValidationServiceViewFactory builds verification views sharing one
+// lazily-built validator. The zero value is ready to use; use it by pointer.
+type TokenValidationServiceViewFactory struct {
+	validators validatorCache
+}
 
 // NewView builds a verification view.
 // Wire proof embedded in the JSON params (remote/gRPC path)
@@ -235,19 +262,11 @@ func (c *TokenValidationServiceViewFactory) NewView(in []byte) (view.View, error
 	if f.params.TokenData != nil {
 		f.tokenData = f.params.TokenData
 
-		var initErr error
-		once.Do(func() {
-			ppRaw, err := f.params.PublicParamsRaw()
-			if err != nil {
-				initErr = err
-			} else {
-				cachedValidator, initErr = newTokenValidator(ppRaw)
-			}
-		})
-		if initErr != nil {
-			return nil, fmt.Errorf("failed to create token validator: %w", initErr)
+		validator, err := c.validators.get(&f.params)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to create token validator")
 		}
-		f.validator = cachedValidator
+		f.validator = validator
 	}
 
 	return f, nil
