@@ -461,6 +461,31 @@ Each divergence is recorded as a finding with a stable key, a code and a severit
 
 Drift check behavior is controlled by the `token.tms.<name>.services.storage.checks` configuration section. See [**Ledger Drift Checks**](storage/checks.md) for the parameters.
 
+## Postgres Startup Connection Timeout
+
+A Postgres persistence takes an optional `startupConnectTimeout` (a Go duration string) under its
+`opts`. When fabric-smart-client's `postgres.Open` opens the pool, it pings the database and
+retries every failed ping with jittered exponential backoff until the database answers or the
+timeout expires, then fails startup. Each ping is bounded by 5s. A node started together with its
+database therefore waits instead of exiting.
+
+Default: `60s`, also when the value is unset, `0` or negative. Waiting cannot be disabled.
+
+Every Postgres token store honours it: `TokenDB`, `IdentityDB`/`WalletDB`, `TTXDB`/`AuditDB`,
+`EndorserDB`, the token lock store and the keystore. Pools are shared per `dataSource` with
+fabric-smart-client's own stores, so the timeout applies only when this persistence is the first
+to open a pool for its `dataSource`.
+
+```yaml
+fsc:
+  persistences:
+    my_token_persistence:
+      type: postgres
+      opts:
+        dataSource: host=localhost port=5432 user=postgres password=example dbname=tokendb sslmode=disable
+        startupConnectTimeout: 2m
+```
+
 ## Connection-Pool Metrics
 
 Every Postgres token store (`TokenDB`, `TTXDB`, `AuditDB`, `IdentityDB`, `WalletDB`, the keystore

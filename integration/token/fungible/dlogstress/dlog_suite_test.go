@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/LFDT-Panurus/panurus/integration"
+	"github.com/LFDT-Panurus/panurus/integration/token"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -22,6 +23,8 @@ func TestEndToEnd(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "EndToEnd Fungible (DLOG) Stress Suite")
 }
+
+var _ = AfterSuite(token.CleanupBuildArtifacts)
 
 func StartPortDlog() int {
 	return integration.ZKATDLogFungibleStress.StartPortForNode()

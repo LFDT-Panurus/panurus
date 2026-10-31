@@ -167,6 +167,13 @@ func (s *TestSuite) TearDown() {
 	s.II.Stop()
 }
 
+// CleanupBuildArtifacts deletes the binaries that FSC's build server keeps across
+// the networks started by the current process. Call it from the AfterSuite of every
+// suite that starts a network; TearDown no longer removes them.
+func CleanupBuildArtifacts() {
+	integration.CleanupBuildArtifacts()
+}
+
 func (s *TestSuite) Setup() {
 	// Create the integration ii
 	network, err := s.generator()
