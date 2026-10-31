@@ -127,18 +127,23 @@ func (r *BaseRunner) executeSuite(suite model.SuiteConfig) {
 	r.logger.Infof(r.metricsReporter.Summary())
 }
 
-func (r *BaseRunner) initCustomerState(suiteConfig model.SuiteConfig) txgen.Error {
+// initCustomerState records the starting balance of every user of the suite. A user
+// whose balance cannot be fetched is dropped, so that a stale state from an earlier
+// suite is never reused, instead of aborting the initialization.
+func (r *BaseRunner) initCustomerState(suiteConfig model.SuiteConfig) error {
+	var errs []error
 	for _, u := range collectUsers(suiteConfig) {
 		balance, err := r.intermediary.GetBalance(u)
 		if err != nil {
-			return err
+			errs = append(errs, errors.Wrapf(err, "failed to fetch the balance of user [%s]", u))
+			delete(r.customers, u)
+
+			continue
 		}
-		// if _, ok := r.customers[u]; !ok {
 		r.customers[u] = &customerState{Name: u, StartingAmount: balance}
-		// }
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 func (r *BaseRunner) runSuite(suite model.SuiteConfig) {

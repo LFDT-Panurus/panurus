@@ -148,6 +148,7 @@ nav:
       - Debugging Integration Tests: development/debug-integration-tests.md
       - Tokengen: development/tokengen.md
       - Tokendiag: development/tokendiag.md
+      - Txgen (Load Generator): development/txgen.md
       - Tools: development/tools.md
       - Versioning: development/versioning.md
       - Dependency License Dispositions: development/license-dispositions.md
