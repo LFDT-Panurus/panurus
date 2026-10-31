@@ -13,6 +13,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/LFDT-Panurus/panurus/integration"
+	token2 "github.com/LFDT-Panurus/panurus/integration/token"
 )
 
 func TestEndToEnd(t *testing.T) {
@@ -23,6 +24,8 @@ func TestEndToEnd(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "EndToEnd DVP (FabToken) Suite")
 }
+
+var _ = AfterSuite(token2.CleanupBuildArtifacts)
 
 func StartPort() int {
 	return integration.FabTokenDVP.StartPortForNode()

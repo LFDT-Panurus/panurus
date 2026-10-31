@@ -102,16 +102,7 @@ func newDriver(config driver3.Config, dbProvider fscPostgres.DbProvider, sampler
 // newTokenStoreProvider returns a lazy provider for TokenStore.
 func newTokenStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfig common3.TableNamesConfig) lazy.Provider[fscPostgres.Config, *TokenStore] {
 	return lazy.NewProviderWithKeyMapper(key, func(o fscPostgres.Config) (*TokenStore, error) {
-		opts := fscPostgres.Opts{
-			DataSource:      o.DataSource,
-			MaxOpenConns:    o.MaxOpenConns,
-			MaxIdleConns:    *o.MaxIdleConns,
-			MaxIdleTime:     *o.MaxIdleTime,
-			TablePrefix:     o.TablePrefix,
-			TableNameParams: o.TableNameParams,
-			Tracing:         o.Tracing,
-		}
-		dbs, err := dbProvider.Get(opts)
+		dbs, err := dbProvider.Get(o.Opts())
 		if err != nil {
 			return nil, err
 		}
@@ -147,16 +138,7 @@ func newTokenStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfig c
 // newIdentityStoreProvider returns a lazy provider for IdentityStore.
 func newIdentityStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfig common3.TableNamesConfig) lazy.Provider[fscPostgres.Config, *IdentityStore] {
 	return lazy.NewProviderWithKeyMapper(key, func(o fscPostgres.Config) (*IdentityStore, error) {
-		opts := fscPostgres.Opts{
-			DataSource:      o.DataSource,
-			MaxOpenConns:    o.MaxOpenConns,
-			MaxIdleConns:    *o.MaxIdleConns,
-			MaxIdleTime:     *o.MaxIdleTime,
-			TablePrefix:     o.TablePrefix,
-			TableNameParams: o.TableNameParams,
-			Tracing:         o.Tracing,
-		}
-		dbs, err := dbProvider.Get(opts)
+		dbs, err := dbProvider.Get(o.Opts())
 		if err != nil {
 			return nil, err
 		}
@@ -187,16 +169,7 @@ func newIdentityStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfi
 // newTransactionStoreProvider returns a lazy provider for TransactionStore with notifier support.
 func newTransactionStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfig common3.TableNamesConfig) lazy.Provider[fscPostgres.Config, *TransactionStore] {
 	return lazy.NewProviderWithKeyMapper(key, func(o fscPostgres.Config) (*TransactionStore, error) {
-		opts := fscPostgres.Opts{
-			DataSource:      o.DataSource,
-			MaxOpenConns:    o.MaxOpenConns,
-			MaxIdleConns:    *o.MaxIdleConns,
-			MaxIdleTime:     *o.MaxIdleTime,
-			TablePrefix:     o.TablePrefix,
-			TableNameParams: o.TableNameParams,
-			Tracing:         o.Tracing,
-		}
-		dbs, err := dbProvider.Get(opts)
+		dbs, err := dbProvider.Get(o.Opts())
 		if err != nil {
 			return nil, err
 		}
@@ -239,16 +212,7 @@ func newWalletStoreProvider(d *Driver, dbProvider fscPostgres.DbProvider, tableN
 			return nil, err
 		}
 
-		opts := fscPostgres.Opts{
-			DataSource:      o.DataSource,
-			MaxOpenConns:    o.MaxOpenConns,
-			MaxIdleConns:    *o.MaxIdleConns,
-			MaxIdleTime:     *o.MaxIdleTime,
-			TablePrefix:     o.TablePrefix,
-			TableNameParams: o.TableNameParams,
-			Tracing:         o.Tracing,
-		}
-		dbs, err := dbProvider.Get(opts)
+		dbs, err := dbProvider.Get(o.Opts())
 		if err != nil {
 			return nil, err
 		}
@@ -353,16 +317,7 @@ func (d *Driver) NewEndorser(name driver2.PersistenceName, params ...string) (dr
 // newEndorserStoreProvider returns a lazy provider for EndorserStore.
 func newEndorserStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfig common3.TableNamesConfig) lazy.Provider[fscPostgres.Config, *EndorserStore] {
 	return lazy.NewProviderWithKeyMapper(key, func(o fscPostgres.Config) (*EndorserStore, error) {
-		opts := fscPostgres.Opts{
-			DataSource:      o.DataSource,
-			MaxOpenConns:    o.MaxOpenConns,
-			MaxIdleConns:    *o.MaxIdleConns,
-			MaxIdleTime:     *o.MaxIdleTime,
-			TablePrefix:     o.TablePrefix,
-			TableNameParams: o.TableNameParams,
-			Tracing:         o.Tracing,
-		}
-		dbs, err := dbProvider.Get(opts)
+		dbs, err := dbProvider.Get(o.Opts())
 		if err != nil {
 			return nil, err
 		}
@@ -415,16 +370,7 @@ func (p *observedDbProvider) Get(opts fscPostgres.Opts) (*common.RWDB, error) {
 // newProviderWithKeyMapper returns a lazy provider for a DB object using a common constructor.
 func newProviderWithKeyMapper[V common.DBObject](dbProvider fscPostgres.DbProvider, constructor common3.PersistenceConstructor[V], storeType string, tableNamesConfig common3.TableNamesConfig) lazy.Provider[fscPostgres.Config, V] {
 	return lazy.NewProviderWithKeyMapper(key, func(o fscPostgres.Config) (V, error) {
-		opts := fscPostgres.Opts{
-			DataSource:      o.DataSource,
-			MaxOpenConns:    o.MaxOpenConns,
-			MaxIdleConns:    *o.MaxIdleConns,
-			MaxIdleTime:     *o.MaxIdleTime,
-			TablePrefix:     o.TablePrefix,
-			TableNameParams: o.TableNameParams,
-			Tracing:         o.Tracing,
-		}
-		dbs, err := dbProvider.Get(opts)
+		dbs, err := dbProvider.Get(o.Opts())
 		if err != nil {
 			return utils.Zero[V](), err
 		}

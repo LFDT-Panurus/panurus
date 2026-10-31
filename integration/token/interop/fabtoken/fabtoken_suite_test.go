@@ -11,6 +11,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	token2 "github.com/LFDT-Panurus/panurus/integration/token"
 )
 
 func TestEndToEnd(t *testing.T) {
@@ -21,3 +23,5 @@ func TestEndToEnd(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "EndToEnd Interop (FabToken) Suite")
 }
+
+var _ = AfterSuite(token2.CleanupBuildArtifacts)

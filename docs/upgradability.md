@@ -703,6 +703,34 @@ failure, so a cancellation is not misread as a broken backend.
 
 ---
 
+## Fabric Smart Client Upgrades
+
+Panurus nodes run on [Fabric Smart Client](https://github.com/hyperledger-labs/fabric-smart-client)
+(FSC), so an FSC bump can change how a node starts and stores data. This section lists only what
+affects operators; FSC's own upgrade guides have the full details.
+
+### FSC v0.26 to v0.27
+
+- **Back up every database first.** On first start the vault state table and the KVS table
+  reorder their primary key from `(pkey, ns)` to `(ns, pkey)`, once. On Postgres the database user
+  must own those tables, or startup fails. On SQLite a replica that waits on the rebuild past
+  `busy_timeout` fails with `SQLITE_BUSY` and finds the table reordered on restart.
+- **Persistence names** may contain only letters, digits, `_` and `-`; any other name fails
+  startup.
+- **Environment configuration**: only variables that start with `CORE_` are read, and `__` in a
+  variable name maps to a literal `_` in the key.
+- **SQLite**: the `cache_size=1000000000` default is dropped. Set it in the `dataSource` if you
+  rely on it.
+- **Postgres**: opening a database now waits for it; see
+  [Postgres Startup Connection Timeout](services/storage.md#postgres-startup-connection-timeout).
+- **P2P**: a node answers a view it does not host with `unknown_view: <view>`, and an overloaded
+  node prefixes its rejection with `busy: `. Upgrade nodes that talk to each other together.
+
+See FSC's
+[v0.26 to v0.27 upgrade guide](https://github.com/hyperledger-labs/fabric-smart-client/blob/v0.27.0/docs/upgrade/v0.26-to-v0.27.md).
+
+---
+
 ## Summary of Upgradability Responsibilities
 
 | Component | Responsibility | Mechanism |
