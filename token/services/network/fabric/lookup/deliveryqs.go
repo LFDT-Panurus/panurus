@@ -78,6 +78,35 @@ func (q *DeliveryScanQueryByID) queryByID(ctx context.Context, keys []driver.PKe
 	keySet := collections.NewSet(keys...)
 
 	// group keys by namespace
+	keysByNS := groupKeysByNamespace(evicted)
+
+	// for each namespace, have a call to the token chaincode
+	startDelivery := false
+	for ns, keys := range keysByNS {
+		found, notFound, ok := q.queryNamespace(ctx, ns, keys, keySet)
+		if !ok {
+			startDelivery = true
+
+			continue
+		}
+		if len(notFound) == 0 {
+			delete(keysByNS, ns)
+		} else {
+			startDelivery = true
+			keysByNS[ns] = notFound
+		}
+		ch <- found
+	}
+
+	if !startDelivery {
+		return
+	}
+
+	q.scanForKeys(ctx, lastBlock, keysByNS, keySet, ch)
+}
+
+// groupKeysByNamespace groups the evicted keys by the namespace of their listeners.
+func groupKeysByNamespace(evicted map[driver.PKey][]events.ListenerEntry[KeyInfo]) map[driver.Namespace][]driver.PKey {
 	keysByNS := map[driver.Namespace][]driver.PKey{}
 	for k, v := range evicted {
 		ns := slices2.GetAny(v).Namespace()
@@ -88,71 +117,66 @@ func (q *DeliveryScanQueryByID) queryByID(ctx context.Context, keys []driver.PKe
 		keysByNS[ns] = append(keysByNS[ns], k)
 	}
 
-	// for each namespace, have a call to the token chaincode
-	startDelivery := false
-	for ns, keys := range keysByNS {
-		// A failure here concerns this namespace only. Leave its keys in keysByNS and keySet and
-		// fall back to the block scan, rather than returning and dropping every other namespace
-		// in the batch along with it (see #1990, and #1426 for the same fix on the finality path).
-		arg, err := json.Marshal(keys)
-		if err != nil {
-			logger.Errorf("failed marshalling args for query by ids [%v]: [%s], falling back to block scan", keys, err)
-			startDelivery = true
+	return keysByNS
+}
 
-			continue
-		}
+// queryNamespace asks the token chaincode deployed under ns for the current values of keys.
+// Keys that have a value are returned in found and removed from keySet; keys that have none are
+// returned in notFound. ok is false when the query as a whole failed, in which case the caller
+// falls back to the block scan for all of this namespace's keys.
+func (q *DeliveryScanQueryByID) queryNamespace(ctx context.Context, ns driver.Namespace, keys []driver.PKey, keySet collections.Set[driver.PKey]) (found []KeyInfo, notFound []string, ok bool) {
+	// A failure here concerns this namespace only. Leave its keys in keysByNS and keySet and
+	// fall back to the block scan, rather than returning and dropping every other namespace
+	// in the batch along with it (see #1990, and #1426 for the same fix on the finality path).
+	arg, err := json.Marshal(keys)
+	if err != nil {
+		logger.Errorf("failed marshalling args for query by ids [%v]: [%s], falling back to block scan", keys, err)
 
-		logger.DebugfContext(ctx, "querying chaincode [%s] for the states of ids [%v]", ns, keys)
-		res, err := q.Querier.QueryStates(ns, arg)
-		if err != nil {
-			logger.Errorf("failed querying by ids [%v]: [%s], falling back to block scan", keys, err)
-			startDelivery = true
-
-			continue
-		}
-		values := make([][]byte, 0, len(keys))
-		err = json.Unmarshal(res, &values)
-		if err != nil {
-			logger.Errorf("failed unmarshalling results for query by ids [%v]: [%s], falling back to block scan", keys, err)
-			startDelivery = true
-
-			continue
-		}
-		if len(values) != len(keys) {
-			logger.Errorf("peer returned %d values for %d keys in ns [%s]; falling back to block scan",
-				len(values), len(keys), ns)
-			startDelivery = true
-
-			continue // treat as a per-namespace failure (=> fall back to the slow block scan)
-		}
-		found := make([]KeyInfo, 0, len(values))
-		var notFound []string
-		for i, value := range values {
-			if len(value) == 0 {
-				startDelivery = true
-				notFound = append(notFound, keys[i])
-
-				continue
-			}
-			found = append(found, KeyInfo{
-				Namespace: ns,
-				Key:       keys[i],
-				Value:     value,
-			})
-			keySet.Remove(keys[i])
-		}
-		if len(notFound) == 0 {
-			delete(keysByNS, ns)
-		} else {
-			keysByNS[ns] = notFound
-		}
-		ch <- found
+		return nil, nil, false
 	}
 
-	if !startDelivery {
-		return
+	logger.DebugfContext(ctx, "querying chaincode [%s] for the states of ids [%v]", ns, keys)
+	res, err := q.Querier.QueryStates(ns, arg)
+	if err != nil {
+		logger.Errorf("failed querying by ids [%v]: [%s], falling back to block scan", keys, err)
+
+		return nil, nil, false
+	}
+	values := make([][]byte, 0, len(keys))
+	err = json.Unmarshal(res, &values)
+	if err != nil {
+		logger.Errorf("failed unmarshalling results for query by ids [%v]: [%s], falling back to block scan", keys, err)
+
+		return nil, nil, false
+	}
+	if len(values) != len(keys) {
+		logger.Errorf("peer returned %d values for %d keys in ns [%s]; falling back to block scan",
+			len(values), len(keys), ns)
+
+		return nil, nil, false // treat as a per-namespace failure (=> fall back to the slow block scan)
+	}
+	found = make([]KeyInfo, 0, len(values))
+	for i, value := range values {
+		if len(value) == 0 {
+			notFound = append(notFound, keys[i])
+
+			continue
+		}
+		found = append(found, KeyInfo{
+			Namespace: ns,
+			Key:       keys[i],
+			Value:     value,
+		})
+		keySet.Remove(keys[i])
 	}
 
+	return found, notFound, true
+}
+
+// scanForKeys scans the blocks starting shortly before lastBlock for writes to the keys still
+// left in keysByNS, sending the matches of each transaction to ch, until every key in keySet has
+// been found.
+func (q *DeliveryScanQueryByID) scanForKeys(ctx context.Context, lastBlock uint64, keysByNS map[driver.Namespace][]driver.PKey, keySet collections.Set[driver.PKey], ch chan []KeyInfo) {
 	startingBlock := blockscan.StartingBlock(lastBlock)
 	logger.DebugfContext(ctx, "start scanning blocks starting from [%d], looking for remaining keys [%s]", startingBlock, keySet)
 
@@ -167,33 +191,9 @@ func (q *DeliveryScanQueryByID) queryByID(ctx context.Context, keys []driver.PKe
 				return false, err
 			}
 
-			var txInfos []KeyInfo
-			for namespace, keys := range keysByNS {
-				if !slices.Contains(rws.Namespaces(), namespace) {
-					logger.DebugfContext(ctx, "scanning [%s] does not contain namespace [%s]", tx.TxID(), namespace)
-
-					continue
-				}
-
-				//nolint:intrange
-				for i := 0; i < rws.NumWrites(namespace); i++ {
-					k, v, err := rws.GetWriteAt(namespace, i)
-					if err != nil {
-						logger.DebugfContext(ctx, "scanning [%s]: failed to get key [%s]", tx.TxID(), err)
-
-						return false, err
-					}
-					if slices.Contains(keys, k) {
-						logger.DebugfContext(ctx, "scanning [%s]: found key [%s]", tx.TxID(), k)
-						txInfos = append(txInfos, KeyInfo{
-							Namespace: namespace,
-							Key:       k,
-							Value:     v,
-						})
-						logger.DebugfContext(ctx, "removing [%s] from searching list, remaining keys [%d]", k, keySet.Length())
-						keySet.Remove(k)
-					}
-				}
+			txInfos, err := collectKeysFromTx(ctx, rws, tx.TxID(), keysByNS, keySet)
+			if err != nil {
+				return false, err
 			}
 			if len(txInfos) != 0 {
 				ch <- txInfos
@@ -208,4 +208,39 @@ func (q *DeliveryScanQueryByID) queryByID(ctx context.Context, keys []driver.PKe
 		return
 	}
 	logger.DebugfContext(ctx, "finished scanning blocks starting from [%d]", startingBlock)
+}
+
+// collectKeysFromTx returns the writes of a scanned transaction to any of the keys still being
+// looked for in keysByNS, removing each key it finds from keySet.
+func collectKeysFromTx(ctx context.Context, rws *fabric.RWSet, txID driver.TxID, keysByNS map[driver.Namespace][]driver.PKey, keySet collections.Set[driver.PKey]) ([]KeyInfo, error) {
+	var txInfos []KeyInfo
+	for namespace, keys := range keysByNS {
+		if !slices.Contains(rws.Namespaces(), namespace) {
+			logger.DebugfContext(ctx, "scanning [%s] does not contain namespace [%s]", txID, namespace)
+
+			continue
+		}
+
+		//nolint:intrange
+		for i := 0; i < rws.NumWrites(namespace); i++ {
+			k, v, err := rws.GetWriteAt(namespace, i)
+			if err != nil {
+				logger.DebugfContext(ctx, "scanning [%s]: failed to get key [%s]", txID, err)
+
+				return nil, err
+			}
+			if slices.Contains(keys, k) {
+				logger.DebugfContext(ctx, "scanning [%s]: found key [%s]", txID, k)
+				txInfos = append(txInfos, KeyInfo{
+					Namespace: namespace,
+					Key:       k,
+					Value:     v,
+				})
+				logger.DebugfContext(ctx, "removing [%s] from searching list, remaining keys [%d]", k, keySet.Length())
+				keySet.Remove(k)
+			}
+		}
+	}
+
+	return txInfos, nil
 }
