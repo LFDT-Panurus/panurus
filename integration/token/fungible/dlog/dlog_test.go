@@ -114,11 +114,17 @@ var _ = Describe("EndToEnd", func() {
 			It("succeeded", Label("T10"), func() { fungible.TestAll(ts.II, "auditor", nil, true, selector) })
 		})
 
-		Describe("Multisig", t.Label, func() {
+		// Multisig and Redeem to yourself share one network, see token2.ShareNetwork. Both
+		// leave the network healthy, and their assertions do not overlap: Multisig moves
+		// USD among alice, bob, charlie and manager, Redeem only among the issuer's own
+		// owner wallet, and together they issue 220 USD, within the issuer's 241 USD quota.
+		// Redeem expects the auditor not to have authorized any redeem issuer yet, which
+		// Multisig does not do. Each label still runs on its own network when filtered alone.
+		Describe("Multisig and Redeem to yourself", Ordered, ContinueOnFailure, t.Label, func() {
 			ts, selector := newTestSuite(t.CommType, Aries, t.ReplicationFactor, "", "alice", "bob", "charlie")
-			BeforeEach(ts.Setup)
-			AfterEach(ts.TearDown)
-			It("succeeded", Label("T12"), func() { fungible.TestMultiSig(ts.II, selector) })
+			token2.ShareNetwork(ts)
+			It("Multisig succeeded", Label("T12"), func() { fungible.TestMultiSig(ts.II, selector) })
+			It("Test redeem", Label("T13"), func() { fungible.TestRedeem(ts.II, selector, "default") })
 		})
 
 		Describe("PolicyIdentity", t.Label, func() {
@@ -129,13 +135,6 @@ var _ = Describe("EndToEnd", func() {
 				fungible.TestPolicyOR(ts.II, selector)
 				fungible.TestPolicyAND(ts.II, selector)
 			})
-		})
-
-		Describe("Redeem to yourself", t.Label, func() {
-			ts, selector := newTestSuite(t.CommType, Aries, t.ReplicationFactor, "", "alice", "bob", "charlie")
-			BeforeEach(ts.Setup)
-			AfterEach(ts.TearDown)
-			It("Test redeem", Label("T13"), func() { fungible.TestRedeem(ts.II, selector, "default") })
 		})
 
 		Describe("Redeem with an unauthorized issuer", t.Label, func() {

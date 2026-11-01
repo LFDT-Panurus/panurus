@@ -116,11 +116,17 @@ var _ = Describe("EndToEnd", func() {
 			It("Malicious Transactions", Label("T9"), func() { fungible.TestMaliciousTransactions(ts.II, selector) })
 		})
 
-		Describe("Multisig", t.Label, func() {
+		// Multisig and Redeem to yourself share one network, see token2.ShareNetwork. Both
+		// leave the network healthy, and their assertions do not overlap: Multisig moves
+		// USD among alice, bob, charlie and manager, Redeem only among the issuer's own
+		// owner wallet, and together they issue 220 USD, within the issuer's 241 USD quota.
+		// Redeem expects the auditor not to have authorized any redeem issuer yet, which
+		// Multisig does not do. Each label still runs on its own network when filtered alone.
+		Describe("Multisig and Redeem to yourself", Ordered, ContinueOnFailure, t.Label, func() {
 			ts, selector := newTestSuite(t.CommType, Aries|WithEndorsers, t.ReplicationFactor, "", "alice", "bob", "charlie")
-			BeforeEach(ts.Setup)
-			AfterEach(ts.TearDown)
-			It("succeeded", Label("T12"), func() { fungible.TestMultiSig(ts.II, selector) })
+			token2.ShareNetwork(ts)
+			It("Multisig succeeded", Label("T12"), func() { fungible.TestMultiSig(ts.II, selector) })
+			It("Test redeem", Label("T13"), func() { fungible.TestRedeem(ts.II, selector, "default") })
 		})
 
 		Describe("PolicyIdentity", t.Label, func() {
@@ -131,13 +137,6 @@ var _ = Describe("EndToEnd", func() {
 				fungible.TestPolicyOR(ts.II, selector)
 				fungible.TestPolicyAND(ts.II, selector)
 			})
-		})
-
-		Describe("Redeem to yourself", t.Label, func() {
-			ts, selector := newTestSuite(t.CommType, Aries|WithEndorsers, t.ReplicationFactor, "", "alice", "bob", "charlie")
-			BeforeEach(ts.Setup)
-			AfterEach(ts.TearDown)
-			It("Test redeem", Label("T13"), func() { fungible.TestRedeem(ts.II, selector, "default") })
 		})
 
 		Describe("T16 Fungible with a 2-of-3 namespace endorsement policy", t.Label, func() {
@@ -175,8 +174,26 @@ type testSuite struct {
 
 // Setup starts the network and installs the public parameters.
 func (s *testSuite) Setup() {
+	// never reuse the infrastructure of a previous network
+	s.II = nil
 	s.TestSuite.Setup()
 	s.installer.InstallPendingPublicParams()
+}
+
+// TearDown stops the network with token2.StopInfrastructure and then clears II. Unlike the
+// embedded suite's TearDown, it is safe to call on a network whose Setup failed part-way, and
+// it is idempotent, as token2.ShareNetwork requires. II is cleared only once Stop returns, so
+// a TearDown whose Stop panics leaves II set and the final cleanup retries once (best effort;
+// a process that hangs will hang again, bounded by NWO's StopEventuallyTimeout). The generator
+// runs Generate before II is assigned, so if it fails II stays nil, and the BuildServer and
+// test directory of that Infrastructure are left to CleanupBuildArtifacts and DeleteOnStart;
+// they hold no ports in the start range.
+func (s *testSuite) TearDown() {
+	if s.II == nil {
+		return
+	}
+	token2.StopInfrastructure(s.II)
+	s.II = nil
 }
 
 func newTestSuite(commType fsc.P2PCommunicationType, mask int, factor int, tokenSelector string, names ...string) (*testSuite, *token2.ReplicaSelector) {
@@ -208,6 +225,9 @@ func newTestSuite(commType fsc.P2PCommunicationType, mask int, factor int, token
 	ts := &testSuite{}
 	ts.TestSuite = integration.NewTestSuite(func() (*integration.Infrastructure, error) {
 		i, err := integration.New(StartPortDlog(), "./testdata", topology.Topology(tmsOpts)...)
+		if err != nil {
+			return nil, err
+		}
 		i.DeleteOnStart = true
 		i.DeleteOnStop = false
 		if integration.WithRaceDetection {
@@ -219,7 +239,7 @@ func newTestSuite(commType fsc.P2PCommunicationType, mask int, factor int, token
 		i.Generate()
 		ts.installer = tokenPlatformFactory
 
-		return i, err
+		return i, nil
 	})
 
 	return ts, selector

@@ -226,6 +226,8 @@ jobs:
         # runtime (~45m), so they are split into one job per infrastructure type
         # here. Coverage is unchanged: all three configurations still run, just in
         # parallel. See fungible.mk / fabricx.mk for the matching targets.
+        # Specs that share one network (token.ShareNetwork) run in a single job,
+        # e.g. dlog-fabric-t12-t13, so that the network is built once per type.
         tests: [
           dlog-fabric-t1-websocket,
           dlog-fabric-t1-libp2p,
@@ -247,8 +249,7 @@ jobs:
           dlog-fabric-t10-libp2p,
           dlog-fabric-t10-replicas,
           dlog-fabric-t11,
-          dlog-fabric-t12,
-          dlog-fabric-t13,
+          dlog-fabric-t12-t13,
 #          dlog-fabric-t14,
           dlog-fabric-t15,
           dlog-fabric-t17,

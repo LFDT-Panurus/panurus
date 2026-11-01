@@ -108,6 +108,12 @@ integration-tests-dlog-fabric-t12:
 integration-tests-dlog-fabric-t13:
 	make integration-tests-dlog-fabric TEST_FILTER="T13"
 
+# T12 and T13 share one network per infrastructure type (see the "Multisig and Redeem to
+# yourself" container in integration/token/fungible/dlog), so CI runs them in one job.
+.PHONY: integration-tests-dlog-fabric-t12-t13
+integration-tests-dlog-fabric-t12-t13:
+	make integration-tests-dlog-fabric TEST_FILTER="T12 || T13"
+
 .PHONY: integration-tests-dlog-fabric-t14
 integration-tests-dlog-fabric-t14:
 	make integration-tests-dlog-fabric TEST_FILTER="T14"

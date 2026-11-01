@@ -192,6 +192,64 @@ To run the `dlog-fabric-t1` test:
 make integration-tests-dlog-fabric-t1
 ```
 
+### Sharing One Network Across Specs
+
+Most suites build a whole network for every spec with `BeforeEach(ts.Setup)` /
+`AfterEach(ts.TearDown)`. Specs that leave the network healthy can instead share one network
+by calling `token.ShareNetwork` (`integration/token/test_utils.go`) inside an
+`Ordered, ContinueOnFailure` container, the Panurus counterpart of FSC's
+`faultrecovery.ShareNetwork`:
+
+```go
+Describe("Multisig and Redeem to yourself", Ordered, ContinueOnFailure, t.Label, func() {
+	ts, selector := newTestSuite(...)
+	token2.ShareNetwork(ts)
+	It("Multisig succeeded", Label("T12"), func() { fungible.TestMultiSig(ts.II, selector) })
+	It("Test redeem", Label("T13"), func() { fungible.TestRedeem(ts.II, selector, "default") })
+})
+```
+
+The lifecycle is:
+
+- **Initial build**: the network is built in `BeforeAll`, before the first selected spec. The
+  `DeferCleanup` that tears it down is registered *before* the build starts, so a network whose
+  build failed part-way is still torn down and does not hold the ports that later containers of
+  the suite reuse. If the initial build fails, Ginkgo fails that spec and skips the rest of the
+  container.
+- **Rebuild after a failure**: a spec that fails, including in a `DeferCleanup` it registered
+  itself, may leave the network broken, so the network is torn down and rebuilt before the next
+  spec runs. If that rebuild fails, the spec it was run for fails before its body runs (it is
+  not skipped, so the run stays red), and every later spec of the container is skipped rather
+  than retrying the rebuild.
+- **Final teardown**: the network is torn down after the last spec of the container, after that
+  spec's own cleanups. Under `--fail-fast`, Ginkgo skips every spec after the first failure and
+  never runs that final cleanup, so the network is torn down right after the spec that failed.
+- **Suite timeout**: if the Ginkgo suite timeout (default 1h) expires, the network of the
+  timed-out container is not torn down, as with FSC's `faultrecovery.ShareNetwork`. A CI runner
+  is discarded anyway; locally, run `make clean-all-containers`.
+
+Because of this, the suite passed to `token.ShareNetwork` must implement `token.Network`
+with a `TearDown` that is safe to call on a network whose `Setup` failed part-way (or never
+ran) and that is idempotent. `token.TestSuite` does so; a suite embedding FSC's
+`*integration.TestSuite` must override `TearDown`, for example with `token.StopInfrastructure`
+(see the `testSuite` of `integration/token/fungible/dlogx`). `TearDown` clears `II` only once
+`Stop` returns, so if `Stop` panics part-way the final cleanup retries it once. It does not stop
+the build server or remove the test directory of an infrastructure whose `Generate` never ran;
+those hold no ports in the start range and are cleaned up by `CleanupBuildArtifacts` and
+`DeleteOnStart`.
+
+Labels stay on the specs, so a label filter that selects one spec still runs it on a network of
+its own; a CI job gains only when its filter selects several specs of the container
+(e.g. `make integration-tests-dlog-fabric-t12-t13`).
+
+Only group specs that:
+
+- leave every node running and the public parameters and node configuration unchanged
+  (a spec that updates the public parameters or revokes an identity may only be the last one);
+- do not assert absolute balances, holdings or issued totals on a wallet and token type that an
+  earlier spec of the container also touched, and stay together within the issuer's USD quota
+  (241, enforced by the test issuer view).
+
 ### Enabling the Token Platform Without a TMS
 
 By default, an FSC node only gets `token: enabled: true` written into its generated
