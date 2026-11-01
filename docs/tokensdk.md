@@ -103,7 +103,7 @@ graph LR
 2.  **Discovery**: Panurus registers a listener to the **Network Service** to learn when transactions assembled by the node (and therefore registered in the local Transaction DB) are confirmed or rejected on the ledger. Upon notification, Panurus updates the local [Token Store](services/storage.md#token-store-tokendb) to make the tokens available in the [Vault](tokenapi.md#token-vault-and-selector).
 3.  **Selection & Locking**: When an owner wants to spend tokens, the [Selector](tokenapi.md#token-vault-and-selector) picks available UTXOs and **locks** them locally to prevent double-spending. See [Transfer Operation](services/ttx.md#transfer).
 4.  **Spending (Assembly & Signing)**: The initiator assembles a [Token Request](tokenapi.md#token-requests-and-transactions) and collects the necessary signatures. See [Collecting Endorsements](services/ttx.md#collecting-endorsements).
-5.  **Commitment & Finality**: The transaction is submitted to the [Ordering Service](services/ttx.md#distribution-and-ordering). The [Network Service](services/network.md#finality-management) monitors its status until it reaches [Finality](services/ttx.md#finality-and-discovery).
+5.  **Commitment & Finality**: The transaction is submitted to the [Ordering Service](services/ttx.md#distribution-and-ordering). The [Network Service](services/network.md#3--finality-tracking) monitors its status until it reaches [Finality](services/ttx.md#finality-and-discovery).
 6.  **Upgradability**: If the network transitions to a new driver version, existing tokens may be marked as "Upgrade Required" until a migration transaction is performed. See [Upgradability Guide](upgradability.md).
 
 ---

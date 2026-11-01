@@ -15,7 +15,7 @@ One of the most substantial additions is the `nogh` (**No Graph Hiding**) varian
     - **Burn and Re-issue:** For major migrations, it implements a "Burn and Re-issue" mechanism. This is facilitated by a dedicated `upgrade` service that handles challenge-response protocols and proof verification to ensure supply consistency during migration.
     *   *See also:* [**Upgradability Guide**](upgradability.md)
 - **Data Model & Protocol Buffers:** The `nogh` driver introduces a refined data model for tokens and metadata. Tokens are represented as Pedersen commitments to the token type, value, and blinding factor. Newly defined protocol buffers support this optimized model.
-    *   *See also:* [**DLog Protobuf Messages**](drivers/dlogwogh.md#protobuf-messages)
+    *   *See also:* [**DLog Protobuf Messages**](drivers/dlogwogh.md#107-protobuf-message-definitions)
 - **Driver Versioning:** The implementation follows a clear versioning strategy, with the current `nogh` driver logic residing in the `v1` sub-package (`token/core/zkatdlog/nogh/v1`). This versioning ensures that future protocol changes can be introduced without breaking backward compatibility for existing ledger data.
 - **Crypto & Math:** New `bls12_381_bbs` curve support and improved cryptographic primitives are integrated into the `v1` implementation.
 - **Auditing:** A dedicated auditing layer (`v1/audit`) provides necessary compliance tools for private token systems.
