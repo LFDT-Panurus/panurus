@@ -71,6 +71,9 @@ You can run unit tests using the following make targets:
     ```bash
     make unit-tests-race
     ```
+    CI runs this suite as three parallel shards, which you can also run on their own:
+    `make unit-tests-race-db` (selector and storage packages; needs `make testing-docker-images`),
+    `make unit-tests-race-core` (`token/core`), and `make unit-tests-race-rest` (everything else).
 -   **Regression Unit Tests**:
     These tests ensure that recent changes have not reintroduced previously fixed bugs or broken existing functionality.
     ```bash
