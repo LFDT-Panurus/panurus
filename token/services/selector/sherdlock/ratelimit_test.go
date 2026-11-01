@@ -184,7 +184,7 @@ func newServiceUnderTestWithMetrics(t *testing.T, metricsProvider *mocks.FakePro
 	fetcherProvider.GetFetcherReturns(newFetcherOf("100"), nil)
 	lockStoreManager := &mocks.FakeTokenLockStoreServiceManager{}
 	lockStoreManager.StoreServiceByTMSIdReturns(nil, nil)
-	svc := sherdlock.NewService(fetcherProvider, lockStoreManager, &mocks.FakeConfigProvider{}, metricsProvider, opts...)
+	svc := sherdlock.NewService(fetcherProvider, lockStoreManager, noLeaseCleanerConfig(), metricsProvider, opts...)
 
 	driverTMS := &drivermock.TokenManagerService{}
 	ppm := &drivermock.PublicParamsManager{}

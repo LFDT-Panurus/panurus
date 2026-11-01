@@ -16,6 +16,8 @@ import (
 
 // TestIdentityFunc verifies that IdentityFunc returns a function that returns its input unchanged
 func TestIdentityFunc(t *testing.T) {
+	t.Parallel()
+
 	t.Run("string", func(t *testing.T) {
 		fn := IdentityFunc[string]()
 		input := "test"
@@ -52,6 +54,8 @@ func TestIdentityFunc(t *testing.T) {
 
 // TestIsNil verifies that IsNil correctly identifies nil values
 func TestIsNil(t *testing.T) {
+	t.Parallel()
+
 	t.Run("nil pointer", func(t *testing.T) {
 		var ptr *string
 		assert.True(t, IsNil(ptr))

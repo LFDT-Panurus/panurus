@@ -70,6 +70,8 @@ func assertElapsedMatchesCappedBackoff(t *testing.T, elapsed, initialDelay, maxD
 // TestRunWithContext_PreCanceledContext verifies that a pre-canceled context causes
 // RunWithContext to return immediately without invoking the runner at all.
 func TestRunWithContext_PreCanceledContext(t *testing.T) {
+	t.Parallel()
+
 	runner := utils.NewRetryRunner(testLogger(), utils.Infinitely, 10*time.Second, false)
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -94,6 +96,8 @@ func TestRunWithContext_PreCanceledContext(t *testing.T) {
 // This is the core regression test for the bug: without context-aware sleep,
 // a worker goroutine would block in time.Sleep for the full (ever-growing) delay.
 func TestRunWithContext_CanceledDuringBackoff(t *testing.T) {
+	t.Parallel()
+
 	// Initial delay is long so we can observe it being interrupted.
 	runner := utils.NewRetryRunner(testLogger(), utils.Infinitely, 5*time.Second, false)
 
@@ -132,6 +136,8 @@ func TestRunWithContext_CanceledDuringBackoff(t *testing.T) {
 // grows as expected and does not run away without bound.
 // We use a tiny initial delay so the test runs fast; the cap itself is 30s by default.
 func TestRunWithContext_BackoffDoesNotExceedCap(t *testing.T) {
+	t.Parallel()
+
 	const (
 		maxTimes     = 10
 		initialDelay = time.Millisecond
@@ -159,6 +165,8 @@ func TestRunWithContext_BackoffDoesNotExceedCap(t *testing.T) {
 // TestRunWithContext_SucceedsAfterTransientFailures verifies normal retry behavior:
 // the runner is retried until it succeeds.
 func TestRunWithContext_SucceedsAfterTransientFailures(t *testing.T) {
+	t.Parallel()
+
 	runner := utils.NewRetryRunner(testLogger(), utils.Infinitely, time.Millisecond, false)
 
 	calls := 0
@@ -178,6 +186,8 @@ func TestRunWithContext_SucceedsAfterTransientFailures(t *testing.T) {
 // TestRun_DelegatesWithBackgroundContext verifies that Run (which uses context.Background)
 // still retries correctly and is not broken by the refactor.
 func TestRun_DelegatesWithBackgroundContext(t *testing.T) {
+	t.Parallel()
+
 	runner := utils.NewRetryRunner(testLogger(), 5, time.Millisecond, false)
 
 	calls := 0
@@ -197,6 +207,8 @@ func TestRun_DelegatesWithBackgroundContext(t *testing.T) {
 // TestRunWithContext_MaxRetriesExhausted verifies that when maxTimes is set and
 // all retries fail, a joined error is returned.
 func TestRunWithContext_MaxRetriesExhausted(t *testing.T) {
+	t.Parallel()
+
 	runner := utils.NewRetryRunner(testLogger(), 3, time.Millisecond, false)
 
 	calls := 0
@@ -213,6 +225,8 @@ func TestRunWithContext_MaxRetriesExhausted(t *testing.T) {
 
 // TestRunWithContext_SuccessOnFirstAttempt verifies zero-retry fast path.
 func TestRunWithContext_SuccessOnFirstAttempt(t *testing.T) {
+	t.Parallel()
+
 	runner := utils.NewRetryRunner(testLogger(), utils.Infinitely, time.Second, true)
 
 	calls := 0
@@ -229,6 +243,8 @@ func TestRunWithContext_SuccessOnFirstAttempt(t *testing.T) {
 // TestRunWithErrors_TerminateOnSuccess verifies that RunWithErrors stops retrying
 // when the runner returns (true, nil), indicating success.
 func TestRunWithErrors_TerminateOnSuccess(t *testing.T) {
+	t.Parallel()
+
 	runner := utils.NewRetryRunner(testLogger(), utils.Infinitely, time.Millisecond, false)
 
 	calls := 0
@@ -248,6 +264,8 @@ func TestRunWithErrors_TerminateOnSuccess(t *testing.T) {
 // TestRunWithErrors_TerminateOnError verifies that RunWithErrors stops retrying
 // when the runner returns (true, error), returning that error immediately.
 func TestRunWithErrors_TerminateOnError(t *testing.T) {
+	t.Parallel()
+
 	runner := utils.NewRetryRunner(testLogger(), utils.Infinitely, time.Millisecond, false)
 
 	calls := 0
@@ -268,6 +286,8 @@ func TestRunWithErrors_TerminateOnError(t *testing.T) {
 // TestRunWithErrors_MaxRetriesExhausted verifies that when maxTimes is exhausted
 // and the runner never returns true, all errors are joined and returned.
 func TestRunWithErrors_MaxRetriesExhausted(t *testing.T) {
+	t.Parallel()
+
 	runner := utils.NewRetryRunner(testLogger(), 3, time.Millisecond, false)
 
 	calls := 0
@@ -286,6 +306,8 @@ func TestRunWithErrors_MaxRetriesExhausted(t *testing.T) {
 // exhausted but no errors occurred (runner returned false, nil each time),
 // ErrMaxRetriesExceeded is returned.
 func TestRunWithErrors_MaxRetriesExhaustedNoErrors(t *testing.T) {
+	t.Parallel()
+
 	runner := utils.NewRetryRunner(testLogger(), 3, time.Millisecond, false)
 
 	calls := 0
@@ -302,6 +324,8 @@ func TestRunWithErrors_MaxRetriesExhaustedNoErrors(t *testing.T) {
 // TestRunWithErrors_ExponentialBackoff verifies that RunWithErrors respects
 // exponential backoff when configured.
 func TestRunWithErrors_ExponentialBackoff(t *testing.T) {
+	t.Parallel()
+
 	const (
 		maxTimes     = 5
 		initialDelay = time.Millisecond
@@ -331,6 +355,8 @@ func TestRunWithErrors_ExponentialBackoff(t *testing.T) {
 // maxTimes is exhausted but the runner never returned an error (always returned nil).
 // This should return ErrMaxRetriesExceeded.
 func TestRunWithContext_MaxRetriesExhaustedNoErrors(t *testing.T) {
+	t.Parallel()
+
 	runner := utils.NewRetryRunner(testLogger(), 3, time.Millisecond, false)
 
 	calls := 0
@@ -361,6 +387,8 @@ func TestRunWithContext_MaxRetriesExhaustedNoErrors(t *testing.T) {
 // TestNextDelay_FixedBackoff verifies that when expBackoff is false,
 // the delay remains constant (no exponential growth).
 func TestNextDelay_FixedBackoff(t *testing.T) {
+	t.Parallel()
+
 	const (
 		maxTimes = 5
 		delay    = 10 * time.Millisecond
@@ -388,6 +416,8 @@ func TestNextDelay_FixedBackoff(t *testing.T) {
 // TestRunWithErrorsContext_PreCanceledContext verifies that a pre-canceled context causes
 // RunWithErrorsContext to return immediately without invoking the runner at all.
 func TestRunWithErrorsContext_PreCanceledContext(t *testing.T) {
+	t.Parallel()
+
 	runner := utils.NewRetryRunner(testLogger(), utils.Infinitely, 10*time.Second, false)
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -410,6 +440,8 @@ func TestRunWithErrorsContext_PreCanceledContext(t *testing.T) {
 // TestRunWithErrorsContext_CanceledDuringBackoff verifies that canceling the context
 // while the retry loop is sleeping unblocks the caller promptly.
 func TestRunWithErrorsContext_CanceledDuringBackoff(t *testing.T) {
+	t.Parallel()
+
 	runner := utils.NewRetryRunner(testLogger(), utils.Infinitely, 5*time.Second, false)
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -446,6 +478,8 @@ func TestRunWithErrorsContext_CanceledDuringBackoff(t *testing.T) {
 // TestRunWithErrorsContext_TerminateWithNil verifies that when runner returns (true, nil),
 // RunWithErrorsContext stops retrying and returns nil.
 func TestRunWithErrorsContext_TerminateWithNil(t *testing.T) {
+	t.Parallel()
+
 	runner := utils.NewRetryRunner(testLogger(), utils.Infinitely, time.Millisecond, false)
 
 	calls := 0
@@ -465,6 +499,8 @@ func TestRunWithErrorsContext_TerminateWithNil(t *testing.T) {
 // TestRunWithErrorsContext_TerminateWithError verifies that when runner returns (true, err),
 // RunWithErrorsContext stops retrying and returns that error immediately.
 func TestRunWithErrorsContext_TerminateWithError(t *testing.T) {
+	t.Parallel()
+
 	runner := utils.NewRetryRunner(testLogger(), utils.Infinitely, time.Millisecond, false)
 
 	calls := 0
@@ -485,6 +521,8 @@ func TestRunWithErrorsContext_TerminateWithError(t *testing.T) {
 // TestRunWithErrorsContext_MaxRetriesExhaustedWithErrors verifies that when maxTimes
 // is exhausted and errors were collected, errors.Join is returned.
 func TestRunWithErrorsContext_MaxRetriesExhaustedWithErrors(t *testing.T) {
+	t.Parallel()
+
 	runner := utils.NewRetryRunner(testLogger(), 3, time.Millisecond, false)
 
 	calls := 0
@@ -502,6 +540,8 @@ func TestRunWithErrorsContext_MaxRetriesExhaustedWithErrors(t *testing.T) {
 // TestRunWithErrorsContext_MaxRetriesExhaustedNoErrors verifies that when maxTimes
 // is exhausted but no errors occurred, ErrMaxRetriesExceeded is returned.
 func TestRunWithErrorsContext_MaxRetriesExhaustedNoErrors(t *testing.T) {
+	t.Parallel()
+
 	runner := utils.NewRetryRunner(testLogger(), 3, time.Millisecond, false)
 
 	calls := 0
@@ -518,6 +558,8 @@ func TestRunWithErrorsContext_MaxRetriesExhaustedNoErrors(t *testing.T) {
 // TestNewRetryRunnerWithJitter_NegativeBackoffMultiplier verifies that negative
 // backoff multiplier defaults to 2.0 and produces standard exponential backoff.
 func TestNewRetryRunnerWithJitter_NegativeBackoffMultiplier(t *testing.T) {
+	t.Parallel()
+
 	const (
 		maxTimes     = 5
 		initialDelay = 10 * time.Millisecond
@@ -551,6 +593,8 @@ func TestNewRetryRunnerWithJitter_NegativeBackoffMultiplier(t *testing.T) {
 // TestNewRetryRunnerWithJitter_ZeroBackoffMultiplier verifies that zero
 // backoff multiplier defaults to 2.0.
 func TestNewRetryRunnerWithJitter_ZeroBackoffMultiplier(t *testing.T) {
+	t.Parallel()
+
 	const (
 		maxTimes     = 5
 		initialDelay = 10 * time.Millisecond
@@ -584,6 +628,8 @@ func TestNewRetryRunnerWithJitter_ZeroBackoffMultiplier(t *testing.T) {
 // TestNewRetryRunnerWithJitter_NegativeJitterFactor verifies that negative
 // jitter factor is clamped to 0.0 (no jitter).
 func TestNewRetryRunnerWithJitter_NegativeJitterFactor(t *testing.T) {
+	t.Parallel()
+
 	const (
 		maxTimes     = 5
 		initialDelay = 10 * time.Millisecond
@@ -618,6 +664,8 @@ func TestNewRetryRunnerWithJitter_NegativeJitterFactor(t *testing.T) {
 // TestNewRetryRunnerWithJitter_ExcessiveJitterFactor verifies that jitter
 // factor > 1.0 is clamped to 1.0.
 func TestNewRetryRunnerWithJitter_ExcessiveJitterFactor(t *testing.T) {
+	t.Parallel()
+
 	runner := utils.NewRetryRunnerWithJitter(
 		testLogger(),
 		10,
@@ -658,6 +706,8 @@ func TestNewRetryRunnerWithJitter_ExcessiveJitterFactor(t *testing.T) {
 // TestNewRetryRunnerWithJitter_ZeroMaxDelay verifies that zero maxDelay
 // defaults to 30 seconds.
 func TestNewRetryRunnerWithJitter_ZeroMaxDelay(t *testing.T) {
+	t.Parallel()
+
 	const (
 		maxTimes     = 15
 		initialDelay = 10 * time.Millisecond
@@ -692,6 +742,8 @@ func TestNewRetryRunnerWithJitter_ZeroMaxDelay(t *testing.T) {
 // TestNewRetryRunnerWithJitter_NegativeMaxDelay verifies that negative maxDelay
 // defaults to 30 seconds.
 func TestNewRetryRunnerWithJitter_NegativeMaxDelay(t *testing.T) {
+	t.Parallel()
+
 	const (
 		maxTimes     = 15
 		initialDelay = 10 * time.Millisecond
@@ -723,6 +775,8 @@ func TestNewRetryRunnerWithJitter_NegativeMaxDelay(t *testing.T) {
 // TestNewRetryRunnerWithJitter_CustomBackoffMultiplier verifies that custom backoff
 // multipliers produce the expected exponential growth pattern.
 func TestNewRetryRunnerWithJitter_CustomBackoffMultiplier(t *testing.T) {
+	t.Parallel()
+
 	const (
 		maxTimes     = 5
 		initialDelay = 10 * time.Millisecond
@@ -757,6 +811,8 @@ func TestNewRetryRunnerWithJitter_CustomBackoffMultiplier(t *testing.T) {
 // TestNewRetryRunnerWithJitter_JitterBehavior verifies that jitter adds randomness
 // to delays while keeping them within expected bounds.
 func TestNewRetryRunnerWithJitter_JitterBehavior(t *testing.T) {
+	t.Parallel()
+
 	// Use jitterFactor of 0.5 (50% jitter range)
 	runner := utils.NewRetryRunnerWithJitter(
 		testLogger(),
@@ -802,6 +858,8 @@ func TestNewRetryRunnerWithJitter_JitterBehavior(t *testing.T) {
 // TestNewRetryRunnerWithJitter_CustomMaxDelay verifies that custom maxDelay
 // caps exponential backoff at the specified value.
 func TestNewRetryRunnerWithJitter_CustomMaxDelay(t *testing.T) {
+	t.Parallel()
+
 	const (
 		maxTimes     = 10
 		initialDelay = 50 * time.Millisecond
@@ -835,6 +893,8 @@ func TestNewRetryRunnerWithJitter_CustomMaxDelay(t *testing.T) {
 // TestNewRetryRunnerWithJitter_ZeroJitter verifies that zero jitter produces
 // deterministic exponential backoff (no randomness).
 func TestNewRetryRunnerWithJitter_ZeroJitter(t *testing.T) {
+	t.Parallel()
+
 	const (
 		maxTimes     = 5
 		initialDelay = 50 * time.Millisecond
@@ -870,6 +930,8 @@ func TestNewRetryRunnerWithJitter_ZeroJitter(t *testing.T) {
 // TestNewRetryRunnerWithJitter_MaxJitter verifies that maximum jitter (1.0)
 // produces the widest variation in delays.
 func TestNewRetryRunnerWithJitter_MaxJitter(t *testing.T) {
+	t.Parallel()
+
 	runner := utils.NewRetryRunnerWithJitter(
 		testLogger(),
 		10,
@@ -912,6 +974,8 @@ func TestNewRetryRunnerWithJitter_MaxJitter(t *testing.T) {
 // TestNewRetryRunnerWithJitter_FunctionalBehavior verifies that the runner
 // created with jitter still functions correctly for retries.
 func TestNewRetryRunnerWithJitter_FunctionalBehavior(t *testing.T) {
+	t.Parallel()
+
 	runner := utils.NewRetryRunnerWithJitter(
 		testLogger(),
 		5,

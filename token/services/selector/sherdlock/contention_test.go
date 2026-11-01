@@ -380,8 +380,12 @@ func runHotTokenContention(t *testing.T, label, strategy string, scenario func(t
 }
 
 func TestHotTokenContention(t *testing.T) {
+	// Each strategy starts its own Postgres container, so the strategies share nothing and can
+	// run concurrently; most of their wall time is the selectors' retry backoff.
 	for _, strategy := range []string{common5.LockStrategyInsert, common5.LockStrategyOnConflict, common5.LockStrategySkipLocked} {
 		t.Run(strategy, func(t *testing.T) {
+			t.Parallel()
+
 			runHotTokenContention(t, "single-token", strategy, testutils.TestHotTokenContention)
 		})
 	}
@@ -392,8 +396,12 @@ func TestHotTokenContention(t *testing.T) {
 // testutils.TestHotTokenContentionWideWindow's doc comment for why its requests, unlike
 // TestHotTokenContention's, force a covering window wider than one token.
 func TestHotTokenContentionWideWindow(t *testing.T) {
+	// Each strategy starts its own Postgres container, so the strategies share nothing and can
+	// run concurrently; most of their wall time is the selectors' retry backoff.
 	for _, strategy := range []string{common5.LockStrategyInsert, common5.LockStrategyOnConflict, common5.LockStrategySkipLocked} {
 		t.Run(strategy, func(t *testing.T) {
+			t.Parallel()
+
 			runHotTokenContention(t, "wide-window", strategy, testutils.TestHotTokenContentionWideWindow)
 		})
 	}
@@ -410,8 +418,12 @@ func TestHotTokenContentionWideWindow(t *testing.T) {
 // LockStrategySkipLocked are expected to show exactly 0, since a lost race there is a clean
 // zero-row result instead of a server-side error.
 func TestHotTokenContention_SingleTokenLockPath(t *testing.T) {
+	// Each strategy starts its own Postgres container, so the strategies share nothing and can
+	// run concurrently; most of their wall time is the selectors' retry backoff.
 	for _, strategy := range []string{common5.LockStrategyInsert, common5.LockStrategyOnConflict, common5.LockStrategySkipLocked} {
 		t.Run(strategy, func(t *testing.T) {
+			t.Parallel()
+
 			replicas, counters, terminate := startManagersWithSingleTokenLockCounters(t, 3, 2*time.Second, 60, strategy)
 			defer terminate()
 

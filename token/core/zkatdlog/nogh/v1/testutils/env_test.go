@@ -30,7 +30,10 @@ func TestNewEnv(t *testing.T) {
 	require.NoError(t, err)
 	curves := sbenchmark.Curves(math.BN254, math.BLS12_381_BBS_GURVY)
 	require.NoError(t, err)
-	testCases := sbenchmark.GenerateCases(bits, curves, []int{1, 2}, []int{1, 2}, []int{1})
+	// Each configuration below already fixes bits and curve, and the loop only reads the
+	// inputs/outputs of a test case, so generate the cases for a single (bits, curve) pair:
+	// crossing them with every pair again would build each environment len(bits)*len(curves) times.
+	testCases := sbenchmark.GenerateCases(bits[:1], curves[:1], []int{1, 2}, []int{1, 2}, []int{1})
 	configurations, err := benchmark.NewSetupConfigurations("./../testdata", bits, curves, idemixnym.IdentityType)
 	if err != nil {
 		panic(err)
