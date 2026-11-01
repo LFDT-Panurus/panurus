@@ -47,7 +47,8 @@ func validOpening(t *testing.T) *snarktoken.DLogOpening {
 	t.Helper()
 
 	return &snarktoken.DLogOpening{
-		DLogInput:      snarktoken.DLogInput{Owner: []byte("alice"), PedersenXY: onCurveG1Bytes(t)},
+		Owner:          []byte("alice"),
+		PedersenXY:     onCurveG1Bytes(t),
 		Type:           "USD",
 		Value:          100,
 		BlindingFactor: randomCanonicalFr(t),
