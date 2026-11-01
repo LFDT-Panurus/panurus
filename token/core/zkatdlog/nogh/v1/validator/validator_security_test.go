@@ -236,6 +236,30 @@ func TestSecurityFalseAcceptanceIssuerUnauthorized(t *testing.T) {
 	assert.Contains(t, err.Error(), "issuer is not authorized")
 }
 
+// TestSecurityFalseAcceptanceRedeemIssuerUnauthorized is the redeem-path analogue of
+// TestSecurityFalseAcceptanceIssuerUnauthorized above. It is a regression test for
+// GHSA-7c26-8c2v-wqj2: the on-chain validator required a redeem to carry a signed
+// Issuer, but never checked that issuer against PP.Issuers(), letting any token
+// holder nominate an arbitrary identity as the approving issuer of their own redeem.
+//
+// Attack vector: an attacker crafts a valid-looking redeem action with an arbitrary
+// Issuer identity and a valid signature from that identity. If the issuer membership
+// check were missing or bypassed, the redeem would be accepted without authorization.
+func TestSecurityFalseAcceptanceRedeemIssuerUnauthorized(t *testing.T) {
+	env := newSecurityTestEnv(t)
+
+	// Modify the engine's PP to set a specific authorized issuer that differs
+	// from the one used to produce TRWithRedeem.
+	env.Engine.PublicParams.IssuerIDs = []driver.Identity{[]byte("not-the-real-issuer")}
+
+	raw, err := env.TRWithRedeem.Bytes()
+	require.NoError(t, err)
+
+	_, _, err = env.Engine.VerifyTokenRequestFromRaw(context.Background(), nil, "1", raw)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "issuer is not authorized")
+}
+
 // TestSecurityFalseAcceptanceAuditorSignaturesMissingWhenRequired verifies that
 // a token request without an auditor signature is rejected when auditors are
 // configured in the public parameters.
@@ -459,6 +483,105 @@ func TestSecurityP2_TransferSignatureValidate_NilOutputInRedeem(t *testing.T) {
 	// isRedeem stays false and the issuer-signature branch is not entered.
 	// The function must complete without error.
 	require.NoError(t, err)
+}
+
+// TestSecurityRedeemIssuerNotInPublicParams is a unit-level regression test for
+// GHSA-7c26-8c2v-wqj2: TransferSignatureValidate must reject a redeem whose approving
+// issuer is not a member of PP.Issuers(), even though that issuer's signature verifies.
+func TestSecurityRedeemIssuerNotInPublicParams(t *testing.T) {
+	pp, err := v1.Setup(32, []byte("idemix"), math.BLS12_381_BBS_GURVY)
+	require.NoError(t, err)
+
+	pp.IssuerIDs = []driver.Identity{[]byte("issuer1")}
+
+	validTok := &token.Token{Owner: []byte("owner1"), Data: pp.PedersenGenerators[0]}
+	redeemTok := &token.Token{Owner: nil, Data: pp.PedersenGenerators[0]}
+
+	mockDesInst := &mock3.Deserializer{}
+	mockDesInst.GetOwnerVerifierReturns(&mock3.Verifier{}, nil)
+	mockDesInst.GetIssuerVerifierReturns(&mock3.Verifier{}, nil)
+	mockSP := &mockSignatureProvider{
+		HasBeenSignedByFunc: func(_ context.Context, _ driver.Identity, _ driver.Verifier) ([]byte, error) {
+			return []byte("sig"), nil
+		},
+	}
+
+	ctx := &validator.Context{
+		Logger: logging.MustGetLogger(),
+		PP:     pp,
+		TransferAction: &transfer.Action{
+			Issuer:  []byte("attacker"),
+			Inputs:  []*transfer.ActionInput{{Token: validTok}},
+			Outputs: []*token.Token{redeemTok},
+		},
+		Deserializer:      mockDesInst,
+		SignatureProvider: mockSP,
+		MetadataCounter:   make(map[string]int),
+	}
+
+	err = validator.TransferSignatureValidate(context.Background(), ctx)
+	require.ErrorIs(t, err, validator.ErrIssuerNotAuthorized)
+	// the issuer must be rejected before its verifier is ever deserialized
+	assert.Equal(t, 0, mockDesInst.GetIssuerVerifierCallCount())
+}
+
+// TestSecurityRedeemEmptyNonNilOwnerRequiresIssuer covers the hardening change to the
+// redeem-detection check (output.Owner == nil -> output.IsRedeem()). This is a
+// literal-level guard only, not exploit coverage: an empty-but-non-nil Owner never
+// survives a protobuf round trip (it decodes back to nil), so this scenario is only
+// reachable by in-process Go code constructing a transfer.Action directly, not via
+// the real ActionDeserializer. It still guards the intended behaviour for such callers.
+func TestSecurityRedeemEmptyNonNilOwnerRequiresIssuer(t *testing.T) {
+	pp, err := v1.Setup(32, []byte("idemix"), math.BLS12_381_BBS_GURVY)
+	require.NoError(t, err)
+
+	pp.IssuerIDs = []driver.Identity{[]byte("issuer1")}
+
+	validTok := &token.Token{Owner: []byte("owner1"), Data: pp.PedersenGenerators[0]}
+	redeemTok := &token.Token{Owner: []byte{}, Data: pp.PedersenGenerators[0]} // empty, non-nil
+
+	mockDesInst := &mock3.Deserializer{}
+	mockDesInst.GetOwnerVerifierReturns(&mock3.Verifier{}, nil)
+	mockSP := &mockSignatureProvider{
+		HasBeenSignedByFunc: func(_ context.Context, _ driver.Identity, _ driver.Verifier) ([]byte, error) {
+			return []byte("sig"), nil
+		},
+	}
+
+	t.Run("NoIssuerIsRejected", func(t *testing.T) {
+		ctx := &validator.Context{
+			Logger: logging.MustGetLogger(),
+			PP:     pp,
+			TransferAction: &transfer.Action{
+				// no Issuer set
+				Inputs:  []*transfer.ActionInput{{Token: validTok}},
+				Outputs: []*token.Token{redeemTok},
+			},
+			Deserializer:      mockDesInst,
+			SignatureProvider: mockSP,
+			MetadataCounter:   make(map[string]int),
+		}
+		err := validator.TransferSignatureValidate(context.Background(), ctx)
+		require.ErrorIs(t, err, validator.ErrMissingIssuer)
+	})
+
+	t.Run("UnauthorizedIssuerIsRejected", func(t *testing.T) {
+		mockDesInst.GetIssuerVerifierReturns(&mock3.Verifier{}, nil)
+		ctx := &validator.Context{
+			Logger: logging.MustGetLogger(),
+			PP:     pp,
+			TransferAction: &transfer.Action{
+				Issuer:  []byte("attacker"),
+				Inputs:  []*transfer.ActionInput{{Token: validTok}},
+				Outputs: []*token.Token{redeemTok},
+			},
+			Deserializer:      mockDesInst,
+			SignatureProvider: mockSP,
+			MetadataCounter:   make(map[string]int),
+		}
+		err := validator.TransferSignatureValidate(context.Background(), ctx)
+		require.ErrorIs(t, err, validator.ErrIssuerNotAuthorized)
+	})
 }
 
 // TestSecurityP3_TransferZKProofValidate_NilInputToken verifies that

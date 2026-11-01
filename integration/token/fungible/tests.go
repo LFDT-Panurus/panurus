@@ -1775,3 +1775,65 @@ func TestRedeem(network *integration.Infrastructure, sel *token3.ReplicaSelector
 	CheckBalance(network, issuer, "", "USD", 100)
 	CheckHolding(network, issuer, "", "USD", 100, auditor)
 }
+
+// TestRedeemUnauthorizedIssuer is a regression test for GHSA-7c26-8c2v-wqj2: a redeem whose
+// approving issuer is not a member of the public parameters' authorized issuer list
+// (PP.IssuerIDs) must be rejected, rather than accepted with the issuer's own signature as
+// if it were authorized.
+//
+// This is deliberately a separate function from TestRedeem rather than an addition to it:
+// TestRedeem is shared by CI jobs across both drivers and multiple backends (Fabric, EVM,
+// EVM gateway), and this assertion is only meaningful, and only analyzed here, for the
+// Fabric chaincode host.
+//
+// "newIssuer" is used as the unauthorized issuer: the topology gives it a real issuer
+// wallet and the issuer SDK (so it can endorse a redeem via IssuerRedeemAcceptView), but
+// the TMS only registers "issuer"/"issuer.id1" in PP.IssuerIDs, so "newIssuer" is genuinely
+// absent from it — exactly the attacker shape in the advisory.
+//
+// The auditor-view allow-list (a test-app business rule, not part of the token SDK) is
+// cleared first via AuthorizeRedeemIssuer so that the rejection asserted below comes from
+// the layer under test, not from that unrelated, pre-existing check.
+func TestRedeemUnauthorizedIssuer(network *integration.Infrastructure, sel *token3.ReplicaSelector, networkName string) {
+	auditor := sel.Get("auditor")
+	issuer := sel.Get("issuer")
+	newIssuer := sel.Get("newIssuer")
+	alice := sel.Get("alice")
+	tms := GetTMSByNetworkName(network, networkName)
+	defaultTMSID := &token4.TMSID{
+		Network:   tms.Network,
+		Channel:   tms.Channel,
+		Namespace: tms.Namespace,
+	}
+	RegisterAuditor(network, auditor)
+
+	time.Sleep(10 * time.Second)
+
+	SetKVSEntry(network, issuer, "auditor", auditor.Id())
+	CheckPublicParams(network, issuer, auditor, alice)
+
+	gomega.Eventually(DoesWalletExist).WithArguments(network, issuer, "", views.IssuerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+
+	IssueCash(network, "", "USD", 110, issuer, auditor, true, issuer)
+	CheckBalance(network, issuer, "", "USD", 110)
+	CheckHolding(network, issuer, "", "USD", 110, auditor)
+
+	// Clear the auditor-view's own allow-list hurdle so the rejection observed below comes
+	// from the on-chain validator's issuer-membership check, not from that unrelated layer.
+	AuthorizeRedeemIssuer(network, auditor, GetIssuerIdentity(tms, newIssuer.Id()))
+
+	// "newIssuer" is not in PP.IssuerIDs: the redeem must be rejected even though newIssuer's
+	// own signature verifies. Both drivers' auditors now enforce issuer membership during
+	// audit (mirroring the on-chain validator's own ErrIssuerNotAuthorized check), so the
+	// rejection is observed at the auditor layer, before the transaction ever reaches the
+	// chaincode, for both drivers.
+	RedeemCashForTMSID(network, issuer, "", "USD", 10, auditor, newIssuer, defaultTMSID, "is not a recognized issuer")
+	CheckBalance(network, issuer, "", "USD", 110)
+	CheckHolding(network, issuer, "", "USD", 110, auditor)
+
+	// An authorized redeem still succeeds: the fix does not over-tighten the control.
+	AuthorizeRedeemIssuer(network, auditor, GetIssuerIdentity(tms, issuer.Id()))
+	RedeemCashForTMSID(network, issuer, "", "USD", 10, auditor, issuer, defaultTMSID)
+	CheckBalance(network, issuer, "", "USD", 100)
+	CheckHolding(network, issuer, "", "USD", 100, auditor)
+}

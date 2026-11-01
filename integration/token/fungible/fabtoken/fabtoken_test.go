@@ -37,6 +37,15 @@ var _ = Describe("EndToEnd", func() {
 			It("Test Remote Wallet (GRPC)", Label("T4"), func() { fungible.TestRemoteOwnerWallet(ts.II, "auditor", selector, false) })
 			It("Test Remote Wallet (WebSocket)", Label("T5"), func() { fungible.TestRemoteOwnerWallet(ts.II, "auditor", selector, true) })
 		})
+
+		Describe("Redeem with an unauthorized issuer", t.Label, func() {
+			ts, selector := newTestSuite(t.CommType, t.ReplicationFactor, "alice", "bob", "charlie")
+			BeforeEach(ts.Setup)
+			AfterEach(ts.TearDown)
+			It("Test redeem rejected with unauthorized issuer", Label("T17"), func() {
+				fungible.TestRedeemUnauthorizedIssuer(ts.II, selector, "default")
+			})
+		})
 	}
 })
 

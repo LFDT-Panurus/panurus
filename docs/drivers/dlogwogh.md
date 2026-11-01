@@ -890,7 +890,8 @@ The validation process consists of multiple stages:
    - Validate Idemix signatures of knowledge
    - Check commitment correctness
 4. **Authorization Checks**:
-   - Verify issuer is authorized (for issue actions)
+   - Verify issuer is authorized (for issue actions, and for a transfer action that redeems
+     tokens when the public parameters list authorized issuers)
    - Verify auditor signatures (if present)
    - Check owner signatures (for transfer actions)
 5. **Balance Verification**: Ensure sum of inputs equals sum of outputs

@@ -116,6 +116,10 @@ integration-tests-dlog-fabric-t14:
 integration-tests-dlog-fabric-t15:
 	make integration-tests-dlog-fabric TEST_FILTER="T15"
 
+.PHONY: integration-tests-dlog-fabric-t17
+integration-tests-dlog-fabric-t17:
+	make integration-tests-dlog-fabric TEST_FILTER="T17"
+
 .PHONY: integration-tests-dlog-fabric
 integration-tests-dlog-fabric:
 	cd ./integration/token/fungible/dlog; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" .
@@ -194,6 +198,10 @@ integration-tests-fabtoken-fabric-t4:
 .PHONY: integration-tests-fabtoken-fabric-t5
 integration-tests-fabtoken-fabric-t5:
 	make integration-tests-fabtoken-fabric TEST_FILTER="T5"
+
+.PHONY: integration-tests-fabtoken-fabric-t17
+integration-tests-fabtoken-fabric-t17:
+	make integration-tests-fabtoken-fabric TEST_FILTER="T17"
 
 .PHONY: integration-tests-fabtoken-fabric
 integration-tests-fabtoken-fabric:

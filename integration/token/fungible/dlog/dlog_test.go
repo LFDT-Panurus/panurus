@@ -138,6 +138,15 @@ var _ = Describe("EndToEnd", func() {
 			It("Test redeem", Label("T13"), func() { fungible.TestRedeem(ts.II, selector, "default") })
 		})
 
+		Describe("Redeem with an unauthorized issuer", t.Label, func() {
+			ts, selector := newTestSuite(t.CommType, Aries, t.ReplicationFactor, "", "alice", "bob", "charlie")
+			BeforeEach(ts.Setup)
+			AfterEach(ts.TearDown)
+			It("Test redeem rejected with unauthorized issuer", Label("T17"), func() {
+				fungible.TestRedeemUnauthorizedIssuer(ts.II, selector, "default")
+			})
+		})
+
 	}
 
 	// Endorser selection is orthogonal to the P2P communication type, and TestAll is the

@@ -15,6 +15,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	cdriver "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabricx/core/vault"
+	"github.com/hyperledger/fabric-x-common/api/committerpb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -88,4 +89,98 @@ func TestFetchSetupHashVersion(t *testing.T) {
 		require.ErrorContains(t, err, "ledger unreachable")
 		assert.False(t, found)
 	})
+}
+
+func TestFetchNamespaceVersion_NilValue(t *testing.T) {
+	qsp := &mock.QueryServiceProvider{}
+	qs := &mock.QueryService{}
+	qsp.GetReturns(qs, nil)
+	qs.GetStateReturns(nil, nil)
+
+	s := pp.NewPublicParametersService(nil, qsp)
+	ver, err := s.FetchNamespaceVersion("net", "ch", "ns")
+	require.NoError(t, err)
+	require.Equal(t, uint64(0), ver)
+
+	// verify correct namespace and key were queried
+	namespace, key := qs.GetStateArgsForCall(0)
+	require.Equal(t, committerpb.MetaNamespaceID, namespace)
+	require.Equal(t, "ns", key)
+}
+
+func TestFetchNamespaceVersion_EmptyVersion(t *testing.T) {
+	qsp := &mock.QueryServiceProvider{}
+	qs := &mock.QueryService{}
+	qsp.GetReturns(qs, nil)
+	qs.GetStateReturns(&cdriver.VaultValue{Version: nil}, nil)
+
+	s := pp.NewPublicParametersService(nil, qsp)
+	ver, err := s.FetchNamespaceVersion("net", "ch", "ns")
+	require.NoError(t, err)
+	require.Equal(t, uint64(0), ver)
+
+	qs.GetStateReturns(&cdriver.VaultValue{Version: []byte{}}, nil)
+	ver2, err2 := s.FetchNamespaceVersion("net", "ch", "ns")
+	require.NoError(t, err2)
+	require.Equal(t, uint64(0), ver2)
+}
+
+func TestFetchNamespaceVersion_ValidVersion(t *testing.T) {
+	qsp := &mock.QueryServiceProvider{}
+	qs := &mock.QueryService{}
+	qsp.GetReturns(qs, nil)
+	qs.GetStateReturns(&cdriver.VaultValue{Version: vault.MarshalVersion(7)}, nil)
+
+	s := pp.NewPublicParametersService(nil, qsp)
+	ver, err := s.FetchNamespaceVersion("net", "ch", "ns")
+	require.NoError(t, err)
+	require.Equal(t, uint64(7), ver)
+
+	namespace, key := qs.GetStateArgsForCall(0)
+	require.Equal(t, committerpb.MetaNamespaceID, namespace)
+	require.Equal(t, "ns", key)
+}
+
+func TestFetchNamespaceVersion_MalformedVarintYieldsZero(t *testing.T) {
+	qsp := &mock.QueryServiceProvider{}
+	qs := &mock.QueryService{}
+	qsp.GetReturns(qs, nil)
+
+	s := pp.NewPublicParametersService(nil, qsp)
+
+	t.Run("truncated varint returns version 0 matching vault.UnmarshalVersion", func(t *testing.T) {
+		qs.GetStateReturns(&cdriver.VaultValue{Version: []byte{0xff}}, nil)
+		ver, err := s.FetchNamespaceVersion("net", "ch", "ns")
+		require.NoError(t, err)
+		require.Equal(t, uint64(0), ver)
+	})
+
+	t.Run("overflowing varint returns version 0 matching vault.UnmarshalVersion", func(t *testing.T) {
+		qs.GetStateReturns(&cdriver.VaultValue{Version: []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}}, nil)
+		ver, err := s.FetchNamespaceVersion("net", "ch", "ns")
+		require.NoError(t, err)
+		require.Equal(t, uint64(0), ver)
+	})
+}
+
+func TestFetchNamespaceVersion_QueryServiceError(t *testing.T) {
+	qsp := &mock.QueryServiceProvider{}
+	qsp.GetReturns(nil, errors.New("qs unavailable"))
+
+	s := pp.NewPublicParametersService(nil, qsp)
+	_, err := s.FetchNamespaceVersion("net", "ch", "ns")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "qs unavailable")
+}
+
+func TestFetchNamespaceVersion_GetStateError(t *testing.T) {
+	qsp := &mock.QueryServiceProvider{}
+	qs := &mock.QueryService{}
+	qsp.GetReturns(qs, nil)
+	qs.GetStateReturns(nil, errors.New("get state failed"))
+
+	s := pp.NewPublicParametersService(nil, qsp)
+	_, err := s.FetchNamespaceVersion("net", "ch", "ns")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "get state failed")
 }

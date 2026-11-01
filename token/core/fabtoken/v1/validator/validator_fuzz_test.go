@@ -259,6 +259,17 @@ func FuzzTransferValidationStepsNoPanic(f *testing.F) {
 	f.Add(uint8(0), marshalFuzzedNilEntriesTransferAction())
 	f.Add(uint8(0), []byte{})
 	f.Add(uint8(0), []byte("malformed"))
+	// a redeem whose approving issuer is not in PP.IssuerIDs (GHSA-7c26-8c2v-wqj2 regression
+	// seed): must be rejected by TransferSignatureValidate, not accepted or panic
+	unauthorizedRedeemRaw, err := (&actions.TransferAction{
+		Issuer: []byte("unauthorized"),
+		Inputs: []*actions.TransferActionInput{
+			{ID: &token.ID{TxId: "tx1"}, Input: &actions.Output{Owner: []byte("owner1"), Type: "ABC", Quantity: "0x64"}},
+		},
+		Outputs: []*actions.Output{{Owner: nil, Type: "ABC", Quantity: "0x64"}},
+	}).Serialize()
+	require.NoError(f, err)
+	f.Add(uint8(0), unauthorizedRedeemRaw)
 
 	// every permutation of the four transfer steps of the default pipeline, so that no step can
 	// assume any other one ran before it

@@ -453,6 +453,111 @@ func TestTransferSignatureValidate(t *testing.T) {
 		assert.Len(t, c.Signatures, 2) // one for owner, one for issuer
 	})
 
+	// Regression test for GHSA-7c26-8c2v-wqj2: a redeem must be rejected if the issuer that
+	// approved it is not a member of PP.Issuers(), even if that issuer's signature verifies.
+	t.Run("RedeemWithUnauthorizedIssuer", func(t *testing.T) {
+		deserializer := &mock.Deserializer{}
+		sigProvider := &mock.SignatureProvider{}
+		ta := &actions.TransferAction{
+			Issuer: []byte("unauthorized"),
+			Inputs: []*actions.TransferActionInput{
+				{
+					Input: &actions.Output{
+						Owner: []byte("owner1"),
+					},
+				},
+			},
+			Outputs: []*actions.Output{
+				{
+					Owner: nil, // redeem
+				},
+			},
+		}
+		deserializer.GetOwnerVerifierReturns(&mock.Verifier{}, nil)
+		deserializer.GetIssuerVerifierReturns(&mock.Verifier{}, nil)
+		sigProvider.HasBeenSignedByReturns([]byte("sig"), nil)
+		c := &validator.Context{
+			TransferAction:    ta,
+			Deserializer:      deserializer,
+			SignatureProvider: sigProvider,
+			Logger:            logger,
+			PP:                pp,
+		}
+		err := validator.TransferSignatureValidate(ctx, c)
+		require.ErrorIs(t, err, validator2.ErrIssuerNotAuthorized)
+		// the issuer must be rejected before its verifier is ever deserialized
+		assert.Equal(t, 0, deserializer.GetIssuerVerifierCallCount())
+	})
+
+	// EmptyButNonNilOwnerIsRedeem: fabtoken detects a redeem via Output.IsRedeem(), i.e.
+	// len(Owner) == 0, not Owner == nil. An unauthorized issuer must be rejected on this
+	// path too, guarding against a future refactor to `Owner == nil` reopening the hole.
+	t.Run("RedeemWithEmptyOwnerUnauthorizedIssuer", func(t *testing.T) {
+		deserializer := &mock.Deserializer{}
+		sigProvider := &mock.SignatureProvider{}
+		ta := &actions.TransferAction{
+			Issuer: []byte("unauthorized"),
+			Inputs: []*actions.TransferActionInput{
+				{
+					Input: &actions.Output{
+						Owner: []byte("owner1"),
+					},
+				},
+			},
+			Outputs: []*actions.Output{
+				{
+					Owner: []byte{}, // empty but non-nil owner: still a redeem
+				},
+			},
+		}
+		deserializer.GetOwnerVerifierReturns(&mock.Verifier{}, nil)
+		deserializer.GetIssuerVerifierReturns(&mock.Verifier{}, nil)
+		sigProvider.HasBeenSignedByReturns([]byte("sig"), nil)
+		c := &validator.Context{
+			TransferAction:    ta,
+			Deserializer:      deserializer,
+			SignatureProvider: sigProvider,
+			Logger:            logger,
+			PP:                pp,
+		}
+		err := validator.TransferSignatureValidate(ctx, c)
+		require.ErrorIs(t, err, validator2.ErrIssuerNotAuthorized)
+	})
+
+	// RedeemUnauthorizedIssuerOpenPolicy is a behaviour pin, not fix coverage: with an empty
+	// PP.IssuerIDs the issuer-signature requirement is skipped entirely (open policy), so this
+	// redeem must still succeed with no issuer at all.
+	t.Run("RedeemUnauthorizedIssuerOpenPolicy", func(t *testing.T) {
+		ppNoIssuers := &setup.PublicParams{QuantityPrecision: 64}
+		deserializer := &mock.Deserializer{}
+		sigProvider := &mock.SignatureProvider{}
+		ta := &actions.TransferAction{
+			Inputs: []*actions.TransferActionInput{
+				{
+					Input: &actions.Output{
+						Owner: []byte("owner1"),
+					},
+				},
+			},
+			Outputs: []*actions.Output{
+				{
+					Owner: nil, // redeem
+				},
+			},
+		}
+		deserializer.GetOwnerVerifierReturns(&mock.Verifier{}, nil)
+		sigProvider.HasBeenSignedByReturns([]byte("sig"), nil)
+		c := &validator.Context{
+			TransferAction:    ta,
+			Deserializer:      deserializer,
+			SignatureProvider: sigProvider,
+			Logger:            logger,
+			PP:                ppNoIssuers,
+		}
+		err := validator.TransferSignatureValidate(ctx, c)
+		require.NoError(t, err)
+	})
+
 	t.Run("RedeemIssuerVerifierError", func(t *testing.T) {
 		deserializer := &mock.Deserializer{}
 		sigProvider := &mock.SignatureProvider{}

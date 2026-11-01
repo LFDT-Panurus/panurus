@@ -59,7 +59,7 @@ A [Request](../token/request.go) is a ledger-agnostic blueprint for a token tran
 
 ### Core Actions
 *   **Issue**: Minting new tokens into the system.
-*   **Transfer**: Reassigning ownership of existing tokens (includes **Redeem** by transferring to a null owner; enhanced redeem flows can additionally require issuer authorization/signature).
+*   **Transfer**: Reassigning ownership of existing tokens (includes **Redeem** by transferring to a null owner). When the public parameters list authorized issuers, a redeem must be signed by one of them; the validator enforces membership in that list, not merely the presence of a valid signature.
 
 When a transfer selects inputs whose sum exceeds the requested output amount, the leftover ("rest" or change) is automatically assigned to a recipient: by default the sender wallet's own recipient identity, or, if the caller supplies `WithRestRecipientIdentity(...)` on the `Transfer` call, the explicitly provided recipient (which is registered with the wallet before use).
 

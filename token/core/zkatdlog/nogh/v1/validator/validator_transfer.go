@@ -9,6 +9,7 @@ package validator
 import (
 	"bytes"
 	"context"
+	"slices"
 	"time"
 
 	math "github.com/IBM/mathlib"
@@ -39,7 +40,11 @@ func TransferActionValidate(c context.Context, ctx *Context) error {
 // transfer (including those with nil-owner outputs) is accepted without an issuer signature.
 // This mirrors the open-policy issuer behaviour in IssueValidate and is intentional for
 // deployments that do not restrict which identities may authorize redemptions.
-// When issuer restriction is required for redemptions, populate PP.IssuerIDs.
+//
+// When PP.IssuerIDs is populated, a redeem must carry an Issuer that is a member of
+// PP.Issuers() and must be signed by it; an issuer identity outside that list is rejected
+// with ErrIssuerNotAuthorized, mirroring the membership check IssueValidate performs for
+// issuance.
 func TransferSignatureValidate(c context.Context, ctx *Context) error {
 	var signatures [][]byte
 
@@ -83,11 +88,15 @@ func TransferSignatureValidate(c context.Context, ctx *Context) error {
 		// In this case we must ensure that an issuer signed as well if the action redeems tokens as well
 		for _, output := range ctx.TransferAction.Outputs {
 			// Guard against a nil output entry (defensive; Validate() rejects these
-			// but custom pipelines may bypass it).
+			// but custom pipelines may bypass it). This must run before IsRedeem() below,
+			// since Token.IsRedeem() is called on a possibly-nil receiver otherwise.
 			if output == nil {
 				continue
 			}
-			if output.Owner == nil {
+			// use the same definition of a redeem as the rest of the code (Token.IsRedeem,
+			// which tests len(Owner) == 0): an empty but non-nil owner is a redeem too, and
+			// checking `Owner == nil` here would let it skip the issuer signature
+			if output.IsRedeem() {
 				isRedeem = true
 
 				break
@@ -99,6 +108,12 @@ func TransferSignatureValidate(c context.Context, ctx *Context) error {
 			issuer := ctx.TransferAction.GetIssuer()
 			if issuer == nil {
 				return ErrMissingIssuer
+			}
+			// the redeem-approving issuer must be one of the issuers listed in the public
+			// parameters; otherwise any token holder could nominate themselves (or any
+			// identity they control) as the approving issuer of their own redeem
+			if issuers := ctx.PP.Issuers(); len(issuers) != 0 && !slices.ContainsFunc(issuers, issuer.Equal) {
+				return ErrIssuerNotAuthorized
 			}
 			issuerVerifier, err := ctx.Deserializer.GetIssuerVerifier(c, issuer)
 			if err != nil {

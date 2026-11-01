@@ -8,6 +8,7 @@ package audit
 
 import (
 	"context"
+	"slices"
 
 	"github.com/LFDT-Panurus/panurus/token/core/common"
 	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/actions"
@@ -155,6 +156,25 @@ func TransferAuditValidate(precision uint64) ValidateTransferAuditFunc {
 		// and validated by the action's Match() method
 		if err := common.ValidateTransferActionTokenTypes(metadata, auditCtx.AuditTokens, false, precision); err != nil {
 			return errors.Wrapf(err, "token type validation failed for transfer action")
+		}
+
+		// For redeems, validate that the issuer who approved the redeem is one of the
+		// issuers listed in the public parameters, mirroring the chaincode validator's own
+		// membership check (TransferSignatureValidate) and the equivalent audit-time check
+		// already enforced by the zkatdlog driver. Without this, an unauthorized redeem is
+		// only caught once the transaction reaches the chaincode: the auditor has already
+		// appended a Pending audit record and signed by that point, so the rejected
+		// transaction's movement lingers until the recovery manager's NotFoundGracePeriod
+		// elapses, which can be tens of minutes. Rejecting here, before the auditor signs,
+		// keeps an unauthorized redeem from ever reaching that state.
+		if action.IsRedeem() && len(auditCtx.PP.Issuers()) > 0 {
+			issuer := action.GetIssuer()
+			if issuer == nil {
+				return errors.Errorf("on redeem, must have at least one issuer")
+			}
+			if !slices.ContainsFunc(auditCtx.PP.Issuers(), issuer.Equal) {
+				return errors.Errorf("issuer [%s] is not a recognized issuer", issuer)
+			}
 		}
 
 		return nil

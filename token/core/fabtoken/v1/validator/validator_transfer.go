@@ -8,11 +8,13 @@ package validator
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/core/common"
 	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/json"
 	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/actions"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/validator"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	htlc2 "github.com/LFDT-Panurus/panurus/token/services/identity/interop/htlc"
@@ -31,6 +33,12 @@ func TransferActionValidate(c context.Context, ctx *Context) error {
 // A nil input entry, a nil token inside an input, or a nil output entry yields a validation
 // error rather than a panic, regardless of the order in which the validation steps of the
 // pipeline are executed.
+//
+// Redeem issuer requirement: when PP.IssuerIDs is empty, no issuer signature is required for a
+// redeem (open policy). When PP.IssuerIDs is populated, a redeem must carry an Issuer that is a
+// member of PP.Issuers() and must be signed by it; an issuer identity outside that list is
+// rejected with ErrIssuerNotAuthorized, mirroring the membership check IssueValidate performs for
+// issuance.
 func TransferSignatureValidate(c context.Context, ctx *Context) error {
 	if len(ctx.TransferAction.Inputs) == 0 {
 		return errors.Errorf("invalid number of token inputs, expected at least 1")
@@ -92,6 +100,12 @@ func TransferSignatureValidate(c context.Context, ctx *Context) error {
 			issuer := ctx.TransferAction.GetIssuer()
 			if issuer == nil {
 				return errors.Errorf("On Redeem action, must have at least one issuer")
+			}
+			// the redeem-approving issuer must be one of the issuers listed in the public
+			// parameters; otherwise any token holder could nominate themselves (or any
+			// identity they control) as the approving issuer of their own redeem
+			if issuers := ctx.PP.Issuers(); len(issuers) != 0 && !slices.ContainsFunc(issuers, issuer.Equal) {
+				return validator.ErrIssuerNotAuthorized
 			}
 			issuerVerifier, err := ctx.Deserializer.GetIssuerVerifier(c, issuer)
 			if err != nil {

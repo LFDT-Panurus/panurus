@@ -63,7 +63,7 @@ The `PublicParameters` message defines the governance and constraints of the Fab
 
 `FabToken` does not provide privacy for tokens or identities.
 The validator guarantees the following:
-*   **Issuer Authorization**: Only issuers listed in the public parameters can issue tokens.
+*   **Issuer Authorization**: Only issuers listed in the public parameters can issue tokens. When the public parameters list authorized issuers, redeeming (burning) tokens also requires a signature from one of those listed issuers; a redeem approved by an identity outside that list is rejected.
 *   **Auditor Authorization**: Only auditors listed in the public parameters can audit transactions.
 *   **Owner Authorization**: Only legitimate owners can spend their tokens.
 *   **Value Preservation**: In a transfer, the sum of inputs matches the sum of outputs.

@@ -78,6 +78,9 @@ jobs:
           - name: zkatdlog-action-limits
             pkg: ./token/core/zkatdlog/nogh/v1/validator
             func: FuzzActionResourceLimits
+          - name: zkatdlog-issue-action-validate
+            pkg: ./token/core/zkatdlog/nogh/v1/validator
+            func: FuzzIssueActionValidateNoPanic
           - name: fabtoken-action-limits
             pkg: ./token/core/fabtoken/v1/validator
             func: FuzzActionResourceLimits
