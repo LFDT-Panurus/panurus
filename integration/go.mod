@@ -91,8 +91,8 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.32.0 // indirect
 	github.com/hashicorp/golang-lru v1.0.2 // indirect
 	github.com/huin/goupnp v1.3.0 // indirect
-	github.com/hyperledger-labs/fabric-smart-client/platform/fabric/services/state/cc/query v0.25.0 // indirect
-	github.com/hyperledger-labs/fabric-smart-client/platform/view/services/comm/host/libp2p v0.25.0 // indirect
+	github.com/hyperledger-labs/fabric-smart-client/platform/fabric/services/state/cc/query v0.27.0 // indirect
+	github.com/hyperledger-labs/fabric-smart-client/platform/view/services/comm/host/libp2p v0.27.0 // indirect
 	github.com/hyperledger/fabric-amcl v0.0.0-20230602173724-9e02669dceb2 // indirect
 	github.com/hyperledger/fabric-chaincode-go/v2 v2.3.1-0.20260831054443-83a556592560 // indirect
 	github.com/hyperledger/fabric-protos-go-apiv2 v0.3.7 // indirect
