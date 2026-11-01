@@ -554,6 +554,15 @@ Both also need the type link above to be constrained in the circuit.
   run nightly (`.github/workflows/nightly-fuzz.yml`).
 - **Frozen vectors.** `regression.TestGoldenVectors` replays frozen issue, transfer, redeem and swap
   requests against frozen public parameters (see [Regression Vectors](#regression-vectors)).
+- **Integration.** `integration/token/fungible/zkatsnark` runs the upgrade on fabricx: T17 starts
+  with fabtoken 64-bit public parameters and switches to 32-bit ZKAT-SNARK ones, so alice's token
+  goes through burn-and-re-issue (`fungible.TestTokensUpgradeWithAlias`); T18 starts with fabtoken
+  32-bit public parameters, so the token is spent in place (`fungible.TestLocalTokensUpgradeWithAlias`).
+  In T17 the transfer refused before the upgrade is refused by the client-side token selector; the
+  ledger-side rejection of an in-place spend of an out-of-range fabtoken is covered by the unit
+  tests above only. The same suite also runs the driver-agnostic fabricx scenarios T1-T9, T11-T14;
+  run one with `make integration-tests-fabricx-zkatsnark-t<N>` (targets in `fabricx.mk`).
+
 
 ## Regression Vectors
 

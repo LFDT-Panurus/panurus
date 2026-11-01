@@ -141,6 +141,46 @@ integration-tests-fabricx-zkatsnark-t4:
 integration-tests-fabricx-zkatsnark-t5:
 	make integration-tests-fabricx-zkatsnark TEST_FILTER="T5"
 
+.PHONY: integration-tests-fabricx-zkatsnark-t6
+integration-tests-fabricx-zkatsnark-t6:
+	make integration-tests-fabricx-zkatsnark TEST_FILTER="T6"
+
+.PHONY: integration-tests-fabricx-zkatsnark-t7
+integration-tests-fabricx-zkatsnark-t7:
+	make integration-tests-fabricx-zkatsnark TEST_FILTER="T7"
+
+.PHONY: integration-tests-fabricx-zkatsnark-t8
+integration-tests-fabricx-zkatsnark-t8:
+	make integration-tests-fabricx-zkatsnark TEST_FILTER="T8"
+
+.PHONY: integration-tests-fabricx-zkatsnark-t9
+integration-tests-fabricx-zkatsnark-t9:
+	make integration-tests-fabricx-zkatsnark TEST_FILTER="T9"
+
+.PHONY: integration-tests-fabricx-zkatsnark-t11
+integration-tests-fabricx-zkatsnark-t11:
+	make integration-tests-fabricx-zkatsnark TEST_FILTER="T11"
+
+.PHONY: integration-tests-fabricx-zkatsnark-t12
+integration-tests-fabricx-zkatsnark-t12:
+	make integration-tests-fabricx-zkatsnark TEST_FILTER="T12"
+
+.PHONY: integration-tests-fabricx-zkatsnark-t13
+integration-tests-fabricx-zkatsnark-t13:
+	make integration-tests-fabricx-zkatsnark TEST_FILTER="T13"
+
+.PHONY: integration-tests-fabricx-zkatsnark-t14
+integration-tests-fabricx-zkatsnark-t14:
+	make integration-tests-fabricx-zkatsnark TEST_FILTER="T14"
+
+.PHONY: integration-tests-fabricx-zkatsnark-t17
+integration-tests-fabricx-zkatsnark-t17:
+	make integration-tests-fabricx-zkatsnark TEST_FILTER="T17"
+
+.PHONY: integration-tests-fabricx-zkatsnark-t18
+integration-tests-fabricx-zkatsnark-t18:
+	make integration-tests-fabricx-zkatsnark TEST_FILTER="T18"
+
 .PHONY: integration-tests-fabricx-zkatsnark
 integration-tests-fabricx-zkatsnark:
 	cd ./integration/token/fungible/zkatsnark; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" .
