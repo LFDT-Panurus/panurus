@@ -5,7 +5,9 @@
 A single overview dashboard covering every metric Panurus exports: 23 panels across 10 rows, one row per
 subsystem (driver services, transaction lifecycle, finality listener, envelope sessions, auditor, token
 selection, certification and identity caches, signer resolution and cache provisioning, Fabric-X finality
-queue, storage connection pool).
+queue, storage connection pool). It covers every metric Panurus exports except the signature and throttle
+series described in [Signature observability](../../security/signature_observability.md), which have no
+panel yet.
 
 ### Import
 
