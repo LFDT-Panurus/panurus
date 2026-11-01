@@ -755,3 +755,110 @@ func TestQueueDraining(t *testing.T) {
 	count := processedCount.Load()
 	assert.Equal(t, int32(numEvents), count, "Expected %d events to be processed, got %d", numEvents, count)
 }
+
+// recordingGauge is a metrics.Gauge that keeps the value it was driven to.
+type recordingGauge struct {
+	mu    sync.Mutex
+	value float64
+}
+
+func (g *recordingGauge) With(_ ...string) metrics.Gauge { return g }
+
+func (g *recordingGauge) Add(delta float64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.value += delta
+}
+
+func (g *recordingGauge) Set(v float64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.value = v
+}
+
+func (g *recordingGauge) get() float64 {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	return g.value
+}
+
+// gaugeProvider hands out a recordingGauge and discards every other metric.
+type gaugeProvider struct {
+	gauge *recordingGauge
+}
+
+func (p *gaugeProvider) NewCounter(_ metrics.CounterOpts) metrics.Counter {
+	return &noopMetricCounter{}
+}
+
+func (p *gaugeProvider) NewGauge(_ metrics.GaugeOpts) metrics.Gauge {
+	return p.gauge
+}
+
+func (p *gaugeProvider) NewHistogram(_ metrics.HistogramOpts) metrics.Histogram {
+	return &mockHistogram{}
+}
+
+// TestPendingEvents_ReturnsToZeroAfterDrain checks that the pending events gauge follows
+// the queue down when workers drain it, instead of keeping the value of the last enqueue.
+func TestPendingEvents_ReturnsToZeroAfterDrain(t *testing.T) {
+	gauge := &recordingGauge{}
+	eq, err := queue.NewEventQueue(queue.Config{
+		Workers:         1,
+		QueueSize:       100,
+		MetricsProvider: &gaugeProvider{gauge: gauge},
+	})
+	require.NoError(t, err)
+	defer func() { _ = eq.Shutdown(time.Second) }()
+
+	release := make(chan struct{})
+	blocked := func(context.Context) error {
+		<-release
+
+		return nil
+	}
+	for range 25 {
+		require.NoError(t, eq.Enqueue(&mockEvent{processFunc: blocked}))
+		require.NoError(t, eq.EnqueueBlocking(t.Context(), &mockEvent{processFunc: blocked}))
+	}
+	assert.GreaterOrEqual(t, gauge.get(), float64(49), "the backlog must be reported while it exists")
+
+	close(release)
+	require.Eventually(t, func() bool {
+		return eq.Stats().Pending == 0 && gauge.get() == 0
+	}, 5*time.Second, 10*time.Millisecond, "gauge stuck at %v after the queue drained", gauge.get())
+}
+
+// TestPendingEvents_NotRaisedByRejectedEvents checks that an event the queue does not
+// accept is not counted as pending.
+func TestPendingEvents_NotRaisedByRejectedEvents(t *testing.T) {
+	gauge := &recordingGauge{}
+	eq, err := queue.NewEventQueue(queue.Config{
+		Workers:         1,
+		QueueSize:       1,
+		MetricsProvider: &gaugeProvider{gauge: gauge},
+	})
+	require.NoError(t, err)
+	defer func() { _ = eq.Shutdown(time.Second) }()
+
+	release := make(chan struct{})
+	defer close(release)
+	started := make(chan struct{})
+	// The first event occupies the worker, the second fills the buffer.
+	require.NoError(t, eq.Enqueue(&mockEvent{processFunc: func(context.Context) error {
+		close(started)
+		<-release
+
+		return nil
+	}}))
+	<-started
+	require.NoError(t, eq.Enqueue(&mockEvent{}))
+
+	require.ErrorIs(t, eq.Enqueue(&mockEvent{}), queue.ErrQueueFull)
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	require.ErrorIs(t, eq.EnqueueBlocking(ctx, &mockEvent{}), context.DeadlineExceeded)
+
+	assert.InDelta(t, 1, gauge.get(), 0, "only the buffered event is pending")
+}

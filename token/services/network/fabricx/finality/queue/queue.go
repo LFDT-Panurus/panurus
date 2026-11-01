@@ -139,6 +139,7 @@ func (eq *EventQueue) runWorker(id int) (stopped bool) {
 
 				return true
 			}
+			eq.metrics.PendingEvents.Add(-1)
 
 			start := time.Now()
 			if err := event.Process(eq.ctx); err != nil {
@@ -166,12 +167,14 @@ func (eq *EventQueue) Enqueue(event Event) error {
 		return ErrQueueClosed
 	}
 
+	// The gauge is raised before the send, so the worker that takes the event can never
+	// lower it first, and lowered again if the event is not accepted.
+	eq.metrics.PendingEvents.Add(1)
 	select {
 	case eq.events <- event:
-		eq.metrics.PendingEvents.Set(float64(len(eq.events)))
-
 		return nil
 	default:
+		eq.metrics.PendingEvents.Add(-1)
 		eq.metrics.EnqueueDrops.Add(1)
 
 		return ErrQueueFull
@@ -192,15 +195,19 @@ func (eq *EventQueue) EnqueueBlocking(ctx context.Context, event Event) error {
 		return ErrQueueClosed
 	}
 
+	eq.metrics.PendingEvents.Add(1)
 	select {
 	case eq.events <- event:
 		logger.Debugf("EnqueueBlocking event: [%v]", event)
-		eq.metrics.PendingEvents.Set(float64(len(eq.events)))
 
 		return nil
 	case <-ctx.Done():
+		eq.metrics.PendingEvents.Add(-1)
+
 		return ctx.Err()
 	case <-eq.ctx.Done():
+		eq.metrics.PendingEvents.Add(-1)
+
 		return ErrQueueClosed
 	}
 }
