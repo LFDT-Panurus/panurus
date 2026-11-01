@@ -17,6 +17,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/integration/nwo/runner/nwo"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token"
+	tfabric "github.com/LFDT-Panurus/panurus/integration/nwo/token/fabric"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
 	gzkatsnarkv1 "github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatsnarkv1"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
@@ -33,6 +34,8 @@ import (
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/integration"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/common"
+	fscfabric "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric"
+	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabricx"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	fsclogging "github.com/hyperledger-labs/fabric-smart-client/platform/common/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/assert"
@@ -1170,11 +1173,11 @@ func TestMaliciousTransactions(net *integration.Infrastructure, sel *token3.Repl
 	CheckBalance(net, alice, "", "USD", 110)
 
 	// MaliciousTransfer gets a first transaction endorsed and then asks for a second, different
-	// token request to be endorsed under the same transaction id. With FSC-based endorsement, the
-	// endorser has already filed a validation record for that id when it approved the first request,
+	// token request to be endorsed under the same transaction id. With Fabric-family FSC endorsement,
+	// the endorser has already filed a validation record for that id when it approved the first request,
 	// and it refuses to file another one: the attack is stopped at endorsement and never reaches the
 	// ledger, so there is no committed transaction whose status can be checked.
-	if len(GetEndorsers(net, sel)) > 0 {
+	if rejectsTxIDReuseAtEndorsement(net) {
 		MaliciousTransferCash(net, alice, "", "USD", 2, bob, sel.Get(""), nil, "failed to sign transaction", "failed to append metadata for", "failed to insert validation record for tx")
 		CheckBalance(net, alice, "", "USD", 110)
 		CheckBalance(net, bob, "", "USD", 0)
@@ -1189,6 +1192,33 @@ func TestMaliciousTransactions(net *integration.Infrastructure, sel *token3.Repl
 	txStatusBob := GetTXStatus(net, bob, txID)
 	gomega.Expect(txStatusBob.ValidationCode).To(gomega.BeEquivalentTo(ttx.Deleted))
 	gomega.Expect(txStatusBob.ValidationMessage).To(gomega.ContainSubstring("token requests do not match, tr hashes"))
+}
+
+// rejectsTxIDReuseAtEndorsement reports whether the default TMS is endorsed by the Fabric-family
+// FSC endorsement service (fabric or fabricx backend with FSC endorsement enabled). That service
+// files one validation record per tx id (fsc/responder.go AppendValidationRecord, unique tx_id),
+// so a second token request under the same tx id is refused at endorsement. The EVM endorsement
+// service keeps no such record; there the request reaches the ledger and is marked Deleted.
+func rejectsTxIDReuseAtEndorsement(network *integration.Infrastructure) bool {
+	tokenPlatform := token.GetPlatform(network.NWOCtx, "token")
+	gomega.Expect(tokenPlatform).ToNot(gomega.BeNil(), "cannot find token platform in context")
+	gomega.Expect(tokenPlatform.GetTopology()).ToNot(gomega.BeNil(), "invalid token topology, it is nil")
+	tmss := tokenPlatform.GetTopology().TMSs
+	gomega.Expect(tmss).ToNot(gomega.BeEmpty(), "no tms defined in token topology")
+	tms := tmss[0]
+	if !tfabric.IsFSCEndorsementEnabled(tms) {
+		return false
+	}
+	typed, ok := tms.BackendTopology.(interface{ Type() string })
+	if !ok {
+		return false
+	}
+	switch typed.Type() {
+	case fscfabric.TopologyName, fabricx.PlatformName: // exact match: the evm gateway type is "fabricx-evm"
+		return true
+	default:
+		return false
+	}
 }
 
 func TestStressSuite(network *integration.Infrastructure, auditorId string, selector *token3.ReplicaSelector) {
