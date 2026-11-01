@@ -185,6 +185,34 @@ func TestInstallPublicParamsNoClientProvider(t *testing.T) {
 	require.ErrorContains(t, backend.InstallPublicParams(newTMS(), []byte("pp")), "no client provider available")
 }
 
+// TestInstallPublicParamsSkipsTransientTMS checks that a transient TMS records no installation, so
+// that bring-up does not switch the namespace to its public parameters. The non-transient error path
+// without a client provider is covered by TestInstallPublicParamsNoClientProvider.
+func TestInstallPublicParamsSkipsTransientTMS(t *testing.T) {
+	client := okClient()
+	backend := newBackend(&fakeClientProvider{client: client})
+	tms := newTMS()
+	tms.Transient = true
+
+	require.NoError(t, backend.InstallPublicParams(tms, []byte("pp")))
+	assert.False(t, backend.HasPublicParamsInstall(tms))
+	require.NoError(t, backend.InstallPendingPublicParams())
+	assert.Equal(t, int32(0), client.calls.Load())
+	require.ErrorContains(t, backend.WaitForPublicParams(tms, time.Millisecond), "no public params installation was started for")
+
+	// the skip does not depend on a client provider being present
+	require.NoError(t, (&Backend{}).InstallPublicParams(tms, []byte("pp")))
+}
+
+// TestPrepareNamespaceSkipsTransientTMS checks that a transient TMS, which has no orgs and possibly no
+// backend topology, does not add a namespace.
+func TestPrepareNamespaceSkipsTransientTMS(t *testing.T) {
+	tms := newTMS()
+	tms.Transient = true
+
+	require.NotPanics(t, func() { (&Backend{}).PrepareNamespace(tms) })
+}
+
 func TestInstallPublicParamsDuplicateIsIdempotent(t *testing.T) {
 	client := okClient()
 	backend := newBackend(&fakeClientProvider{client: client})

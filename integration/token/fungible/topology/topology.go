@@ -282,6 +282,21 @@ func Topology(opts common.Opts) []api.Topology {
 			zkatdlognoghv1.WithCSP(tms)
 		}
 		tms.SetTokenGenPublicParams(tmsOpts.PublicParamsGenArgs...)
+		// The extra TMS shares the TMS ID of the default one, and their configuration extensions are
+		// deep-merged into the same node configuration: without the same endorsement settings, the
+		// extra TMS would wipe the default TMS's fsc_endorsement block.
+		if opts.FSCBasedEndorsement {
+			fabric2.WithFSCEndorsers(tms, endorserIDs...)
+			if len(opts.FSCEndorsementPolicyType) > 0 {
+				fabric2.WithFSCEndorsementPolicyType(tms, opts.FSCEndorsementPolicyType)
+			}
+		}
+		if len(opts.NamespacePolicy) > 0 {
+			fabric2.WithNamespacePolicy(tms, opts.NamespacePolicy)
+		}
+		if opts.EndorsersFromOwnOrg {
+			fabric2.WithEndorsersFromOwnOrg(tms)
+		}
 		if !opts.NoAuditor {
 			tms.AddAuditor(auditor)
 		}
