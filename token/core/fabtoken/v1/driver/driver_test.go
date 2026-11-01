@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/trace/noop"
+	"go.uber.org/goleak"
 )
 
 // TestNewDriver tests the creation of a new fabtoken driver.
@@ -258,6 +259,41 @@ func TestWalletServiceFactory(t *testing.T) {
 	storageProvider.KeystoreReturns(keystore, nil)
 	storageProvider.WalletStoreReturns(nil, errors.New("wallet store error"))
 	_, err = wsFactory.NewWalletService(tmsConfig, pp)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get identity storage provider")
+}
+
+// TestWalletServiceFactoryNoLeakOnError guards against the signature policy stack's background
+// goroutines leaking when newWalletService fails after the stack has been built. On such a
+// failure the factory returns a nil stack, so the caller cannot stop it; newWalletService must
+// release it itself. goleak fails the test if any goroutine outlives the failed call.
+func TestWalletServiceFactoryNoLeakOnError(t *testing.T) {
+	// Ignore goroutines already running (other tests in this package build token services that
+	// deliberately keep their stack alive until Done); assert only that the failed call below
+	// adds no new leak.
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	storageProvider := &imock.StorageProvider{}
+	wsFactory := driver.NewWalletServiceFactory(storageProvider).Driver
+
+	tmsConfig := &dmock.Configuration{}
+	tmsConfig.IDReturns(tdriver.TMSID{Network: "n1", Channel: "c1", Namespace: "ns1"})
+
+	identityStore := &imock.IdentityStoreService{}
+	identityStore.IteratorConfigurationsReturns(&mock2.IdentityConfigurationIterator{}, nil)
+	identityStore.NotifierReturns(nil, storage.ErrNotSupported)
+	keystore := &mock2.Keystore{}
+	storageProvider.IdentityStoreReturns(identityStore, nil)
+	storageProvider.KeystoreReturns(keystore, nil)
+	// The wallet store is opened only after the signature policy stack (and its eviction
+	// goroutines) has been created, so failing it exercises exactly the leak path.
+	storageProvider.WalletStoreReturns(nil, errors.New("wallet store error"))
+
+	pp, _ := setup.NewWith(setup.FabTokenDriverName, setup.ProtocolV1, 64)
+	pp.AddIssuer([]byte("issuer-1"))
+	pp.AddAuditor([]byte("auditor-1"))
+
+	_, err := wsFactory.NewWalletService(tmsConfig, pp)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to get identity storage provider")
 }
