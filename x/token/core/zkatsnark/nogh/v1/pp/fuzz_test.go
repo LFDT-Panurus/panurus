@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/testutils/dlogpp"
 )
 
 const maxFuzzPublicParamsBytes = 256 << 10
@@ -28,6 +29,9 @@ func FuzzPublicParamsDeserializeNoPanic(f *testing.F) {
 	f.Add([]byte{})
 	f.Add([]byte("malformed"))
 	f.Add(raw[:len(raw)/2])
+	withLegacy, err := withLegacyDLog(f, dlogpp.DefaultCurve).Serialize()
+	require.NoError(f, err)
+	f.Add(withLegacy)
 
 	f.Fuzz(func(t *testing.T, raw []byte) {
 		if len(raw) > maxFuzzPublicParamsBytes {

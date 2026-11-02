@@ -37,15 +37,33 @@ func parseTotalValue(curve ecc.ID, raw []byte) (uint64, error) {
 
 // IssueZKValidate is a ValidateIssueFunc callback that performs the full
 // zkatsnark issue verification pipeline: structural shape → decode →
-// type commitment homogeneity → proof verification → binding signature.
+// type commitment homogeneity → proof verification → binding signature; for
+// an upgrade issuance of ZKAT-DLOG outputs, also the migration proofs.
 //
 // It is invoked by common.Validator when processing issue actions via
 // VerifyTokenRequest / VerifyIssue.
 func (v *Validator) IssueZKValidate(_ context.Context, ctx *Context) error {
-	action := ctx.IssueAction
+	return v.verifyIssueCrypto(ctx.IssueAction)
+}
 
+// verifyIssueCrypto runs the cryptographic checks of an issue action, shared by
+// the ledger pipeline (IssueZKValidate) and the local ValidateIssue path:
+// structural shape, decoding, type commitment homogeneity, output proofs and
+// binding signature. For an upgrade issuance of ZKAT-DLOG outputs it also
+// verifies the migration proofs, requires a zero TotalValue, and checks the
+// binding signature over the migration value commitments with the
+// ActionTypeIssueMigration domain (see verifyDLogUpgradeCrypto).
+func (v *Validator) verifyIssueCrypto(action *snarktoken.IssueAction) error {
+	if action == nil {
+		return errors.Wrap(ErrMalformedAction, "nil issue action")
+	}
 	if err := validateIssueActionShape(action); err != nil {
 		return err
+	}
+	// a single kind of upgrade input, so that IsDLogUpgrade selects the right
+	// value-conservation check for every input
+	if err := action.CheckUpgradeInputKinds(); err != nil {
+		return errors.WithMessagef(errors.Join(ErrMalformedAction, err), "%s", err.Error())
 	}
 
 	decodedOutputs, err := decodeAllOutputs(action.Outputs, v.pp.Curve)
@@ -65,6 +83,10 @@ func (v *Validator) IssueZKValidate(_ context.Context, ctx *Context) error {
 
 	if err := verifyAllProofs(v.prepared, nil, nil, action.Outputs, decodedOutputs); err != nil {
 		return err
+	}
+
+	if action.IsDLogUpgrade() {
+		return v.verifyDLogUpgradeCrypto(action, decodedOutputs)
 	}
 
 	totalValue, err := parseTotalValue(v.pp.Curve, action.TotalValue)

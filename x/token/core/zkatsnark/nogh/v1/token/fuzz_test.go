@@ -72,37 +72,6 @@ func FuzzOutputDescriptionDeserializeNoPanic(f *testing.F) {
 	})
 }
 
-// FuzzMigrationActionDeserializeNoPanic fuzzes MigrationAction.Deserialize with arbitrary bytes.
-func FuzzMigrationActionDeserializeNoPanic(f *testing.F) {
-	action := &snarktoken.MigrationAction{
-		CommitmentPedersenX: make([]byte, 48),
-		CommitmentPedersenY: make([]byte, 48),
-		CommitmentMiMC:      make([]byte, 32),
-		ValueCommitOutX:     make([]byte, 32),
-		ValueCommitOutY:     make([]byte, 32),
-		TypeCommitment:      make([]byte, 32),
-		MigrationProof:      make([]byte, 100),
-		Recipient:           []byte("alice"),
-	}
-	raw, err := action.Serialize()
-	require.NoError(f, err)
-
-	f.Add(raw)
-	f.Add([]byte{})
-	f.Add([]byte("malformed-bytes"))
-	f.Add(raw[:len(raw)/2])
-
-	f.Fuzz(func(t *testing.T, raw []byte) {
-		if len(raw) > maxFuzzBytes {
-			t.Skip()
-		}
-		require.NotPanics(t, func() {
-			ma := &snarktoken.MigrationAction{}
-			_ = ma.Deserialize(raw)
-		})
-	})
-}
-
 // FuzzIssueActionWithInputsDeserializeNoPanic fuzzes IssueAction.Deserialize
 // followed by Validate, ExtraSigners and SummarizeUpgradeInputs: an upgrade
 // issuance carries legacy ledger tokens chosen by the issuer, which the
@@ -128,6 +97,25 @@ func FuzzIssueActionWithInputsDeserializeNoPanic(f *testing.F) {
 	f.Add([]byte{})
 	f.Add(raw[:len(raw)/2])
 	f.Add([]byte{0x42, 0x02, 0x0a, 0x00}) // input with an empty id message
+	legacy, _ := legacyDLog(f)
+	dlog := mint(f, legacy, owner, "USD", 7)
+	withMigration := &snarktoken.IssueAction{
+		Issuer:    []byte("issuer"),
+		TokenType: "USD",
+		Outputs:   []snarktoken.OutputDescription{{Recipient: owner}},
+		Inputs: []*snarktoken.IssueActionInput{{
+			ID:        token2.ID{TxId: "tx", Index: 1},
+			Token:     dlog.Raw,
+			Migration: &snarktoken.MigrationDescription{ValueCommitInX: make([]byte, 32), ValueCommitInY: make([]byte, 32), MigrationProof: make([]byte, 64)},
+		}},
+		TypeRandomness: make([]byte, 32),
+	}
+	rawMigration, err := withMigration.Serialize()
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Add(rawMigration)
+	f.Add(rawMigration[:len(rawMigration)-10])
 
 	f.Fuzz(func(t *testing.T, raw []byte) {
 		if len(raw) > maxFuzzBytes {
@@ -142,6 +130,52 @@ func FuzzIssueActionWithInputsDeserializeNoPanic(f *testing.F) {
 		_ = a.GetInputs()
 		_, _ = a.GetSerializedInputs()
 		_, _ = snarktoken.SummarizeUpgradeInputs(a.Inputs, 64)
+		_ = a.IsDLogUpgrade()
+		_ = a.CheckUpgradeInputKinds()
+		_, _ = snarktoken.SummarizeDLogInputs(a.Inputs, legacy)
+	})
+}
+
+// FuzzParseDLogOutputNoPanic fuzzes the ZKAT-DLOG output parser, which the
+// validator runs on the ledger bytes of every redeemed ZKAT-DLOG input.
+func FuzzParseDLogOutputNoPanic(f *testing.F) {
+	legacy, _ := legacyDLog(f)
+	tok := mint(f, legacy, []byte("owner"), "USD", 7)
+	fab, err := (&actions.Output{Owner: []byte("owner"), Type: "USD", Quantity: "0x10"}).Serialize()
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Add(tok.Raw)
+	f.Add([]byte{})
+	f.Add(tok.Raw[:len(tok.Raw)/2])
+	f.Add(fab)
+
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		if len(raw) > maxFuzzBytes {
+			t.Skip()
+		}
+		_ = snarktoken.IsDLogOutput(raw)
+		_, _ = snarktoken.ParseDLogOutput(raw, legacy)
+	})
+}
+
+// FuzzOpenDLogOutputNoPanic fuzzes the opening of a ZKAT-DLOG output with its
+// metadata, both supplied by the owner of a token to upgrade.
+func FuzzOpenDLogOutputNoPanic(f *testing.F) {
+	legacy, _ := legacyDLog(f)
+	tok := mint(f, legacy, []byte("owner"), "USD", 7)
+	other := mint(f, legacy, []byte("owner"), "EUR", 9)
+	f.Add(tok.Raw, tok.Metadata)
+	f.Add(tok.Raw, other.Metadata)
+	f.Add([]byte{}, []byte{})
+	f.Add(tok.Raw, tok.Metadata[:len(tok.Metadata)/2])
+	f.Add(tok.Raw[:len(tok.Raw)/2], tok.Metadata)
+
+	f.Fuzz(func(t *testing.T, raw, metadata []byte) {
+		if len(raw)+len(metadata) > maxFuzzBytes {
+			t.Skip()
+		}
+		_, _ = snarktoken.OpenDLogOutput(raw, metadata, legacy)
 	})
 }
 

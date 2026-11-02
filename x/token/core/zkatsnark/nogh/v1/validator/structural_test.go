@@ -86,37 +86,6 @@ func TestValidateIssueActionShape_RequiresTotalValue(t *testing.T) {
 	require.ErrorIs(t, validateIssueActionShape(a), ErrMalformedAction)
 }
 
-func validMigrationAction() *snarktoken.MigrationAction {
-	return &snarktoken.MigrationAction{
-		CommitmentPedersenX: make([]byte, 48),
-		CommitmentPedersenY: make([]byte, 48),
-		CommitmentMiMC:      make([]byte, 32),
-		ValueCommitOutX:     make([]byte, 32),
-		ValueCommitOutY:     make([]byte, 32),
-		TypeCommitment:      make([]byte, 32),
-		MigrationProof:      make([]byte, 292),
-	}
-}
-
-func TestValidateMigrationActionShape_Valid(t *testing.T) {
-	require.NoError(t, validateMigrationActionShape(validMigrationAction()))
-}
-
-// TestValidateMigrationActionShape_WrongPedersenXLength is the specific
-// mistake fpElementLen/fieldElementLen exist to catch: an Fr-sized (32
-// byte) field mistakenly supplied where an Fp-sized (48 byte) one belongs.
-func TestValidateMigrationActionShape_WrongPedersenXLength(t *testing.T) {
-	a := validMigrationAction()
-	a.CommitmentPedersenX = make([]byte, 32)
-	require.ErrorIs(t, validateMigrationActionShape(a), ErrMalformedAction)
-}
-
-func TestValidateMigrationActionShape_EmptyProof(t *testing.T) {
-	a := validMigrationAction()
-	a.MigrationProof = nil
-	require.ErrorIs(t, validateMigrationActionShape(a), ErrMalformedAction)
-}
-
 // ── Additional spend description shape tests ────────────────────────────────
 
 func TestValidateSpendDescriptionShape_WrongValueCommitInXLength(t *testing.T) {
@@ -216,36 +185,6 @@ func TestValidateIssueActionShape_BadBindingSignature(t *testing.T) {
 }
 
 // ── Additional migration action shape tests ─────────────────────────────────
-
-func TestValidateMigrationActionShape_WrongPedersenYLength(t *testing.T) {
-	a := validMigrationAction()
-	a.CommitmentPedersenY = make([]byte, 32)
-	require.ErrorIs(t, validateMigrationActionShape(a), ErrMalformedAction)
-}
-
-func TestValidateMigrationActionShape_WrongCommitmentMiMCLength(t *testing.T) {
-	a := validMigrationAction()
-	a.CommitmentMiMC = make([]byte, 48)
-	require.ErrorIs(t, validateMigrationActionShape(a), ErrMalformedAction)
-}
-
-func TestValidateMigrationActionShape_WrongValueCommitOutXLength(t *testing.T) {
-	a := validMigrationAction()
-	a.ValueCommitOutX = make([]byte, 64)
-	require.ErrorIs(t, validateMigrationActionShape(a), ErrMalformedAction)
-}
-
-func TestValidateMigrationActionShape_WrongValueCommitOutYLength(t *testing.T) {
-	a := validMigrationAction()
-	a.ValueCommitOutY = make([]byte, 0)
-	require.ErrorIs(t, validateMigrationActionShape(a), ErrMalformedAction)
-}
-
-func TestValidateMigrationActionShape_WrongTypeCommitmentLength(t *testing.T) {
-	a := validMigrationAction()
-	a.TypeCommitment = make([]byte, 48)
-	require.ErrorIs(t, validateMigrationActionShape(a), ErrMalformedAction)
-}
 
 // ── Additional transfer action shape tests ──────────────────────────────────
 

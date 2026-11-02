@@ -45,8 +45,10 @@ var (
 	// not present in PublicParams.Issuers().
 	ErrUnauthorizedIssuer = errors.New("validator: issuer not authorized")
 
-	// ErrMigrationNotConfigured is returned by ValidateMigration when this
-	// deployment's PublicParams has no migration verification key loaded.
+	// ErrMigrationNotConfigured is returned for an upgrade issuance of
+	// ZKAT-DLOG outputs when this deployment cannot verify it: no migration
+	// verifying key, no ZKAT-DLOG public parameters, or a curve other than
+	// BLS12-381.
 	ErrMigrationNotConfigured = errors.New("validator: migration circuit not configured for this deployment")
 )
 

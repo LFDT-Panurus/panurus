@@ -21,12 +21,14 @@ import (
 	"math/big"
 
 	"github.com/consensys/gnark-crypto/ecc"
+	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark/constraint"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/consensys/gnark/frontend/cs/scs"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
+	dlogsetup "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/circuit"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/backend"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/edwards"
@@ -191,28 +193,90 @@ func CompileOutputCircuit(p *pp.PublicParams) (constraint.ConstraintSystem, erro
 }
 
 // PedersenGeneratorCoords holds the affine coordinates of the three Pedersen
-// generators from the source zkatdlog driver, needed as compile-time
-// constants for MigrationCircuit. These must match exactly the generators
-// used to create the on-chain commitments being migrated.
+// generators of the ZKAT-DLOG deployment being upgraded, needed as
+// compile-time constants for MigrationCircuit. They must be exactly the
+// generators that created the on-chain commitments being redeemed, so they
+// are only ever read from the ZKAT-DLOG public parameters (see
+// PedersenGeneratorCoordsFromDLog), never re-derived.
 type PedersenGeneratorCoords struct {
 	G0X, G0Y *big.Int
 	G1X, G1Y *big.Int
 	G2X, G2Y *big.Int
 }
 
+// PedersenGeneratorCoordsFromDLog returns the coordinates of the Pedersen
+// generators of legacy, which must be three non-identity points of the
+// BLS12-381 G1 prime-order subgroup.
+func PedersenGeneratorCoordsFromDLog(legacy *dlogsetup.PublicParams) (PedersenGeneratorCoords, error) {
+	if legacy == nil {
+		return PedersenGeneratorCoords{}, errors.New("setup: nil ZKAT-DLOG public parameters")
+	}
+	if !pp.IsLegacyDLogCurve(legacy.Curve) {
+		return PedersenGeneratorCoords{}, errors.Errorf("setup: ZKAT-DLOG curve [%s] is not BLS12-381", legacy.Curve)
+	}
+	if len(legacy.PedersenGenerators) != 3 {
+		return PedersenGeneratorCoords{}, errors.Errorf("setup: expected 3 ZKAT-DLOG Pedersen generators, got %d", len(legacy.PedersenGenerators))
+	}
+	var coords [3]struct{ X, Y *big.Int }
+	for i, g := range legacy.PedersenGenerators {
+		if g == nil {
+			return PedersenGeneratorCoords{}, errors.Errorf("setup: nil ZKAT-DLOG Pedersen generator %d", i)
+		}
+		var pt bls12381.G1Affine
+		if _, err := pt.SetBytes(g.Bytes()); err != nil {
+			return PedersenGeneratorCoords{}, errors.Wrapf(err, "setup: invalid ZKAT-DLOG Pedersen generator %d", i)
+		}
+		if pt.IsInfinity() || !pt.IsInSubGroup() {
+			return PedersenGeneratorCoords{}, errors.Errorf("setup: ZKAT-DLOG Pedersen generator %d is not a non-identity subgroup point", i)
+		}
+		coords[i].X = pt.X.BigInt(new(big.Int))
+		coords[i].Y = pt.Y.BigInt(new(big.Int))
+	}
+
+	return PedersenGeneratorCoords{
+		G0X: coords[0].X, G0Y: coords[0].Y,
+		G1X: coords[1].X, G1Y: coords[1].Y,
+		G2X: coords[2].X, G2Y: coords[2].Y,
+	}, nil
+}
+
+// MigrationGenerators returns the Pedersen generator coordinates of the
+// ZKAT-DLOG public parameters embedded in p.
+func MigrationGenerators(p *pp.PublicParams) (PedersenGeneratorCoords, error) {
+	legacy, err := p.LegacyDLog()
+	if err != nil {
+		return PedersenGeneratorCoords{}, err
+	}
+
+	return PedersenGeneratorCoordsFromDLog(legacy.PP)
+}
+
 // CompileMigrationCircuit compiles circuit.MigrationCircuit for the curve
 // and proof system specified in p, with the range-check bit-width from
 // p.MaxBits and the Pedersen generator coordinates from gens.
+//
+// The migration circuit opens BLS12-381 G1 commitments with BLS12-381 scalars,
+// so it is only sound over the BLS12-381 scalar field: any other curve is
+// refused, as is plonkfri, which the zkatsnark driver supports only on BN254.
 //
 // The Pedersen generators are compile-time constants baked into the
 // constraint system. Two calls with different generators produce different
 // circuits requiring separate keys.
 func CompileMigrationCircuit(p *pp.PublicParams, gens PedersenGeneratorCoords) (constraint.ConstraintSystem, error) {
+	if p.Curve != ecc.BLS12_381 {
+		return nil, errors.Errorf("setup: cannot compile MigrationCircuit: Curve must be %s, got %s", ecc.BLS12_381, p.Curve)
+	}
+	if p.ProofSystem != "groth16" && p.ProofSystem != "plonk" {
+		return nil, errors.Errorf("setup: cannot compile MigrationCircuit: unsupported proof system %q", p.ProofSystem)
+	}
 	if p.MaxBits <= 0 {
 		return nil, errors.Errorf("setup: cannot compile MigrationCircuit: MaxBits must be positive, got %d", p.MaxBits)
 	}
 	if p.MaxBits > params.MaxAllowedBits {
 		return nil, errors.Errorf("setup: cannot compile MigrationCircuit: MaxBits must be at most %d, got %d", params.MaxAllowedBits, p.MaxBits)
+	}
+	if gens.G0X == nil || gens.G0Y == nil || gens.G1X == nil || gens.G1Y == nil || gens.G2X == nil || gens.G2Y == nil {
+		return nil, errors.New("setup: cannot compile MigrationCircuit: missing Pedersen generators")
 	}
 
 	vcGens, err := curveGenerators(p.Curve)
@@ -244,15 +308,20 @@ func CompileMigrationCircuit(p *pp.PublicParams, gens PedersenGeneratorCoords) (
 	return cs, nil
 }
 
-// SetupMigration compiles MigrationCircuit and runs setup via the proof
-// system backend, populating p.PKMigration/VKMigration in place.
+// SetupMigration compiles MigrationCircuit for the ZKAT-DLOG public parameters
+// embedded in p (p.LegacyDLogPublicParams) and runs setup via the proof system
+// backend, populating p.PKMigration/VKMigration in place. It fails if p
+// embeds no ZKAT-DLOG public parameters.
 //
-// This is deliberately NOT called from SetupAll. It is a separate,
-// explicitly-invoked function until the Pedersen opening group (Group 1)
-// is confirmed correct against real zkatdlog data, so the existing working
-// Spend/Output setup path can never be broken by in-progress migration
-// circuit changes.
-func SetupMigration(p *pp.PublicParams, gens PedersenGeneratorCoords) (*pp.PublicParams, error) {
+// It is not called from SetupAll: migration keys are only needed by a
+// deployment that upgrades ZKAT-DLOG outputs, and depend on the generators of
+// that ZKAT-DLOG deployment.
+func SetupMigration(p *pp.PublicParams) (*pp.PublicParams, error) {
+	gens, err := MigrationGenerators(p)
+	if err != nil {
+		return nil, errors.Wrap(err, "setup: SetupMigration")
+	}
+
 	b, err := backend.NewProofSystemBackend(p.ProofSystem, p.Curve)
 	if err != nil {
 		return nil, errors.Wrapf(err, "setup: SetupMigration backend creation")
@@ -270,6 +339,10 @@ func SetupMigration(p *pp.PublicParams, gens PedersenGeneratorCoords) (*pp.Publi
 
 	p.PKMigration = pkBytes
 	p.VKMigration = vkBytes
+
+	if err := p.Validate(); err != nil {
+		return nil, errors.Wrapf(err, "setup: resulting public params failed validation")
+	}
 
 	return p, nil
 }

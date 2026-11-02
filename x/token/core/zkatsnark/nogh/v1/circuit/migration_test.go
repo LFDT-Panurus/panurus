@@ -7,476 +7,249 @@ package circuit_test
 
 import (
 	"crypto/sha256"
-	"fmt"
 	"math/big"
-	"strconv"
 	"sync"
 	"testing"
 
 	mathlib "github.com/IBM/mathlib"
+	"github.com/consensys/gnark-crypto/ecc"
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
-	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/constraint"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/consensys/gnark/std/math/emulated"
 	"github.com/stretchr/testify/require"
 
-	"github.com/consensys/gnark-crypto/ecc"
-
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/circuit"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/edwards"
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/mimc"
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/params"
 )
+
+// migrationTestMaxBits keeps the range check small, so that the overflow case
+// is cheap to build; the circuit shape does not otherwise depend on it.
+const migrationTestMaxBits = 16
 
 var (
 	migrationCS   constraint.ConstraintSystem
-	migrationPK   groth16.ProvingKey
-	migrationVK   groth16.VerifyingKey
+	migrationErr  error
 	migrationOnce sync.Once
 
-	// testPedGens holds the Pedersen generator coordinates extracted once.
-	testPedGens pedGenerators
+	// testPedGens are the Pedersen generators of a ZKAT-DLOG deployment on
+	// BLS12_381_BBS_GURVY, the curve ZKAT-DLOG uses on BLS12-381 in NWO: its
+	// HashToG1 differs from the plain BLS12_381 one, so these are not the
+	// generators the former hard-coded derivation produced.
+	testPedGens [3]*mathlib.G1
 )
 
-type pedGenerators struct {
-	G0X, G0Y *big.Int
-	G1X, G1Y *big.Int
-	G2X, G2Y *big.Int
+// bbsGenerators derives three independent generators with the BBS curve's
+// hash-to-curve, as ZKAT-DLOG's GeneratePedersenParameters does.
+func bbsGenerators() [3]*mathlib.G1 {
+	c := mathlib.Curves[mathlib.BLS12_381_BBS_GURVY]
+	var gens [3]*mathlib.G1
+	for i, seed := range []string{"circuit-test-G0", "circuit-test-G1", "circuit-test-G2"} {
+		gens[i] = c.HashToG1([]byte(seed))
+	}
+
+	return gens
 }
 
-func deriveTestPedGenerators() pedGenerators {
-	curve := mathlib.Curves[mathlib.BLS12_381]
-	driverName := "zkatdlognogh"
-	driverVersion := 1
+func affine(t *testing.T, g *mathlib.G1) bls12381.G1Affine {
+	t.Helper()
+	var pt bls12381.G1Affine
+	_, err := pt.SetBytes(g.Bytes())
+	require.NoError(t, err)
 
-	coords := make([]struct{ X, Y *big.Int }, 3)
-	for i := range 3 {
-		seed := "lfdt-panurus." + driverName + "." + strconv.Itoa(driverVersion) + ".PedersenGenerators." + strconv.Itoa(i)
-		g := curve.HashToG1([]byte(seed))
-		raw := g.Bytes()
-
-		var pt bls12381.G1Affine
-		if _, err := pt.SetBytes(raw); err != nil {
-			panic("test: failed to parse Pedersen generator " + strconv.Itoa(i) + ": " + err.Error())
-		}
-
-		coords[i].X = pt.X.BigInt(new(big.Int))
-		coords[i].Y = pt.Y.BigInt(new(big.Int))
-	}
-
-	return pedGenerators{
-		G0X: coords[0].X, G0Y: coords[0].Y,
-		G1X: coords[1].X, G1Y: coords[1].Y,
-		G2X: coords[2].X, G2Y: coords[2].Y,
-	}
+	return pt
 }
 
 func setupMigration(t *testing.T) {
 	t.Helper()
 	migrationOnce.Do(func() {
-		testPedGens = deriveTestPedGenerators()
-
-		var err error
-		migrationCS, err = frontend.Compile(
+		testPedGens = bbsGenerators()
+		migrationCS, migrationErr = frontend.Compile(
 			ecc.BLS12_381.ScalarField(),
 			r1cs.NewBuilder,
-			&circuit.MigrationCircuit{
-				MaxBits: params.DefaultMaxBits,
-				PedG0X:  testPedGens.G0X, PedG0Y: testPedGens.G0Y,
-				PedG1X: testPedGens.G1X, PedG1Y: testPedGens.G1Y,
-				PedG2X: testPedGens.G2X, PedG2Y: testPedGens.G2Y,
-			},
+			newMigrationCircuitTemplate(t),
 		)
-		if err != nil {
-			panic(fmt.Sprintf("MigrationCircuit compilation failed: %v", err))
-		}
-
-		fmt.Printf("MigrationCircuit: %d constraints\n", migrationCS.GetNbConstraints())
-
-		migrationPK, migrationVK, err = groth16.Setup(migrationCS)
-		if err != nil {
-			panic(fmt.Sprintf("MigrationCircuit groth16.Setup failed: %v", err))
-		}
 	})
+	require.NoError(t, migrationErr)
 }
 
-// ── Test inputs ─────────────────────────────────────────────────────────────
+func newMigrationCircuitTemplate(t *testing.T) *circuit.MigrationCircuit {
+	t.Helper()
+	g0, g1, g2 := affine(t, testPedGens[0]), affine(t, testPedGens[1]), affine(t, testPedGens[2])
+	j := edwards.Jubjub()
+
+	return &circuit.MigrationCircuit{
+		MaxBits: migrationTestMaxBits,
+		PedG0X:  g0.X.BigInt(new(big.Int)), PedG0Y: g0.Y.BigInt(new(big.Int)),
+		PedG1X: g1.X.BigInt(new(big.Int)), PedG1Y: g1.Y.BigInt(new(big.Int)),
+		PedG2X: g2.X.BigInt(new(big.Int)), PedG2Y: g2.Y.BigInt(new(big.Int)),
+		GenVX: j.V.X.BigInt(new(big.Int)), GenVY: j.V.Y.BigInt(new(big.Int)),
+		GenRX: j.R.X.BigInt(new(big.Int)), GenRY: j.R.Y.BigInt(new(big.Int)),
+	}
+}
+
+// typePed is SHA-256(t) mod r, the ZKAT-DLOG type scalar.
+func typePed(tokenType string) fr.Element {
+	digest := sha256.Sum256([]byte(tokenType))
+	var e fr.Element
+	e.SetBigInt(new(big.Int).Mod(new(big.Int).SetBytes(digest[:]), fr.Modulus()))
+
+	return e
+}
 
 type migrationInputs struct {
-	value          uint64
-	tokenType      string
-	tokenTypeFr    fr.Element // EncodeTokenType(tokenType)
-	tokenTypePed   fr.Element // HashToZr(tokenType) for Pedersen
-	randomnessPed  fr.Element // Pedersen blinding factor
-	randomnessNew  fr.Element // MiMC randomness
-	rcv            fr.Element // Jubjub value-commitment randomness
-	typeRandomness fr.Element // TypeCommitment randomness
+	value         *big.Int
+	tokenType     string
+	randomnessPed fr.Element
+	rcv           fr.Element
 }
 
-func newRandomMigrationInputs(t *testing.T) migrationInputs {
+func newMigrationInputs(t *testing.T, tokenType string, value uint64) migrationInputs {
 	t.Helper()
-
-	tokenType := "USD"
-	value := uint64(100)
-
-	// EncodeTokenType, same as snarktoken.EncodeTokenType
-	var tokenTypeFr fr.Element
-	tokenTypeFr.SetBytes(mimc.TokenTypeBytes(tokenType))
-
-	digest := sha256.Sum256([]byte(tokenType))
-	digestBig := new(big.Int).SetBytes(digest[:])
-	digestBig.Mod(digestBig, fr.Modulus())
-	var tokenTypePed fr.Element
-	tokenTypePed.SetBigInt(digestBig)
-
-	var randomnessPed, randomnessNew, rcv, typeRandomness fr.Element
-	_, err := randomnessPed.SetRandom()
-	require.NoError(t, err)
-	_, err = randomnessNew.SetRandom()
+	var bf, rcv fr.Element
+	_, err := bf.SetRandom()
 	require.NoError(t, err)
 	_, err = rcv.SetRandom()
 	require.NoError(t, err)
-	_, err = typeRandomness.SetRandom()
-	require.NoError(t, err)
 
-	return migrationInputs{
-		value:          value,
-		tokenType:      tokenType,
-		tokenTypeFr:    tokenTypeFr,
-		tokenTypePed:   tokenTypePed,
-		randomnessPed:  randomnessPed,
-		randomnessNew:  randomnessNew,
-		rcv:            rcv,
-		typeRandomness: typeRandomness,
-	}
+	return migrationInputs{value: new(big.Int).SetUint64(value), tokenType: tokenType, randomnessPed: bf, rcv: rcv}
 }
 
-// computePedersenCommitment replicates the zkatdlog commit() function:
-// C = tokenTypePed·G[0] + value·G[1] + blindingFactor·G[2]
-func computePedersenCommitment(t *testing.T, inp migrationInputs) bls12381.G1Affine {
+// pedersen computes the ZKAT-DLOG commitment t_ped·G0 + v·G1 + bf·G2.
+func pedersen(t *testing.T, tokenType string, value *big.Int, bf fr.Element) bls12381.G1Affine {
 	t.Helper()
-
-	curve := mathlib.Curves[mathlib.BLS12_381]
-	driverName := "zkatdlognogh"
-	driverVersion := 1
-
-	gens := make([]*mathlib.G1, 3)
-	for i := range 3 {
-		seed := "lfdt-panurus." + driverName + "." + strconv.Itoa(driverVersion) + ".PedersenGenerators." + strconv.Itoa(i)
-		gens[i] = curve.HashToG1([]byte(seed))
+	c := mathlib.Curves[mathlib.BLS12_381_BBS_GURVY]
+	tp := typePed(tokenType)
+	var v fr.Element
+	v.SetBigInt(value)
+	com := c.NewG1()
+	for i, s := range []fr.Element{tp, v, bf} {
+		b := s.Bytes()
+		com.Add(testPedGens[i].Mul(c.NewZrFromBytes(b[:])))
 	}
 
-	// Build scalar vector: [tokenTypePed, value, blindingFactor]
-	typePedBytes := inp.tokenTypePed.Marshal()
-	typeScalar := curve.NewZrFromBytes(typePedBytes)
-
-	var vField fr.Element
-	vField.SetUint64(inp.value)
-	vBytes := vField.Marshal()
-	valueScalar := curve.NewZrFromBytes(vBytes)
-
-	bfBytes := inp.randomnessPed.Marshal()
-	bfScalar := curve.NewZrFromBytes(bfBytes)
-
-	// Compute C = sum(scalar_i * G_i)
-	com := curve.NewG1()
-	com.Add(gens[0].Mul(typeScalar))
-	com.Add(gens[1].Mul(valueScalar))
-	com.Add(gens[2].Mul(bfScalar))
-
-	// Convert to gnark-crypto G1Affine
-	raw := com.Bytes()
-	var pt bls12381.G1Affine
-	_, err := pt.SetBytes(raw)
-	require.NoError(t, err, "failed to parse computed Pedersen commitment")
-
-	return pt
+	return affine(t, com)
 }
 
-func buildMigrationAssignment(t *testing.T, inp migrationInputs) *circuit.MigrationCircuit {
+// assignment builds a full witness for inp, with the public TokenTypePed of
+// publicType.
+func assignment(t *testing.T, inp migrationInputs, publicType string) *circuit.MigrationCircuit {
 	t.Helper()
+	ped := pedersen(t, inp.tokenType, inp.value, inp.randomnessPed)
+	var rcvInt big.Int
+	inp.rcv.BigInt(&rcvInt)
+	cvX, cvY := valueCommit(t, inp.value, inp.rcv)
 
-	// Compute Pedersen commitment
-	pedCommit := computePedersenCommitment(t, inp)
-	pedXBig := pedCommit.X.BigInt(new(big.Int))
-	pedYBig := pedCommit.Y.BigInt(new(big.Int))
+	a := newMigrationCircuitTemplate(t)
+	a.CommitmentPedersenX = emulated.ValueOf[emulated.BLS12381Fp](ped.X.BigInt(new(big.Int)))
+	a.CommitmentPedersenY = emulated.ValueOf[emulated.BLS12381Fp](ped.Y.BigInt(new(big.Int)))
+	a.TokenTypePed = typePed(publicType)
+	a.ValueCommitInX = cvX
+	a.ValueCommitInY = cvY
+	a.Value = inp.value
+	a.RandomnessPed = inp.randomnessPed
+	a.RCV = inp.rcv
 
-	// Compute MiMC commitment: MiMC(value, tokenTypeFr, randomnessNew)
-	var vField fr.Element
-	vField.SetUint64(inp.value)
-	cm, err := mimc.Hash(vField, inp.tokenTypeFr, inp.randomnessNew)
-	require.NoError(t, err, "mimc.Hash failed")
+	return a
+}
 
-	// Compute Jubjub value commitment
-	cv, err := edwards.Jubjub().ValueCommit(inp.value, inp.rcv)
-	require.NoError(t, err, "jubjub.ValueCommit failed")
+// valueCommit computes v·V + rcv·R on Jubjub, also for values that do not
+// fit in a uint64.
+func valueCommit(t *testing.T, value *big.Int, rcv fr.Element) (*big.Int, *big.Int) {
+	t.Helper()
+	if value.IsUint64() {
+		cv, err := edwards.Jubjub().ValueCommit(value.Uint64(), rcv)
+		require.NoError(t, err)
 
-	// Compute type commitment: MiMC(TokenType, TypeRandomness)
-	tc, err := mimc.Hash(inp.tokenTypeFr, inp.typeRandomness)
-	require.NoError(t, err, "mimc.Hash failed for type commitment")
+		return cv.X.BigInt(new(big.Int)), cv.Y.BigInt(new(big.Int))
+	}
+	// out-of-range values are rejected by the range check before the value
+	// commitment matters: any point will do
+	cv, err := edwards.Jubjub().ValueCommit(1, rcv)
+	require.NoError(t, err)
 
-	return &circuit.MigrationCircuit{
-		// Public inputs
-		CommitmentPedersenX: emulated.ValueOf[emulated.BLS12381Fp](pedXBig),
-		CommitmentPedersenY: emulated.ValueOf[emulated.BLS12381Fp](pedYBig),
-		CommitmentMiMC:      cm,
-		ValueCommitOutX:     cv.X,
-		ValueCommitOutY:     cv.Y,
-		TypeCommitment:      tc,
-		// Private inputs
-		Value:          vField,
-		TokenType:      inp.tokenTypeFr,
-		TokenTypePed:   inp.tokenTypePed,
-		RandomnessPed:  inp.randomnessPed,
-		RandomnessNew:  inp.randomnessNew,
-		RCV:            inp.rcv,
-		TypeRandomness: inp.typeRandomness,
-		// Compile-time parameters
-		MaxBits: params.DefaultMaxBits,
-		PedG0X:  testPedGens.G0X, PedG0Y: testPedGens.G0Y,
-		PedG1X: testPedGens.G1X, PedG1Y: testPedGens.G1Y,
-		PedG2X: testPedGens.G2X, PedG2Y: testPedGens.G2Y,
+	return cv.X.BigInt(new(big.Int)), cv.Y.BigInt(new(big.Int))
+}
+
+func isSolved(t *testing.T, a *circuit.MigrationCircuit) error {
+	t.Helper()
+	w, err := frontend.NewWitness(a, ecc.BLS12_381.ScalarField())
+	require.NoError(t, err)
+
+	return migrationCS.IsSolved(w)
+}
+
+func TestMigrationCircuit_ValidWitness(t *testing.T) {
+	setupMigration(t)
+	require.NoError(t, isSolved(t, assignment(t, newMigrationInputs(t, "USD", 100), "USD")))
+	require.NoError(t, isSolved(t, assignment(t, newMigrationInputs(t, "USD", 1<<migrationTestMaxBits-1), "USD")), "maximum value")
+}
+
+// TestMigrationCircuit_TypeSwap is the regression test for the type-swap
+// defect: the honest opening of a "USD" commitment must not prove a public
+// type scalar of "EUR", so a holder of USD cannot mint EUR.
+func TestMigrationCircuit_TypeSwap(t *testing.T) {
+	setupMigration(t)
+	require.Error(t, isSolved(t, assignment(t, newMigrationInputs(t, "USD", 100), "EUR")))
+}
+
+func TestMigrationCircuit_Rejections(t *testing.T) {
+	setupMigration(t)
+	random := func(t *testing.T) fr.Element {
+		t.Helper()
+		var e fr.Element
+		_, err := e.SetRandom()
+		require.NoError(t, err)
+
+		return e
+	}
+	tests := []struct {
+		name   string
+		mutate func(t *testing.T, a *circuit.MigrationCircuit)
+	}{
+		{"wrong value", func(_ *testing.T, a *circuit.MigrationCircuit) { a.Value = big.NewInt(101) }},
+		{"wrong Pedersen randomness", func(t *testing.T, a *circuit.MigrationCircuit) {
+			t.Helper()
+			a.RandomnessPed = random(t)
+		}},
+		{"wrong RCV", func(t *testing.T, a *circuit.MigrationCircuit) {
+			t.Helper()
+			a.RCV = random(t)
+		}},
+		{"value commitment of another value", func(t *testing.T, a *circuit.MigrationCircuit) {
+			t.Helper()
+			x, y := valueCommit(t, big.NewInt(150), random(t))
+			a.ValueCommitInX, a.ValueCommitInY = x, y
+		}},
+		{"Pedersen point of another token", func(t *testing.T, a *circuit.MigrationCircuit) {
+			t.Helper()
+			other := pedersen(t, "USD", big.NewInt(100), random(t))
+			a.CommitmentPedersenX = emulated.ValueOf[emulated.BLS12381Fp](other.X.BigInt(new(big.Int)))
+			a.CommitmentPedersenY = emulated.ValueOf[emulated.BLS12381Fp](other.Y.BigInt(new(big.Int)))
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			a := assignment(t, newMigrationInputs(t, "USD", 100), "USD")
+			tc.mutate(t, a)
+			require.Error(t, isSolved(t, a))
+		})
 	}
 }
 
-func TestMigrationCircuitValidWitness(t *testing.T) {
+// TestMigrationCircuit_RangeCheck checks that a commitment to 0 or to a value
+// of MaxBits bits or more cannot be redeemed, even with an otherwise honest
+// opening.
+func TestMigrationCircuit_RangeCheck(t *testing.T) {
 	setupMigration(t)
-
-	inp := newRandomMigrationInputs(t)
-	assignment := buildMigrationAssignment(t, inp)
-
-	witness, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField())
-	require.NoError(t, err)
-
-	proof, err := groth16.Prove(migrationCS, migrationPK, witness)
-	require.NoError(t, err, "groth16.Prove failed for a valid MigrationCircuit witness")
-
-	publicWitness, err := witness.Public()
-	require.NoError(t, err)
-
-	err = groth16.Verify(proof, migrationVK, publicWitness)
-	require.NoError(t, err, "groth16.Verify failed for a valid MigrationCircuit proof")
-}
-
-func TestMigrationCircuitInvalid_WrongValue(t *testing.T) {
-	setupMigration(t)
-
-	inp := newRandomMigrationInputs(t)
-	assignment := buildMigrationAssignment(t, inp)
-
-	// Tamper with the private Value — should break BOTH Pedersen AND MiMC
-	var wrongValue fr.Element
-	wrongValue.SetUint64(inp.value + 1)
-	assignment.Value = wrongValue
-
-	witness, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField())
-	require.NoError(t, err)
-
-	err = migrationCS.IsSolved(witness)
-	require.Error(t, err,
-		"CRITICAL: MigrationCircuit accepted a witness with wrong Value — "+
-			"both Pedersen AND MiMC constraints should fail")
-}
-
-func TestMigrationCircuitInvalid_WrongRandomnessNew(t *testing.T) {
-	setupMigration(t)
-
-	inp := newRandomMigrationInputs(t)
-	assignment := buildMigrationAssignment(t, inp)
-
-	var wrongR fr.Element
-	_, err := wrongR.SetRandom()
-	require.NoError(t, err)
-	assignment.RandomnessNew = wrongR
-
-	witness, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField())
-	require.NoError(t, err)
-
-	err = migrationCS.IsSolved(witness)
-	require.Error(t, err, "MigrationCircuit must reject a witness with wrong MiMC randomness")
-}
-
-func TestMigrationCircuitInvalid_WrongRandomnessPed(t *testing.T) {
-	setupMigration(t)
-
-	inp := newRandomMigrationInputs(t)
-	assignment := buildMigrationAssignment(t, inp)
-
-	var wrongBF fr.Element
-	_, err := wrongBF.SetRandom()
-	require.NoError(t, err)
-	assignment.RandomnessPed = wrongBF
-
-	witness, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField())
-	require.NoError(t, err)
-
-	err = migrationCS.IsSolved(witness)
-	require.Error(t, err, "MigrationCircuit must reject a witness with wrong Pedersen blinding factor")
-}
-
-func TestMigrationCircuitInvalid_WrongTokenTypePed(t *testing.T) {
-	setupMigration(t)
-
-	inp := newRandomMigrationInputs(t)
-	assignment := buildMigrationAssignment(t, inp)
-
-	// Use a different token type hash — breaks Pedersen opening.
-	digest := sha256.Sum256([]byte("EUR"))
-	digestBig := new(big.Int).SetBytes(digest[:])
-	digestBig.Mod(digestBig, fr.Modulus())
-	var wrongTypePed fr.Element
-	wrongTypePed.SetBigInt(digestBig)
-	assignment.TokenTypePed = wrongTypePed
-
-	witness, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField())
-	require.NoError(t, err)
-
-	err = migrationCS.IsSolved(witness)
-	require.Error(t, err,
-		"MigrationCircuit must reject a witness where TokenTypePed doesn't match the Pedersen commitment")
-}
-
-func TestMigrationCircuitInvalid_WrongRCV(t *testing.T) {
-	setupMigration(t)
-
-	inp := newRandomMigrationInputs(t)
-	assignment := buildMigrationAssignment(t, inp)
-
-	var wrongRCV fr.Element
-	_, err := wrongRCV.SetRandom()
-	require.NoError(t, err)
-	assignment.RCV = wrongRCV
-
-	witness, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField())
-	require.NoError(t, err)
-
-	err = migrationCS.IsSolved(witness)
-	require.Error(t, err,
-		"MigrationCircuit must reject a witness where RCV doesn't produce the public value commitment")
-}
-
-func TestMigrationCircuitInvalid_WrongValueCommit(t *testing.T) {
-	setupMigration(t)
-
-	inp := newRandomMigrationInputs(t)
-	assignment := buildMigrationAssignment(t, inp)
-
-	// Replace public value commitment with a random one.
-	var fakeRCV fr.Element
-	_, err := fakeRCV.SetRandom()
-	require.NoError(t, err)
-	fakeCV, err := edwards.Jubjub().ValueCommit(inp.value+50, fakeRCV)
-	require.NoError(t, err)
-	assignment.ValueCommitOutX = fakeCV.X
-	assignment.ValueCommitOutY = fakeCV.Y
-
-	witness, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField())
-	require.NoError(t, err)
-
-	err = migrationCS.IsSolved(witness)
-	require.Error(t, err, "MigrationCircuit must reject a witness with wrong ValueCommit")
-}
-
-func TestMigrationCircuitInvalid_ZeroValue(t *testing.T) {
-	setupMigration(t)
-
-	// Build an internally-consistent witness for value=0.
-	inp := newRandomMigrationInputs(t)
-	inp.value = 0
-
-	assignment := buildMigrationAssignment(t, inp)
-
-	witness, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField())
-	require.NoError(t, err)
-
-	err = migrationCS.IsSolved(witness)
-	require.Error(t, err,
-		"CRITICAL: MigrationCircuit accepted Value=0 — zero-value tokens should be impossible")
-}
-
-func TestMigrationCircuitInvalid_OverflowValue(t *testing.T) {
-	setupMigration(t)
-
-	inp := newRandomMigrationInputs(t)
-
-	// Build assignment with value = 2^MaxBits (exceeds range).
-	var overflowValue fr.Element
-	var b big.Int
-	b.SetBit(&b, params.DefaultMaxBits, 1)
-	overflowValue.SetBigInt(&b)
-
-	// Compute Pedersen commitment with the overflow value.
-	pedCommit := computePedersenCommitment(t, migrationInputs{
-		value:         0, // won't be used — overridden below
-		tokenType:     inp.tokenType,
-		tokenTypePed:  inp.tokenTypePed,
-		randomnessPed: inp.randomnessPed,
+	t.Run("zero", func(t *testing.T) {
+		require.Error(t, isSolved(t, assignment(t, newMigrationInputs(t, "USD", 0), "USD")))
 	})
-
-	// Compute MiMC commitment with the overflow value.
-	cm, err := mimc.Hash(overflowValue, inp.tokenTypeFr, inp.randomnessNew)
-	require.NoError(t, err)
-
-	// Compute type commitment
-	tc, err := mimc.Hash(inp.tokenTypeFr, inp.typeRandomness)
-	require.NoError(t, err)
-
-	pedXBig := pedCommit.X.BigInt(new(big.Int))
-	pedYBig := pedCommit.Y.BigInt(new(big.Int))
-
-	// Use random value commitment, range check should fire first.
-	var fakeCVX, fakeCVY fr.Element
-	_, err = fakeCVX.SetRandom()
-	require.NoError(t, err)
-	_, err = fakeCVY.SetRandom()
-	require.NoError(t, err)
-
-	assignment := &circuit.MigrationCircuit{
-		CommitmentPedersenX: emulated.ValueOf[emulated.BLS12381Fp](pedXBig),
-		CommitmentPedersenY: emulated.ValueOf[emulated.BLS12381Fp](pedYBig),
-		CommitmentMiMC:      cm,
-		ValueCommitOutX:     fakeCVX,
-		ValueCommitOutY:     fakeCVY,
-		TypeCommitment:      tc,
-		Value:               overflowValue,
-		TokenType:           inp.tokenTypeFr,
-		TokenTypePed:        inp.tokenTypePed,
-		RandomnessPed:       inp.randomnessPed,
-		RandomnessNew:       inp.randomnessNew,
-		RCV:                 inp.rcv,
-		TypeRandomness:      inp.typeRandomness,
-		MaxBits:             params.DefaultMaxBits,
-		PedG0X:              testPedGens.G0X, PedG0Y: testPedGens.G0Y,
-		PedG1X: testPedGens.G1X, PedG1Y: testPedGens.G1Y,
-		PedG2X: testPedGens.G2X, PedG2Y: testPedGens.G2Y,
-	}
-
-	witness, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField())
-	require.NoError(t, err)
-
-	err = migrationCS.IsSolved(witness)
-	require.Error(t, err,
-		"MigrationCircuit must reject values >= 2^MaxBits, overflow attack possible if not")
-}
-
-func TestMigrationCircuitInvalid_WrongTypeRandomness(t *testing.T) {
-	setupMigration(t)
-
-	inp := newRandomMigrationInputs(t)
-	assignment := buildMigrationAssignment(t, inp)
-
-	var wrongTR fr.Element
-	_, err := wrongTR.SetRandom()
-	require.NoError(t, err)
-	assignment.TypeRandomness = wrongTR
-
-	witness, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField())
-	require.NoError(t, err)
-
-	err = migrationCS.IsSolved(witness)
-	require.Error(t, err,
-		"MigrationCircuit must reject a witness where TypeRandomness doesn't produce the public TypeCommitment")
+	t.Run("overflow", func(t *testing.T) {
+		inp := newMigrationInputs(t, "USD", 0)
+		inp.value = new(big.Int).Lsh(big.NewInt(1), migrationTestMaxBits)
+		require.Error(t, isSolved(t, assignment(t, inp, "USD")))
+	})
 }

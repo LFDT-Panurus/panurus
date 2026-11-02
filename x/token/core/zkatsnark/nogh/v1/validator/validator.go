@@ -34,18 +34,28 @@ type Context = common.Context[*pp.PublicParams, *snarktoken.Input, *snarktoken.T
 type CommonValidator = common.Validator[*pp.PublicParams, *snarktoken.Input, *snarktoken.TransferAction, *snarktoken.IssueAction, driver.Deserializer]
 
 // Validator wraps the common.Validator infrastructure with zkatsnark-specific
-// cryptographic checks and a standalone ValidateMigration method.
+// cryptographic checks.
 type Validator struct {
 	*CommonValidator
 
 	pp       *pp.PublicParams
 	prepared *prepared.Verifier
+	// legacy are the ZKAT-DLOG public parameters whose outputs can be
+	// upgraded, nil when ZKAT-DLOG upgrades are not supported.
+	legacy *pp.LegacyDLog
 }
 
 // NewValidator creates a new Validator over already-prepared public
 // parameters for a verifying role.
 func NewValidator(p *prepared.Verifier, deserializer driver.Deserializer, limits driver.ResourceLimits) (*Validator, error) {
 	v := &Validator{pp: p.PP(), prepared: p}
+	legacyDLog, err := p.PP().LegacyDLog()
+	switch {
+	case err == nil:
+		v.legacy = legacyDLog
+	case !errors.Is(err, pp.ErrNoLegacyDLog):
+		return nil, errors.WithMessagef(err, "validator: invalid ZKAT-DLOG public parameters")
+	}
 
 	transferValidators := []ValidateTransferFunc{
 		TransferSignatureValidate,
@@ -120,70 +130,14 @@ func (v *Validator) ValidateTransfer(a *snarktoken.TransferAction) error {
 
 // ValidateIssue checks the cryptographic validity of an IssueAction and, for
 // an upgrade issuance, its binding to the redeemed inputs (type, type
-// commitment opening and total value; see IssueUpgradeInputsValidate). It
-// checks no signature.
+// commitment opening and, for fabtoken inputs, total value; see
+// IssueUpgradeInputsValidate). It checks no signature.
 func (v *Validator) ValidateIssue(a *snarktoken.IssueAction) error {
-	if err := validateIssueActionShape(a); err != nil {
-		return err
-	}
-
-	decodedOutputs, err := decodeAllOutputs(a.Outputs, v.pp.Curve)
-	if err != nil {
-		return err
-	}
-
-	actionTC, err := decodeScalar(v.pp.Curve, a.TypeCommitment)
-	if err != nil {
-		return errors.Wrapf(err, "validator: TypeCommitment")
-	}
-
-	if err := checkTypeCommitmentHomogeneity(actionTC, nil, decodedOutputs); err != nil {
-		return err
-	}
-
-	if err := verifyAllProofs(v.prepared, nil, nil, a.Outputs, decodedOutputs); err != nil {
-		return err
-	}
-
-	totalValue, err := parseTotalValue(v.pp.Curve, a.TotalValue)
-	if err != nil {
-		return err
-	}
-
-	if err := verifyBindingSignature(
-		v.pp.Curve,
-		snarktoken.ActionTypeIssue, a.TypeCommitment,
-		nil, decodedOutputs,
-		a.BindingSignature, totalValue,
-	); err != nil {
+	if err := v.verifyIssueCrypto(a); err != nil {
 		return err
 	}
 
 	// an upgrade issuance must also be bound to the tokens it redeems, as in
 	// the ledger pipeline (IssueUpgradeInputsValidate)
 	return v.validateUpgradeInputs(a)
-}
-
-// ValidateMigration checks the cryptographic validity of a MigrationAction.
-// Migration is zkatsnark-specific and has no slot in the common.Validator
-// framework, so it is a standalone method on the wrapper struct.
-//
-// It only verifies the migration proof: the action is not bound to a ledger
-// token, to its owner's consent or to its recipient, so a successful check is
-// not an authorization to mint.
-func (v *Validator) ValidateMigration(a *snarktoken.MigrationAction) error {
-	if v.prepared.VKMigration() == nil {
-		return ErrMigrationNotConfigured
-	}
-
-	if err := validateMigrationActionShape(a); err != nil {
-		return err
-	}
-
-	decoded, err := decodeMigrationAction(a, v.pp.Curve)
-	if err != nil {
-		return err
-	}
-
-	return verifyMigrationProof(v.prepared, a.MigrationProof, decoded)
 }
