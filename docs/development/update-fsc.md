@@ -48,13 +48,24 @@ repo, and `update-dep`'s matching (`go list -m all | grep "^$(DEP) "`) only catc
 modules whose require line starts with the exact `DEP` string. `go get module@<sha>`
 resolves the commit hash into the correct pseudo-version automatically.
 
-Leave the `replace`-pinned FSC sub-modules alone:
+Two FSC sub-modules are separate Go modules, pinned by `replace` in
+`token/services/storage/db/kvs/hashicorp` and `cmd/tokengen` and required indirectly elsewhere:
 
 - `github.com/hyperledger-labs/fabric-smart-client/platform/fabric/services/state/cc/query`
 - `github.com/hyperledger-labs/fabric-smart-client/platform/view/services/comm/host/libp2p`
 
-These are independently tagged releases (currently `v0.14.2`), not tracked to FSC
-`main`. Only touch them if a later step's build error specifically demands it.
+FSC tags them on the same commit as each release (`v0.27.0` is one commit for the root
+module and both sub-modules), and FSC core and its libp2p host can change together:
+since `v0.27.0`, core stops closing shared libp2p streams only when the host implements
+`SharedStreams()`, which older libp2p tags lack. So:
+
+- **Tagged release** (`VER=vX.Y.Z`): bump both sub-modules to the same tag. Edit the
+  `replace` lines in `hashicorp` and `tokengen` by hand, run
+  `go get <sub-module>@vX.Y.Z` in every other module that lists them, then `make tidy`.
+  Confirm with `grep -rn "cc/query\|host/libp2p" --include=go.mod .` that no old tag is
+  left.
+- **Pseudo-version off `main`**: keep them on the latest FSC tag that is not newer than
+  the target commit, unless a later step's build error demands otherwise.
 
 ### 3. Align pinned infra versions with FSC's Makefile
 
