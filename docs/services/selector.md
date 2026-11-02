@@ -82,7 +82,7 @@ equivalent is `selector.selectByID` (`token/services/selector/simple/selector.go
 3. **Locking a candidate.** The selector type-asserts its locker for batch support once, up
    front (`asBatchLocker`/`BatchTokenLocker`). Whichever path is taken, the loop grows a
    *window* of candidates whose amounts sum to at least the amount still outstanding (or until
-   the cache runs out, or until `maxBatchWindow = 256` candidates are collected — a cap needed
+   the cache runs out, or until `maxBatchWindow` (default `256`, configurable) candidates are collected — a cap needed
    because the Postgres claim statement binds `2n+5` parameters and the wire protocol refuses
    more than 65535), then claims it:
    - **Batch path (Postgres, every `lockStrategy`)**: one round trip claims the whole window via
@@ -112,8 +112,8 @@ equivalent is `selector.selectByID` (`token/services/selector/simple/selector.go
    tokens this call itself has locked, so comparing against the outstanding amount would count
    them twice and be vacuously true as soon as anything was selected):
    - **Balance insufficient** → `token.SelectorInsufficientFunds`, immediately.
-   - **Balance sufficient** → the cache is refetched (charging one unit of a hardcoded
-     `maxImmediateRetries = 5` budget; refetching is skipped for the very first fetch of a
+   - **Balance sufficient** → the cache is refetched (charging one unit of the
+     `maxImmediateRetries` budget, default `5`, configurable; refetching is skipped for the very first fetch of a
      `Select` call, which starts with nothing to refresh) and the loop resumes from step 2.
      Once the budget is spent, the call gives up with
      `token.SelectorSufficientButLockedFunds` instead of refetching again.
@@ -201,8 +201,8 @@ colliding (issue [#2395](https://github.com/LFDT-Panurus/panurus/issues/2395)).
    small request to the single smallest token. `nextCandidate` widens the randomization for
    that case: once the ascending scan reaches an *anchor* candidate that alone covers the
    amount outstanding, every later candidate is also sufficient, so it peeks ahead over up to
-   `sufficiencyWindow = 4` of them — stopping early at one whose amount exceeds
-   `maxSufficiencyRatio = 5` times the *anchor's* amount, to keep the choice close to a
+   `sufficiencyWindow` (default `4`, configurable) of them — stopping early at one whose amount exceeds
+   `maxSufficiencyRatio` (default `5`, configurable) times the *anchor's* amount, to keep the choice close to a
    smallest fit — and returns one chosen uniformly at random, buffering the rest (`pending`)
    so later calls still see them, in order, before anything newer. The magnitude cap is
    anchor-relative rather than outstanding-amount-relative on purpose: anchoring on the
@@ -436,7 +436,8 @@ absence truthfully for a backend that genuinely cannot batch, so the fallback ke
 **The window is capped.** A covering window grows until it covers the outstanding amount, which
 is unbounded in the *number* of tokens: a wallet of unit-value dust needs one input per unit.
 Since the Postgres claim binds `2n+5` parameters and the wire protocol refuses more than 65535,
-`maxBatchWindow` (256) bounds a single claim. This does not change what gets selected — the
+`maxBatchWindow` (default `256`, configurable — see [Configuration](#configuration)) bounds a
+single claim. This does not change what gets selected — the
 scan simply claims another window when one is not enough, exactly as it already does when the
 candidate cache runs out mid-window — but it keeps a large selection on the batch path instead
 of turning it into a store error that the retry budget then burns through.
@@ -615,6 +616,11 @@ token:
     rateLimit: 100                       # Requests per second per wallet, once enabled (default: 100)
     rateLimitBurst: 200                  # Burst capacity per wallet, once enabled (default: 2x rate)
     rateLimitMaxBuckets: 4096            # Live wallet buckets the limiter keeps in memory (default: 4096)
+    sufficiencyWindow: 4                 # sherdlock only: sufficiency-window lookahead size (default: 0 = sherdlock's own default of 4)
+    maxSufficiencyRatio: 5               # sherdlock only: sufficiency-window magnitude cap (default: 0 = sherdlock's own default of 5)
+    maxImmediateRetries: 5               # sherdlock only: immediate-retry budget per Select call (default: 0 = sherdlock's own default of 5)
+    maxBatchWindow: 256                  # sherdlock only: candidates per batch-lock claim (default: 0 = sherdlock's own default of 256)
+    rateLimitIdleTimeout: 5m             # Rate limiter idle-bucket eviction timeout (default: 0 = limiter's own default of 5m)
   storage:
     db:
       lockStrategy: skipLocked           # Postgres lock-acquisition strategy: insert | onConflict | skipLocked (default: insert)
@@ -642,11 +648,11 @@ It has no effect under SQLite or `simple`.
 | `rateLimit` (once enabled, unset) | `100` req/s per wallet | `ratelimit.DefaultRate` | yes |
 | `rateLimitBurst` (once enabled, unset) | `rate * 2`, i.e. `200` by default | `ratelimit.DefaultBurstFactor` | yes |
 | `rateLimitMaxBuckets` | `0` → `4096` live wallet buckets | `ratelimit.DefaultMaxBuckets` | yes |
-| — rate limiter idle timeout | `5m` | `ratelimit.DefaultIdleTimeout` | **no** — not exposed via `Config` |
-| — `sufficiencyWindow` | `4` | `sherdlock/selector.go` | **no** — hardcoded constant |
-| — `maxSufficiencyRatio` | `5` | `sherdlock/selector.go` | **no** — hardcoded constant |
-| — `maxImmediateRetries` | `5` | `sherdlock/selector.go` | **no** — hardcoded constant |
-| — `maxBatchWindow` | `256` | `sherdlock/selector.go` | **no** — hardcoded constant |
+| — rate limiter idle timeout | `5m` | `ratelimit.DefaultIdleTimeout` | yes (`rateLimitIdleTimeout`) |
+| — `sufficiencyWindow` | `4` | `sherdlock/selector.go` | yes (config key of the same name) |
+| — `maxSufficiencyRatio` | `5` | `sherdlock/selector.go` | yes (config key of the same name) |
+| — `maxImmediateRetries` | `5` | `sherdlock/selector.go` | yes (config key of the same name) |
+| — `maxBatchWindow` | `256` | `sherdlock/selector.go` | yes (config key of the same name) |
 
 The last five rows are not reachable from `core.yaml` at all. They materially shape contention
 behavior — the sufficiency window spreads selection across same-sized tokens, the batch window
@@ -689,9 +695,8 @@ YAML key for.
   wallet from a runaway retry storm once you've observed one, rather than as a first lever when
   tuning for throughput. No workload in `BenchmarkSelectorPostgres` currently exercises rate
   limiting — it is an orthogonal contention knob the existing workloads are blind to.
-- **The hardcoded sufficiency-window and batch-window constants are not tuning knobs.** If a
-  deployment's amount distribution or contention pattern genuinely doesn't fit them, that is a
-  code change against issue #2017, not a configuration adjustment.
+- **The sufficiency-window and batch-window settings are configurable.** See
+  [Selection Tuning](#selection-tuning-sherdlock-only); defaults suit most deployments.
 
 ### Driver
 
@@ -718,6 +723,28 @@ The three keys below tune the cache that `mixed` and `eager` use, and are ignore
 - **fetcherCacheMaxQueries**: Maximum number of queries before forcing a cache refresh. Set to 0 to use the fetcher's default limit.
 
 **Example**: With `fetcherCacheSize: 1000`, `fetcherCacheRefresh: 30s`, and `fetcherCacheMaxQueries: 100`, the cache stores up to 1000 tokens across all cached wallet+currency entries, refreshes data every 30 seconds, and forces a refresh after 100 queries.
+
+### Selection Tuning (sherdlock only)
+
+These four keys tune the contention-spreading mechanism described in [Ordering and the sufficiency
+window](#ordering-and-the-sufficiency-window) above. They have no effect under `simple`. Unset
+(or `0`, or negative) selects sherdlock's own default, listed below — these are
+configurability knobs, not a change to the selection algorithm itself.
+
+- **sufficiencyWindow** (default `4`): how many ascending-by-amount, individually-sufficient
+  candidates `nextCandidate` considers together before picking one uniformly at random. `1`
+  restores the old, fully deterministic smallest-fit behaviour.
+- **maxSufficiencyRatio** (default `5`): additionally bounds the window by magnitude — a
+  candidate only joins it if its amount is at most this many times the anchor's amount.
+- **maxImmediateRetries** (default `5`): how many times one `Select` call refetches its
+  candidate cache before giving up with `token.SelectorSufficientButLockedFunds`. Raising
+  this does **not** raise the token fetcher's own cache-refresh budget — raise
+  `fetcherCacheMaxQueries` too if you raise this.
+- **maxBatchWindow** (default `256`): caps how many candidates a single batch-lock claim may
+  cover (see [Lock-acquisition strategies](#lock-acquisition-strategies-postgres-sherdlock-only)).
+  A configured value above an internal limit (comfortably inside the Postgres bind-parameter
+  bound) is clamped down to it with a warning, rather than left to reach the store as an
+  oversized claim.
 
 ## Benchmarking against Postgres
 

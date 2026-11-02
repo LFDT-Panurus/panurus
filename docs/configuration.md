@@ -65,6 +65,31 @@ token:
     # reached, idle buckets are pruned first and, if that is not enough, the least recently used
     # ones are dropped. If not specified or set to 0, defaults to 4096.
     rateLimitMaxBuckets: 4096
+    # rateLimitIdleTimeout is how long an idle per-wallet bucket is kept before it becomes
+    # eligible for eviction. It has no effect unless rate limiting is enabled (above), and the
+    # limiter may raise a configured value further, to the time a bucket needs to refill from
+    # empty to full: evicting an idle bucket hands back a full one, so a shorter timeout would
+    # let a wallet skip part of the wait it owes. If not specified or set to 0, defaults to 5m.
+    rateLimitIdleTimeout: 5m
+    # The four keys below tune sherdlock's contention-spreading mechanism (sherdlock driver
+    # only; ignored by simple). See docs/services/selector.md#selection-tuning-sherdlock-only.
+    # sufficiencyWindow bounds how many ascending-by-amount, individually-sufficient candidates
+    # are considered together before one is picked at random, instead of always the smallest.
+    # If not specified or set to 0, defaults to 4.
+    sufficiencyWindow: 4
+    # maxSufficiencyRatio additionally bounds that window by magnitude: a candidate only joins
+    # it if its amount is at most this many times the smallest sufficient candidate's amount.
+    # If not specified or set to 0, defaults to 5.
+    maxSufficiencyRatio: 5
+    # maxImmediateRetries bounds how many times one Select call refetches its candidate cache
+    # before giving up with token.SelectorSufficientButLockedFunds. Raising this does NOT raise
+    # the token fetcher's own refresh budget (fetcherCacheMaxQueries above) - raise both
+    # together if you raise either. If not specified or set to 0, defaults to 5.
+    maxImmediateRetries: 5
+    # maxBatchWindow caps how many candidates a single batch-lock claim may cover. A configured
+    # value above an internal limit is clamped down to it with a warning, rather than reaching
+    # the store as an oversized claim. If not specified or set to 0, defaults to 256.
+    maxBatchWindow: 256
 
   # When we are interested in knowing when a transaction reaches finality, we subscribe to the Finality Listener Manager for the finality event of that transaction.
   # This configuration specifies the way the manager is instantiated (i.e., how it gets notified about the finality events, how often it checks).
@@ -615,11 +640,23 @@ Default values:
 - rateLimit: 100 requests/s per wallet, when rate limiting is enabled
 - rateLimitBurst: 2 × rateLimit, so 200 requests, when rate limiting is enabled
 - rateLimitMaxBuckets: 4096
+- rateLimitIdleTimeout: 5m, when rate limiting is enabled (may be raised further to the
+  bucket refill duration)
+- sufficiencyWindow: 4 (sherdlock only)
+- maxSufficiencyRatio: 5 (sherdlock only)
+- maxImmediateRetries: 5 (sherdlock only; does not change fetcherCacheMaxQueries's own
+  default of 5 — raise both together if you raise either)
+- maxBatchWindow: 256 (sherdlock only)
 
 Setting a positive `rateLimit` is enough to enable the limiter; `rateLimitEnabled: true` alone
 enables it with the defaults above. See
 [docs/security/selector_resource_limits.md](security/selector_resource_limits.md) for what is
 metered and how to plug in your own limiter instead.
+
+The four sherdlock tuning keys (`sufficiencyWindow`, `maxSufficiencyRatio`,
+`maxImmediateRetries`, `maxBatchWindow`) tune the contention-spreading mechanism described in
+[docs/services/selector.md#selection-tuning-sherdlock-only](services/selector.md#selection-tuning-sherdlock-only);
+they have no effect under the `simple` driver.
 
 ---
 
