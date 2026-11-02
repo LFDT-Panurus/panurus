@@ -189,9 +189,12 @@ func TestResponderResolvesTheTMSPerRequest(t *testing.T) {
 
 	auth, err := NewAuthorizer([]view.Identity{view.Identity(testCaller)})
 	require.NoError(t, err)
+	cfg := testTMSConfig(t)
+	cfg.Authorizer = auth
+	require.NoError(t, f.Register(testTMSID(), cfg))
 
 	calls := 0
-	responder, err := f.NewResponder(auth, newSigner(t, 1), func(token2.TMSID) (*token2.ManagementService, error) {
+	responder, err := f.NewResponder(newSigner(t, 1), func(token2.TMSID) (*token2.ManagementService, error) {
 		calls++
 
 		return nil, assert.AnError
@@ -212,10 +215,7 @@ func TestNewResponderForNeedsAKey(t *testing.T) {
 	f, err := NewServiceFactory(testFactoryConfig(t))
 	require.NoError(t, err)
 
-	auth, err := NewAuthorizer([]view.Identity{view.Identity("alice")})
-	require.NoError(t, err)
-
-	_, err = f.NewResponder(auth, nil, nil)
+	_, err = f.NewResponder(nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "signing key")
 }
