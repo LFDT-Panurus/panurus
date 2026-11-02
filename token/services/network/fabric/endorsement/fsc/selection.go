@@ -38,14 +38,44 @@ import (
 // malformed policy input rather than treated as vacuously satisfied: a policy satisfiable
 // by zero endorsers would let a transaction be endorsed by nobody, so it must fail loudly.
 func SelectEndorsersForMSPSets(configured []view.Identity, mspOf func(view.Identity) (string, error), candidates [][]string) ([]view.Identity, error) {
+	if err := validateCandidateMSPSets(candidates); err != nil {
+		return nil, err
+	}
+	byMSP, skipped := groupEndorsersByMSP(configured, mspOf)
+
+	var setFailures []error
+	for _, idx := range rand.Perm(len(candidates)) {
+		selected, failedMSP, ok := selectDistinctForMSPSet(byMSP, candidates[idx])
+		if ok {
+			return selected, nil
+		}
+		setFailures = append(setFailures, mspSetFailure(byMSP, candidates[idx], failedMSP))
+	}
+
+	return nil, errors.Join(
+		errors.Errorf("no configured endorser covers any of the [%d] policy-satisfying MSP set(s) with a distinct endorser per required signer", len(candidates)),
+		errors.Join(setFailures...),
+		errors.Join(skipped...),
+		errors.Errorf("failed to resolve MSP"),
+	)
+}
+
+// validateCandidateMSPSets rejects an empty candidate list or an empty candidate set.
+func validateCandidateMSPSets(candidates [][]string) error {
 	if len(candidates) == 0 {
-		return nil, errors.Errorf("no candidate MSP set to satisfy the namespace endorsement policy")
+		return errors.Errorf("no candidate MSP set to satisfy the namespace endorsement policy")
 	}
 	for _, candidate := range candidates {
 		if len(candidate) == 0 {
-			return nil, errors.Errorf("malformed endorsement policy: a candidate MSP set requires no endorser, which would be satisfied by an empty selection")
+			return errors.Errorf("malformed endorsement policy: a candidate MSP set requires no endorser, which would be satisfied by an empty selection")
 		}
 	}
+
+	return nil
+}
+
+// groupEndorsersByMSP buckets distinct endorsers by MSP ID, returning the errors of the ones skipped.
+func groupEndorsersByMSP(configured []view.Identity, mspOf func(view.Identity) (string, error)) (map[string][]view.Identity, []error) {
 	var skipped []error
 	byMSP := make(map[string][]view.Identity)
 	seen := make(map[string]struct{}, len(configured))
@@ -67,28 +97,20 @@ func SelectEndorsersForMSPSets(configured []view.Identity, mspOf func(view.Ident
 		byMSP[mspID] = append(byMSP[mspID], id)
 	}
 
-	var setFailures []error
-	for _, idx := range rand.Perm(len(candidates)) {
-		selected, failedMSP, ok := selectDistinctForMSPSet(byMSP, candidates[idx])
-		if ok {
-			return selected, nil
-		}
-		required := 0
-		for _, id := range candidates[idx] {
-			if id == failedMSP {
-				required++
-			}
-		}
-		available := len(byMSP[failedMSP])
-		setFailures = append(setFailures, errors.Errorf("MSP [%s] requires %d distinct endorser(s) but only %d configured", failedMSP, required, available))
-	}
+	return byMSP, skipped
+}
 
-	return nil, errors.Join(
-		errors.Errorf("no configured endorser covers any of the [%d] policy-satisfying MSP set(s) with a distinct endorser per required signer", len(candidates)),
-		errors.Join(setFailures...),
-		errors.Join(skipped...),
-		errors.Errorf("failed to resolve MSP"),
-	)
+// mspSetFailure reports that candidate needs more distinct failedMSP endorsers than are configured.
+func mspSetFailure(byMSP map[string][]view.Identity, candidate []string, failedMSP string) error {
+	required := 0
+	for _, id := range candidate {
+		if id == failedMSP {
+			required++
+		}
+	}
+	available := len(byMSP[failedMSP])
+
+	return errors.Errorf("MSP [%s] requires %d distinct endorser(s) but only %d configured", failedMSP, required, available)
 }
 
 // selectDistinctForMSPSet fills one slot per entry of requiredMSPIDs with a random

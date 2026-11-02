@@ -139,7 +139,7 @@ func loadTLSProperties(config serverConfig) shim.TLSProperties {
 		tlsKeyRaw, err := os.ReadFile(config.TLSKey)
 		assertNoError(err, "cannot read tls key at [%s]", config.TLSKey)
 		tlsCertRaw, err := os.ReadFile(config.TLSCert)
-		assertNoError(err, "cannot read tls cert at [%s]", config.TLSKey)
+		assertNoError(err, "cannot read tls cert at [%s]", config.TLSCert)
 		tlsCACertsRaw, err := os.ReadFile(config.TLSCACertsFilePath)
 		assertNoError(err, "cannot read tls ca certs at [%s]", config.TLSCACertsFilePath)
 

@@ -85,6 +85,9 @@ func (q *DeliveryScanQueryByID) queryByID(ctx context.Context, keys []driver.PKe
 	for ns, keys := range keysByNS {
 		found, notFound, ok := q.queryNamespace(ctx, ns, keys, keySet)
 		if !ok {
+			// A failure concerns this namespace only. Leave its keys in keysByNS and keySet and
+			// fall back to the block scan, rather than returning and dropping every other namespace
+			// in the batch along with it (see #1990, and #1426 for the same fix on the finality path).
 			startDelivery = true
 
 			continue
@@ -112,7 +115,7 @@ func groupKeysByNamespace(evicted map[driver.PKey][]events.ListenerEntry[KeyInfo
 		ns := slices2.GetAny(v).Namespace()
 		_, ok := keysByNS[ns]
 		if !ok {
-			keysByNS[ns] = []string{}
+			keysByNS[ns] = []driver.PKey{}
 		}
 		keysByNS[ns] = append(keysByNS[ns], k)
 	}
@@ -124,10 +127,8 @@ func groupKeysByNamespace(evicted map[driver.PKey][]events.ListenerEntry[KeyInfo
 // Keys that have a value are returned in found and removed from keySet; keys that have none are
 // returned in notFound. ok is false when the query as a whole failed, in which case the caller
 // falls back to the block scan for all of this namespace's keys.
-func (q *DeliveryScanQueryByID) queryNamespace(ctx context.Context, ns driver.Namespace, keys []driver.PKey, keySet collections.Set[driver.PKey]) (found []KeyInfo, notFound []string, ok bool) {
-	// A failure here concerns this namespace only. Leave its keys in keysByNS and keySet and
-	// fall back to the block scan, rather than returning and dropping every other namespace
-	// in the batch along with it (see #1990, and #1426 for the same fix on the finality path).
+func (q *DeliveryScanQueryByID) queryNamespace(ctx context.Context, ns driver.Namespace, keys []driver.PKey, keySet collections.Set[driver.PKey]) (found []KeyInfo, notFound []driver.PKey, ok bool) {
+	// A failure here only affects this namespace.
 	arg, err := json.Marshal(keys)
 	if err != nil {
 		logger.Errorf("failed marshalling args for query by ids [%v]: [%s], falling back to block scan", keys, err)
