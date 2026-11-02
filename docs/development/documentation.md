@@ -47,6 +47,19 @@ mkdocs build --strict
 > [!IMPORTANT]
 > The `--strict` flag ensures that the build will fail if there are any warnings (such as orphaned files or broken internal links). Always verify your build with `make docs-build` before committing changes!
 
+### 4. Link Checks in CI
+The `Check Markdown links` workflow (`.github/workflows/md_links.yml`) runs three checks:
+
+- **Internal links and anchors** (`lychee --offline --include-fragments`): fails on any broken relative link or `#anchor` in `docs/` and the root `*.md` files. Run it locally with:
+  ```bash
+  lychee --offline --include-fragments --no-progress 'docs/**/*.md' '*.md'
+  ```
+- **Changed lines** (Linkspector): reports broken external links on lines touched by a pull request.
+- **Weekly full scan** (Linkspector, also runnable via *workflow_dispatch*): checks every link in the repository, so external links that rot on untouched lines are still found.
+
+> [!NOTE]
+> Anchors follow GitHub's heading slugs (e.g. `### 3.  Finality Tracking` becomes `#3--finality-tracking`), which differ from the slugs MkDocs generates.
+
 ---
 
 ## 🚀 GitHub Pages Deployment Setup

@@ -5,18 +5,41 @@ on:
     branches: [ main, feature/zkat-snark-driver ]
   pull_request:
     branches: [ main, feature/zkat-snark-driver ]
+  # Weekly full scan: catches external links that rot (dead hosts, moved files)
+  # on lines that no PR touches.
+  schedule:
+    - cron: '17 5 * * 1'
+  workflow_dispatch:
 
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
-  check-links:
-    name: runner / linkspector
+  # Deterministic, network-free check of relative links and #anchors.
+  # Catches wrong heading anchors and moved/renamed files in the repo itself.
+  check-internal-links:
+    name: lychee / internal links and anchors
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      
+
+      - name: Run lychee (offline)
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
+        with:
+          args: --offline --include-fragments --no-progress 'docs/**/*.md' '*.md'
+          fail: true
+
+  # Reports broken links on lines changed by the PR (filter_mode defaults to "added").
+  check-links:
+    name: runner / linkspector
+    if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Run linkspector
         uses: umbrelladocs/action-linkspector@568ec8d29fa92b31fd9ea5381e155c51e922af83 # v1.5.5
         env:
@@ -24,4 +47,25 @@ jobs:
         with:
           github_token: ${{ secrets.github_token }}
           reporter: github-pr-review
+          fail_on_error: true
+
+  # Scheduled / manual: scan every link in the repo, not just changed lines.
+  check-links-full:
+    name: runner / linkspector (full scan)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Run linkspector
+        uses: umbrelladocs/action-linkspector@568ec8d29fa92b31fd9ea5381e155c51e922af83 # v1.5.5
+        env:
+          PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
+        with:
+          github_token: ${{ secrets.github_token }}
+          reporter: github-check
+          filter_mode: nofilter
           fail_on_error: true
