@@ -661,6 +661,12 @@ func TestNewRetryRunnerWithJitter_NegativeJitterFactor(t *testing.T) {
 		"total elapsed time should be at least the sum of the (jitter-free) backoff delays")
 }
 
+// jitterTestAttempts keeps the jitter tests that measure real sleeps short: 5 attempts sleep
+// 100ms..800ms (about 1.5s in total), long enough that each interval is well above scheduling
+// noise. Growth up to a cap is covered by TestNewRetryRunnerWithJitter_CustomMaxDelay, and the
+// jitter band itself by TestNextDelay_JitterStaysWithinBand.
+const jitterTestAttempts = 5
+
 // TestNewRetryRunnerWithJitter_ExcessiveJitterFactor verifies that jitter
 // factor > 1.0 is clamped to 1.0.
 func TestNewRetryRunnerWithJitter_ExcessiveJitterFactor(t *testing.T) {
@@ -668,7 +674,7 @@ func TestNewRetryRunnerWithJitter_ExcessiveJitterFactor(t *testing.T) {
 
 	runner := utils.NewRetryRunnerWithJitter(
 		testLogger(),
-		10,
+		jitterTestAttempts,
 		100*time.Millisecond,
 		10*time.Second,
 		2.0,
@@ -701,75 +707,6 @@ func TestNewRetryRunnerWithJitter_ExcessiveJitterFactor(t *testing.T) {
 		assert.LessOrEqual(t, d, maxDelay,
 			"delay %d should be <= %v with clamped jitter", i, maxDelay)
 	}
-}
-
-// TestNewRetryRunnerWithJitter_ZeroMaxDelay verifies that zero maxDelay
-// defaults to 30 seconds.
-func TestNewRetryRunnerWithJitter_ZeroMaxDelay(t *testing.T) {
-	t.Parallel()
-
-	const (
-		maxTimes     = 15
-		initialDelay = 10 * time.Millisecond
-		multiplier   = 2.0
-	)
-
-	runner := utils.NewRetryRunnerWithJitter(
-		testLogger(),
-		maxTimes,
-		initialDelay,
-		0, // should default to 30s
-		multiplier,
-		0.0,
-	)
-
-	start := time.Now()
-
-	_ = runner.RunWithContext(t.Context(), func() error {
-		return errors.New("always fail")
-	})
-
-	elapsed := time.Since(start)
-
-	// A zero maxDelay defaults to a 30s cap. With no jitter the delays are
-	// deterministic, so the total elapsed time is bracketed by the sum of the
-	// capped delays. The lower bound alone would also pass for a larger cap, so
-	// the upper bound is what pins the default to exactly 30s: a 15s or a 60s cap
-	// would fall outside this window.
-	assertElapsedMatchesCappedBackoff(t, elapsed, initialDelay, defaultMaxDelay, multiplier, maxTimes)
-}
-
-// TestNewRetryRunnerWithJitter_NegativeMaxDelay verifies that negative maxDelay
-// defaults to 30 seconds.
-func TestNewRetryRunnerWithJitter_NegativeMaxDelay(t *testing.T) {
-	t.Parallel()
-
-	const (
-		maxTimes     = 15
-		initialDelay = 10 * time.Millisecond
-		multiplier   = 2.0
-	)
-
-	runner := utils.NewRetryRunnerWithJitter(
-		testLogger(),
-		maxTimes,
-		initialDelay,
-		-10*time.Second, // invalid, should default to 30s
-		multiplier,
-		0.0,
-	)
-
-	start := time.Now()
-
-	_ = runner.RunWithContext(t.Context(), func() error {
-		return errors.New("always fail")
-	})
-
-	elapsed := time.Since(start)
-
-	// A negative maxDelay defaults to the same 30s cap, so the deterministic
-	// (jitter-free) total elapsed time must match the capped backoff sum.
-	assertElapsedMatchesCappedBackoff(t, elapsed, initialDelay, defaultMaxDelay, multiplier, maxTimes)
 }
 
 // TestNewRetryRunnerWithJitter_CustomBackoffMultiplier verifies that custom backoff
@@ -816,7 +753,7 @@ func TestNewRetryRunnerWithJitter_JitterBehavior(t *testing.T) {
 	// Use jitterFactor of 0.5 (50% jitter range)
 	runner := utils.NewRetryRunnerWithJitter(
 		testLogger(),
-		10,
+		jitterTestAttempts,
 		100*time.Millisecond,
 		10*time.Second,
 		2.0,
@@ -838,7 +775,7 @@ func TestNewRetryRunnerWithJitter_JitterBehavior(t *testing.T) {
 	delays = delays[1:]
 
 	// With jitterFactor=0.5, delays should be within ±25% of base delay
-	// Base delays: 100ms, 200ms, 400ms, 800ms, 1600ms, 3200ms, 6400ms, 10s (capped)
+	// Base delays: 100ms, 200ms, 400ms, 800ms
 	// For each delay, verify it's within reasonable bounds
 	for i, d := range delays {
 		// Calculate expected base delay (without jitter)
@@ -934,7 +871,7 @@ func TestNewRetryRunnerWithJitter_MaxJitter(t *testing.T) {
 
 	runner := utils.NewRetryRunnerWithJitter(
 		testLogger(),
-		10,
+		jitterTestAttempts,
 		100*time.Millisecond,
 		10*time.Second,
 		2.0,
@@ -956,7 +893,7 @@ func TestNewRetryRunnerWithJitter_MaxJitter(t *testing.T) {
 	delays = delays[1:]
 
 	// With jitterFactor=1.0, delays can vary by ±50% of base
-	// Base delays: 100ms, 200ms, 400ms, 800ms, 1600ms, 3200ms, 6400ms, 10s (capped)
+	// Base delays: 100ms, 200ms, 400ms, 800ms
 	for i, d := range delays {
 		baseDelay := min(100*time.Millisecond*time.Duration(1<<i), 10*time.Second)
 

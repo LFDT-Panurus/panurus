@@ -99,6 +99,15 @@ unit-tests:
 # the per-package durations under -race on CI: the Postgres-backed selector and storage
 # packages, the zkatdlog crypto packages, and everything else take a comparable time.
 UNIT_RACE_PKGS_CMD = go list ./... | grep -v '/integration/' | grep -v 'regression'
+
+# race_shard runs the race tests of the root-module packages that `grep $(1)` keeps from
+# UNIT_RACE_PKGS_CMD. It fails if the filter keeps none: an empty list would make go test fall
+# back to the current directory instead of testing nothing.
+define race_shard
+	@pkgs="$$($(UNIT_RACE_PKGS_CMD) | grep $(1))"; \
+	if [ -z "$$pkgs" ]; then echo "$@: no packages match the shard filter" >&2; exit 1; fi; \
+	export GORACE=history_size=7; go test -race $(RACE_COVER_FLAGS) $$pkgs
+endef
 UNIT_RACE_DB_RE = /token/services/(selector|storage)(/|$$)
 UNIT_RACE_CORE_RE = /token/core/
 
@@ -122,18 +131,18 @@ unit-tests-race: unit-tests-race-db unit-tests-race-core unit-tests-race-rest
 .PHONY: unit-tests-race-db
 # run the selector and storage unit tests (most need Postgres or Vault) with race detection
 unit-tests-race-db:
-	@export GORACE=history_size=7; go test -race $(RACE_COVER_FLAGS) $$($(UNIT_RACE_PKGS_CMD) | grep -E '$(UNIT_RACE_DB_RE)')
+	$(call race_shard,-E '$(UNIT_RACE_DB_RE)')
 	cd token/services/storage/db/kvs/hashicorp/; go test -cover ./...
 
 .PHONY: unit-tests-race-core
 # run the token/core (driver and crypto) unit tests with race detection
 unit-tests-race-core:
-	@export GORACE=history_size=7; go test -race $(RACE_COVER_FLAGS) $$($(UNIT_RACE_PKGS_CMD) | grep -E '$(UNIT_RACE_CORE_RE)')
+	$(call race_shard,-E '$(UNIT_RACE_CORE_RE)')
 
 .PHONY: unit-tests-race-rest
 # run the remaining unit tests, the nwo harness tests and the evm module tests with race detection
 unit-tests-race-rest:
-	@export GORACE=history_size=7; go test -race $(RACE_COVER_FLAGS) $$($(UNIT_RACE_PKGS_CMD) | grep -vE '$(UNIT_RACE_DB_RE)|$(UNIT_RACE_CORE_RE)')
+	$(call race_shard,-vE '$(UNIT_RACE_DB_RE)|$(UNIT_RACE_CORE_RE)')
 	cd integration/nwo/; go test -cover ./...
 	@export GORACE=history_size=7; cd x/token/services/network/evm; go test -race $(EVM_RACE_COVER_FLAGS) ./...
 ifdef COVERAGE

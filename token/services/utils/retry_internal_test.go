@@ -56,6 +56,25 @@ func TestNextDelay_ConstantWhenBackoffDisabled(t *testing.T) {
 	}
 }
 
+// A zero or negative maxDelay falls back to the 30s default cap. Checking the cap directly
+// replaces walking 15 real attempts up to it, which cost about 131s per test.
+func TestNewRetryRunnerWithJitter_InvalidMaxDelayUsesDefault(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, 30*time.Second, defaultMaxDelay, "the documented default cap changed")
+
+	for _, maxDelay := range []time.Duration{0, -10 * time.Second} {
+		r := NewRetryRunnerWithJitter(internalTestLogger(), 15, 10*time.Millisecond, maxDelay, 2.0, 0.0)
+
+		assert.Equal(t, defaultMaxDelay, r.maxDelay, "maxDelay %s", maxDelay)
+		// 10ms doubling stays under the cap through attempt 11 and is capped from attempt 12 on.
+		assert.Equal(t, 10*time.Millisecond<<11, r.nextDelay(11), "maxDelay %s", maxDelay)
+		for _, attempt := range []int{12, 14, 100} {
+			assert.Equal(t, defaultMaxDelay, r.nextDelay(attempt), "maxDelay %s, attempt %d", maxDelay, attempt)
+		}
+	}
+}
+
 // A custom cap is honoured, and growth stops there rather than at the default.
 func TestNextDelay_RespectsCustomMaxDelay(t *testing.T) {
 	t.Parallel()

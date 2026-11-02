@@ -28,7 +28,7 @@ These targets run various test suites.
 | `make unit-tests-regression` | Runs regression tests. |
 | `make test-evm-contracts` | Runs the EVM driver's Solidity tests (`forge test`) and `forge fmt --check`. Skips without `forge` or the `forge-std` submodule; set `EVM_CONTRACTS_REQUIRED=1` to fail instead. |
 
-The `unit-tests-race-*` shards accept `COVERAGE=1`, which instruments every root-module package (`-coverpkg=./...`) and writes the profile to `COVERAGE_PROFILE` (default `profile.cov`). CI runs each shard as its own `utest` job and uploads that profile, so the suite is not run a second time without `-race` for coverage.
+The `unit-tests-race-*` shards accept `COVERAGE=1`, which instruments every root-module package (`-coverpkg=./...`) and writes the profile to `COVERAGE_PROFILE` (default `profile.cov`). CI runs each shard as its own `utest` job and uploads that profile, so the suite is not run a second time without `-race` for coverage. A shard whose package filter matches nothing fails instead of silently testing the repository root.
 
 ### Integration Tests
 
