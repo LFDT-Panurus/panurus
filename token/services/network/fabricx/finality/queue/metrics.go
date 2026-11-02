@@ -15,7 +15,8 @@ import (
 // Metrics holds the instrumentation for the EventQueue.
 type Metrics struct {
 	// PendingEvents is a gauge tracking how many events are currently waiting
-	// in the queue buffer. Updated on every successful enqueue.
+	// in the queue buffer. It is raised when an event is accepted and lowered
+	// when a worker takes it, so it returns to zero once the queue drains.
 	PendingEvents metrics.Gauge
 	// EnqueueDrops counts the total number of events dropped because the queue
 	// was full at the time of a non-blocking Enqueue call.
