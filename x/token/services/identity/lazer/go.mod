@@ -4,7 +4,7 @@ go 1.27.3
 
 require (
 	github.com/LFDT-Panurus/panurus v0.0.0
-	github.com/hyperledger-labs/fabric-smart-client v0.26.0
+	github.com/hyperledger-labs/fabric-smart-client v0.27.0
 	github.com/stretchr/testify v1.12.1
 )
 
