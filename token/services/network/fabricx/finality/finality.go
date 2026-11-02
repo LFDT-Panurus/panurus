@@ -447,18 +447,46 @@ func (n *NSListenerManager) getStatuses(txIDs []string) (map[string]int32, error
 	return out, nil
 }
 
+// terminalTx is a tx in a terminal status, with a snapshot of its waiters.
+type terminalTx struct {
+	txID    string
+	status  fdriver.ValidationCode
+	waiters []*pendingTx
+}
+
 // resolveBatch batch-fetches the token-request hash for the valid terminal txs
 // and hands each off to the worker pool for notification. Non-terminal txs stay
 // pending for the next sweep.
 func (n *NSListenerManager) resolveBatch(ctx context.Context, statuses map[string]int32) {
-	type terminalTx struct {
-		txID    string
-		status  fdriver.ValidationCode
-		waiters []*pendingTx
+	terminals := n.collectTerminals(statuses)
+	if len(terminals) == 0 {
+		return
 	}
 
+	hashes, ok := n.fetchTokenRequestHashes(terminals)
+	if !ok {
+		// Keep terminals pending and retry next sweep rather than notify without a hash.
+		return
+	}
+
+	for _, t := range terminals {
+		var hash []byte
+		if t.status == fdriver.Valid {
+			hash = hashes[t.txID]
+		}
+		if !n.enqueueResolve(t, hash) {
+			// Queue full: leave pending so the next sweep retries.
+			continue
+		}
+		n.removeResolvedWaiters(t.txID, t.waiters)
+	}
+}
+
+// collectTerminals snapshots the pending txs whose status is terminal (not Unknown or Busy).
+func (n *NSListenerManager) collectTerminals(statuses map[string]int32) []terminalTx {
 	var terminals []terminalTx
 	n.mu.Lock()
+	defer n.mu.Unlock()
 	for txID, raw := range statuses {
 		waiters, ok := n.pending[txID]
 		if !ok {
@@ -470,11 +498,37 @@ func (n *NSListenerManager) resolveBatch(ctx context.Context, statuses map[strin
 		}
 		terminals = append(terminals, terminalTx{txID: txID, status: status, waiters: slices.Clone(waiters)})
 	}
-	n.mu.Unlock()
-	if len(terminals) == 0 {
-		return
+
+	return terminals
+}
+
+// fetchTokenRequestHashes batch-queries the token-request hashes of the valid terminals, by tx ID.
+// ok is false if the query failed.
+func (n *NSListenerManager) fetchTokenRequestHashes(terminals []terminalTx) (hashes map[string][]byte, ok bool) {
+	hashQuery, keyToTx := n.tokenRequestHashQuery(terminals)
+	hashes = make(map[string][]byte, len(keyToTx))
+	if len(hashQuery) == 0 {
+		return hashes, true
+	}
+	states, err := n.queryService.GetStates(hashQuery)
+	if err != nil {
+		logger.Warnf("finality poller: token-request-hash batch query failed: %v", err)
+
+		return nil, false
+	}
+	for _, byKey := range states {
+		for key, v := range byKey {
+			if txID, found := keyToTx[key]; found {
+				hashes[txID] = v.Raw
+			}
+		}
 	}
 
+	return hashes, true
+}
+
+// tokenRequestHashQuery returns the token-request keys to query per namespace and a key-to-txID map.
+func (n *NSListenerManager) tokenRequestHashQuery(terminals []terminalTx) (map[cdriver.Namespace][]cdriver.PKey, map[string]string) {
 	hashQuery := map[cdriver.Namespace][]cdriver.PKey{}
 	keyToTx := make(map[string]string, len(terminals))
 	for _, t := range terminals {
@@ -491,60 +545,47 @@ func (n *NSListenerManager) resolveBatch(ctx context.Context, statuses map[strin
 		keyToTx[key] = t.txID
 	}
 
-	hashes := make(map[string][]byte, len(keyToTx))
-	if len(hashQuery) > 0 {
-		states, err := n.queryService.GetStates(hashQuery)
-		if err != nil {
-			// Keep terminals pending and retry next sweep rather than notify without a hash.
-			logger.Warnf("finality poller: token-request-hash batch query failed: %v", err)
+	return hashQuery, keyToTx
+}
 
-			return
-		}
-		for _, byKey := range states {
-			for key, v := range byKey {
-				if txID, ok := keyToTx[key]; ok {
-					hashes[txID] = v.Raw
-				}
-			}
-		}
+// enqueueResolve queues the notification of t's waiters; it returns false if the queue rejects it.
+func (n *NSListenerManager) enqueueResolve(t terminalTx, hash []byte) bool {
+	listeners := make([]Listener, len(t.waiters))
+	for i, w := range t.waiters {
+		listeners[i] = w.listener
+	}
+	ev := &resolveEvent{listeners: listeners, txID: t.txID, status: t.status, tokenRequestHash: hash}
+	if err := n.queue.Enqueue(ev); err != nil {
+		logger.Warnf("finality poller: enqueue resolve for [%s] failed: %v", t.txID, err)
+
+		return false
 	}
 
-	for _, t := range terminals {
-		var hash []byte
-		if t.status == fdriver.Valid {
-			hash = hashes[t.txID]
-		}
-		listeners := make([]Listener, len(t.waiters))
-		for i, w := range t.waiters {
-			listeners[i] = w.listener
-		}
-		ev := &resolveEvent{listeners: listeners, txID: t.txID, status: t.status, tokenRequestHash: hash}
-		if err := n.queue.Enqueue(ev); err != nil {
-			// Queue full: leave pending so the next sweep retries.
-			logger.Warnf("finality poller: enqueue resolve for [%s] failed: %v", t.txID, err)
+	return true
+}
 
-			continue
+// removeResolvedWaiters drops the snapshotted waiters of txID, keeping any registered since.
+func (n *NSListenerManager) removeResolvedWaiters(txID string, waiters []*pendingTx) {
+	resolved := make(map[*pendingTx]struct{}, len(waiters))
+	for _, w := range waiters {
+		resolved[w] = struct{}{}
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	cur, ok := n.pending[txID]
+	if !ok {
+		return
+	}
+	kept := cur[:0]
+	for _, w := range cur {
+		if _, done := resolved[w]; !done {
+			kept = append(kept, w)
 		}
-		resolved := make(map[*pendingTx]struct{}, len(t.waiters))
-		for _, w := range t.waiters {
-			resolved[w] = struct{}{}
-		}
-		n.mu.Lock()
-		// remove only the snapshotted waiters; keep any registered since
-		if cur, ok := n.pending[t.txID]; ok {
-			kept := cur[:0]
-			for _, w := range cur {
-				if _, done := resolved[w]; !done {
-					kept = append(kept, w)
-				}
-			}
-			if len(kept) == 0 {
-				delete(n.pending, t.txID)
-			} else {
-				n.pending[t.txID] = kept
-			}
-		}
-		n.mu.Unlock()
+	}
+	if len(kept) == 0 {
+		delete(n.pending, txID)
+	} else {
+		n.pending[txID] = kept
 	}
 }
 
