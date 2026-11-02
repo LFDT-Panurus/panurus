@@ -72,11 +72,17 @@ type fetcherProvider struct {
 // fetchers holds the constructor of every selectable strategy. Its keys are the single
 // source of truth for which FetcherStrategy values are accepted.
 var fetchers = map[FetcherStrategy]fetchFunc{
-	Lazy: func(db *tokendb.StoreService, _ *Metrics, _ int64, _ time.Duration, _ int) TokenFetcher {
-		return NewLazyFetcher(db)
+	Lazy: func(db *tokendb.StoreService, m *Metrics, _ int64, _ time.Duration, _ int) TokenFetcher {
+		f := NewLazyFetcher(db)
+		f.m = m
+
+		return f
 	},
-	Eager: func(db *tokendb.StoreService, _ *Metrics, cacheSize int64, freshnessInterval time.Duration, maxQueries int) TokenFetcher {
-		return NewCachedFetcher(db, cacheSize, freshnessInterval, maxQueries)
+	Eager: func(db *tokendb.StoreService, m *Metrics, cacheSize int64, freshnessInterval time.Duration, maxQueries int) TokenFetcher {
+		f := NewCachedFetcher(db, cacheSize, freshnessInterval, maxQueries)
+		f.m = m
+
+		return f
 	},
 	Mixed: func(db *tokendb.StoreService, m *Metrics, cacheSize int64, freshnessInterval time.Duration, maxQueries int) TokenFetcher {
 		return NewMixedFetcher(db, m, cacheSize, freshnessInterval, maxQueries)
@@ -144,11 +150,12 @@ type mixedFetcher struct {
 
 // NewMixedFetcher creates a fetcher that combines eager (cached) and lazy (on-demand) strategies.
 func NewMixedFetcher(tokenDB TokenDB, m *Metrics, cacheSize int64, freshnessInterval time.Duration, maxQueries int) *mixedFetcher {
-	return &mixedFetcher{
-		lazyFetcher:  NewLazyFetcher(tokenDB),
-		eagerFetcher: NewCachedFetcher(tokenDB, cacheSize, freshnessInterval, maxQueries),
-		m:            m,
-	}
+	lazy := NewLazyFetcher(tokenDB)
+	lazy.m = m
+	eager := NewCachedFetcher(tokenDB, cacheSize, freshnessInterval, maxQueries)
+	eager.m = m
+
+	return &mixedFetcher{lazyFetcher: lazy, eagerFetcher: eager, m: m}
 }
 
 // UnspentTokensIteratorBy returns an iterator for unspent tokens, trying cached results first, falling back to database query.
@@ -219,6 +226,8 @@ func peekIterator[T any](it Iterator[*T]) (Iterator[*T], bool, error) {
 // lazyFetcher only looks up the results when requested
 type lazyFetcher struct {
 	tokenDB TokenDB
+	// m is optional: nil disables the permutation-duration metric.
+	m *Metrics
 }
 
 // NewLazyFetcher creates a fetcher that queries the database on every request.
@@ -240,7 +249,20 @@ func (f *lazyFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID stri
 		return nil, err
 	}
 
-	return newBucketedIterator(items).NewPermutation(), nil
+	return observedPermutation(f.m, lazy, newBucketedIterator(items)), nil
+}
+
+// observedPermutation returns b.NewPermutation(), recording its duration in
+// candidate_permutation_duration_seconds under the given fetcher type. m, or its histogram, may be nil.
+func observedPermutation(m *Metrics, fetcherType string, b permutatableIterator[*token2.UnspentTokenInWallet]) iterators.Iterator[*token2.UnspentTokenInWallet] {
+	if m == nil || m.CandidatePermutationDuration == nil {
+		return b.NewPermutation()
+	}
+	start := time.Now()
+	it := b.NewPermutation()
+	m.CandidatePermutationDuration.With(fetcherTypeLabel, fetcherType).Observe(time.Since(start).Seconds())
+
+	return it
 }
 
 // HasEnoughSpendableTokens queries the database directly (see TokenDB.HasEnoughSpendableTokens):
@@ -333,6 +355,8 @@ type tokenCache interface {
 type cachedFetcher struct {
 	tokenDB TokenDB
 	cache   tokenCache
+	// m is optional: nil disables the permutation-duration metric.
+	m *Metrics
 	// freshnessInterval is the time between periodical updates
 	freshnessInterval time.Duration
 	// maxQueriesBeforeRefresh is the number of times the fetcher will respond with the cached result before refreshing.
@@ -574,7 +598,7 @@ func (f *cachedFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID st
 	it, ok := f.cache.Get(tokenKey(walletID, currency))
 	f.mu.RUnlock()
 	if ok {
-		return it.NewPermutation(), nil
+		return observedPermutation(f.m, eager, it), nil
 	}
 	logger.DebugfContext(ctx, "No tokens found in cache for [%s]. Returning empty iterator.", tokenKey(walletID, currency))
 

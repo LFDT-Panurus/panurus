@@ -11,12 +11,14 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/tokendb"
 	"github.com/LFDT-Panurus/panurus/token/services/utils/cache"
@@ -1261,4 +1263,126 @@ func TestCachedFetcher_UpdateReacquiresLockAfterDB(t *testing.T) {
 	assert.True(t, ok, "token should be in cache after update")
 
 	mockDB.AssertExpectations(t)
+}
+
+// recordingHistogram records every observation, per label set.
+type recordingHistogram struct {
+	mu     *sync.Mutex
+	values map[string][]float64
+	labels string
+}
+
+func newRecordingHistogram() *recordingHistogram {
+	return &recordingHistogram{mu: &sync.Mutex{}, values: map[string][]float64{}}
+}
+
+func (h *recordingHistogram) With(labelValues ...string) metrics.Histogram {
+	return &recordingHistogram{mu: h.mu, values: h.values, labels: strings.Join(labelValues, ",")}
+}
+
+func (h *recordingHistogram) Observe(v float64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.values[h.labels] = append(h.values[h.labels], v)
+}
+
+func (h *recordingHistogram) count(labels string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return len(h.values[labels])
+}
+
+func permutationMetrics() (*Metrics, *recordingHistogram) {
+	h := newRecordingHistogram()
+
+	return &Metrics{CandidatePermutationDuration: h}, h
+}
+
+func cachedWithOneToken(t *testing.T, m *Metrics) *cachedFetcher {
+	t.Helper()
+	mockDB := new(mockTokenDB)
+	f := NewCachedFetcher(mockDB, 0, 10*time.Second, 100)
+	f.m = m
+	mockDB.On("SpendableTokensIteratorBy", mock.Anything, "", token2.Type("")).Return(
+		iterators.Slice([]*token2.UnspentTokenInWallet{{WalletID: "w", Type: "USD", Quantity: "100"}}), nil)
+	f.update(t.Context())
+
+	return f
+}
+
+func TestCachedFetcher_ObservesPermutationDuration(t *testing.T) {
+	m, h := permutationMetrics()
+	f := cachedWithOneToken(t, m)
+
+	for range 3 {
+		_, err := f.UnspentTokensIteratorBy(t.Context(), "w", "USD")
+		require.NoError(t, err)
+	}
+	assert.Equal(t, 3, h.count(fetcherTypeLabel+",eager"))
+
+	// A cache miss performs no permutation, so observes nothing.
+	_, err := f.UnspentTokensIteratorBy(t.Context(), "other", "USD")
+	require.NoError(t, err)
+	assert.Equal(t, 3, h.count(fetcherTypeLabel+",eager"))
+	assert.Equal(t, 0, h.count(fetcherTypeLabel+",lazy"))
+}
+
+func TestLazyFetcher_ObservesPermutationDuration(t *testing.T) {
+	m, h := permutationMetrics()
+	mockDB := new(mockTokenDB)
+	f := NewLazyFetcher(mockDB)
+	f.m = m
+	mockDB.On("SpendableTokensIteratorBy", mock.Anything, "w", token2.Type("USD")).Return(
+		iterators.Slice([]*token2.UnspentTokenInWallet{{WalletID: "w", Type: "USD", Quantity: "100"}}), nil)
+
+	_, err := f.UnspentTokensIteratorBy(t.Context(), "w", "USD")
+	require.NoError(t, err)
+	assert.Equal(t, 1, h.count(fetcherTypeLabel+",lazy"))
+	assert.Equal(t, 0, h.count(fetcherTypeLabel+",eager"))
+}
+
+func TestMixedFetcher_ObservesPermutationDurationPerLeg(t *testing.T) {
+	m := NewMetrics(&disabled.Provider{})
+	h := newRecordingHistogram()
+	m.CandidatePermutationDuration = h
+	mockDB := new(mockTokenDB)
+	f := NewMixedFetcher(mockDB, m, 0, 10*time.Second, 100)
+	mockDB.On("SpendableTokensIteratorBy", mock.Anything, "", token2.Type("")).Return(
+		iterators.Slice([]*token2.UnspentTokenInWallet{{WalletID: "w", Type: "USD", Quantity: "100"}}), nil).Once()
+	f.eagerFetcher.update(t.Context())
+
+	// Cached wallet: served by the eager leg.
+	_, err := f.UnspentTokensIteratorBy(t.Context(), "w", "USD")
+	require.NoError(t, err)
+	assert.Equal(t, 1, h.count(fetcherTypeLabel+",eager"))
+	assert.Equal(t, 0, h.count(fetcherTypeLabel+",lazy"))
+
+	// Unknown wallet: falls through to the lazy leg.
+	mockDB.On("SpendableTokensIteratorBy", mock.Anything, "x", token2.Type("USD")).Return(
+		iterators.Slice([]*token2.UnspentTokenInWallet{{WalletID: "x", Type: "USD", Quantity: "5"}}), nil)
+	_, err = f.UnspentTokensIteratorBy(t.Context(), "x", "USD")
+	require.NoError(t, err)
+	assert.Equal(t, 1, h.count(fetcherTypeLabel+",eager"))
+	assert.Equal(t, 1, h.count(fetcherTypeLabel+",lazy"))
+}
+
+func TestFetchers_PermutationMetricIsOptional(t *testing.T) {
+	for _, m := range []*Metrics{nil, {}} {
+		f := cachedWithOneToken(t, m)
+		it, err := f.UnspentTokensIteratorBy(t.Context(), "w", "USD")
+		require.NoError(t, err)
+		item, err := it.Next()
+		require.NoError(t, err)
+		assert.NotNil(t, item)
+
+		mockDB := new(mockTokenDB)
+		mockDB.On("SpendableTokensIteratorBy", mock.Anything, "w", token2.Type("USD")).Return(
+			iterators.Slice([]*token2.UnspentTokenInWallet{{WalletID: "w", Type: "USD", Quantity: "100"}}), nil)
+		lazyIt, err := (&lazyFetcher{tokenDB: mockDB, m: m}).UnspentTokensIteratorBy(t.Context(), "w", "USD")
+		require.NoError(t, err)
+		item, err = lazyIt.Next()
+		require.NoError(t, err)
+		assert.NotNil(t, item)
+	}
 }
