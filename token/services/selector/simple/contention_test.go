@@ -106,7 +106,7 @@ func startSimpleManagersWithPool(t *testing.T, number int, backoff time.Duration
 
 	for i := range number {
 		locker := inmemory.NewLocker(&testutils.MockVault{}, testutils.LockSleepTimeout, testutils.LockValidTxEvictionTimeout)
-		manager := simple.NewManager(locker, func() simple.QueryService { return qs }, maxRetries, backoff, false, testutils.TokenQuantityPrecision)
+		manager := simple.NewManager(locker, func() simple.QueryService { return qs }, maxRetries, backoff, false, testutils.TokenQuantityPrecision, nil)
 		replicas[i] = testutils.NewEnhancedManager(t, manager, tokenDB)
 	}
 

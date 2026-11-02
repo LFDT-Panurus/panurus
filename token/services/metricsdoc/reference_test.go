@@ -35,6 +35,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/observability"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/ratelimit"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/simple"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/dbpool"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/services/checks"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx"
@@ -299,6 +300,15 @@ var groups = []group{
 			{file: "token/services/selector/sherdlock/fetcher.go", call: "NewMetrics(metricsProvider)"},
 		},
 		build: func(p metrics.Provider) { sherdlock.NewMetrics(p) },
+	},
+	{
+		subsystem: "Token selection (simple)",
+		source:    "token/services/selector/simple/metrics.go",
+		scope:     direct,
+		wiring: []wiringSite{
+			{file: "token/services/selector/simple/service.go", call: "NewMetrics(metricsProvider)"},
+		},
+		build: func(p metrics.Provider) { simple.NewMetrics(p) },
 	},
 	{
 		subsystem: "Token selection (rate limiter)",

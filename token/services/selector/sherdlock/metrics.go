@@ -25,10 +25,18 @@ var permutationDurationBuckets = []float64{1e-5, 1e-4, 1e-3, 5e-3, 7.5e-3, 1e-2,
 
 var selectionDurationBuckets = []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}
 
+// backoffDurationBuckets extends selectionDurationBuckets with 30s and 60s, since the backoff interval is user-tunable.
+var backoffDurationBuckets = []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60}
+
 type Metrics struct {
 	UnspentTokensInvocations metrics.Counter
 	// SelectionDuration tracks the end-to-end duration of a Select() call in seconds.
 	SelectionDuration metrics.Histogram
+	// BackoffDuration tracks, per backoff wait inside a StubbornSelector Select() call, the time
+	// actually spent waiting before the next selection round, in seconds. Zero-length waits are
+	// observed too, so the sample count equals the number of backoff rounds. It is the part of
+	// SelectionDuration that is sleep rather than selection work. Not observed by a plain Selector.
+	BackoffDuration metrics.Histogram
 	// SelectionOutcome counts selection outcomes by type: success, insufficient_funds, locked_funds, error.
 	SelectionOutcome metrics.Counter
 	// ImmediateRetries tracks the distribution of immediate retry counts per Select() call.
@@ -104,6 +112,13 @@ func NewMetrics(p metrics.Provider) *Metrics {
 			Name:                           "selection_duration_seconds",
 			Help:                           "Duration of a token selection call in seconds",
 			Buckets:                        selectionDurationBuckets,
+			NativeHistogramBucketFactor:    1.1,
+			NativeHistogramMaxBucketNumber: 100,
+		}),
+		BackoffDuration: p.NewHistogram(metrics.HistogramOpts{
+			Name:                           "selection_backoff_duration_seconds",
+			Help:                           "Time spent in a backoff wait between token selection rounds in seconds",
+			Buckets:                        backoffDurationBuckets,
 			NativeHistogramBucketFactor:    1.1,
 			NativeHistogramMaxBucketNumber: 100,
 		}),

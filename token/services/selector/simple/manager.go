@@ -23,6 +23,7 @@ type Manager struct {
 	timeout              time.Duration
 	requestCertification bool
 	precision            atomic.Uint64
+	metrics              *Metrics
 }
 
 func NewManager(
@@ -32,6 +33,7 @@ func NewManager(
 	timeout time.Duration,
 	requestCertification bool,
 	precision uint64,
+	metrics *Metrics,
 ) *Manager {
 	m := &Manager{
 		locker:               locker,
@@ -41,6 +43,11 @@ func NewManager(
 		requestCertification: requestCertification,
 	}
 	m.precision.Store(precision)
+	// Nil metrics are tolerated: observations are then discarded.
+	if metrics == nil {
+		metrics = NewMetrics(nil)
+	}
+	m.metrics = metrics
 
 	return m
 }
@@ -61,6 +68,7 @@ func (m *Manager) NewSelector(id string) (token.Selector, error) {
 		numRetry:             m.numRetry,
 		timeout:              m.timeout,
 		requestCertification: m.requestCertification,
+		metrics:              m.metrics,
 	}, nil
 }
 
