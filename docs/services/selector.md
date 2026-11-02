@@ -726,8 +726,8 @@ The three keys below tune the cache that `mixed` and `eager` use, and are ignore
 
 ### Selection Tuning (sherdlock only)
 
-These four keys tune the contention-spreading mechanism described in [Token Selection
-Algorithm](#token-selection-algorithm) above. They have no effect under `simple`. Unset
+These four keys tune the contention-spreading mechanism described in [Ordering and the sufficiency
+window](#ordering-and-the-sufficiency-window) above. They have no effect under `simple`. Unset
 (or `0`, or negative) selects sherdlock's own default, listed below — these are
 configurability knobs, not a change to the selection algorithm itself.
 
