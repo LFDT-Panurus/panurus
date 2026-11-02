@@ -644,7 +644,7 @@ func (n *Network) AddFinalityListener(namespace string, txID string, listener dr
 //
 // Only success is observable by anchor: the contract records the anchor as the last step of a
 // successful apply, while a failure reverts and leaves nothing behind. An unrecorded anchor is
-// therefore Unknown, not Invalid; resolving it as failed is the finality timeout's job.
+// therefore Unknown, not Invalid, however long it has been missing: the transaction can still land.
 func (n *Network) GetTransactionStatus(ctx context.Context, namespace, txID string) (int, []byte, string, error) {
 	binding, err := n.binding(namespace)
 	if err != nil {
