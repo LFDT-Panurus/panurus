@@ -1,6 +1,6 @@
 # Storage
 
-For an introduction into the concepts of Database, Persistence, Driver, Store, read [this documentation](https://github.com/hyperledger-labs/fabric-smart-client/blob/main/docs/platform/view/db-driver.md).
+For an introduction into the concepts of Database, Persistence, Driver, Store, read [this documentation](https://github.com/hyperledger-labs/fabric-smart-client/blob/main/docs/platform/view/services/db-driver.md).
 
 SQL is not written by hand in these layers: the stores build it with the query-builder
 DSL documented in [SQL Query DSL](./sql-query-dsl.md), which also covers the pagination

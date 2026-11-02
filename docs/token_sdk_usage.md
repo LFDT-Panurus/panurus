@@ -16,7 +16,7 @@ Most token operations follow this pattern:
 
 2.  **Transaction Creation**:
     Initialize a **Token Transaction** using `ttx.NewTransaction` (for nominal transactions) or `ttx.NewAnonymousTransaction` (for anonymous transactions). This creates a blueprint for the operation.
-    *   *Reference*: [Building a Token Transaction](./tokenapi.md#building-a-token-transaction).
+    *   *Reference*: [Building a Token Transaction](./services/ttx.md#transaction-creation).
 
 3.  **Action**:
     Add specific token operations to the transaction, such as `Issue`, `Transfer`, or `Redeem`. These actions modify the ledger state.

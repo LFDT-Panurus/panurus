@@ -76,7 +76,7 @@ Here are some key guidelines, often considered "commandments" in the Go communit
     Avoid excessive nesting and complex logic within a single function.
     * **References:**
         * [Golang 10 Best Practices - Keep Functions Focused](https://codefinity.com/blog/Golang-10-Best-Practices)
-        * [Golang Clean Code Guide – 2 - Simplicity in Action: Short and Focused Functions](https://withcodeexample.com/golang-clean-code-guide-2/)
+        * [Golang Clean Code Guide – 2 - Simplicity in Action: Short and Focused Functions](https://web.archive.org/web/20250916174054/https://withcodeexample.com/golang-clean-code-guide-2/)
 
 8.  **Thou Shalt Write Tests:**
 
@@ -94,7 +94,7 @@ Here are some key guidelines, often considered "commandments" in the Go communit
     Use Godoc conventions for easily generated documentation.
     * **References:**
         * [Go Doc Comments - The Go Programming Language](https://go.dev/doc/comment)
-        * [Documentation and Comments in Go - With Code Example](https://withcodeexample.com/golang-documentation-and-comments-guide)
+        * [Documentation and Comments in Go - With Code Example](https://web.archive.org/web/20251015043026/https://withcodeexample.com/golang-documentation-and-comments-guide/)
 
 10. **Thou Shalt Be Mindful of Performance and Allocations:**
 
