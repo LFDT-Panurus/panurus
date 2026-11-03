@@ -7,7 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 package kvs_test
 
 import (
+	"strconv"
 	"testing"
+	"time"
 
 	token2 "github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/dbtest"
@@ -33,8 +35,9 @@ func TestWalletDBWithInMemoryKVS(t *testing.T) {
 
 			backend, err := kvs.NewInMemory()
 			require.NoError(xt, err)
-			// NewInMemory shares one underlying store per process, so the cases are kept
-			// apart by their TMS id, which prefixes every composite key this store writes.
+			// NewInMemory shares one underlying store per process, so the cases - and repeated
+			// runs of them, as with -count=N - are kept apart by a TMS id unique to this
+			// invocation, which prefixes every composite key this store writes.
 			tmsID := token2.TMSID{Network: c.Name, Channel: "pears", Namespace: "strawberries"}
 			db := kvs.NewWalletStore(backend, tmsID)
 			identityDB := kvs.NewIdentityStore(backend, tmsID)
@@ -49,6 +52,23 @@ func TestWalletDBWithInMemoryKVS(t *testing.T) {
 			require.NoError(xt, identityDB.AddConfiguration(xt.Context(), conf))
 
 			c.Fn(xt, db, identityDB, conf)
+		})
+	}
+}
+
+// TestIdentityDBWithInMemoryKVS runs the shared IdentityStore suite against the KVS backend on
+// the FSC in-tree KVS, so that the backend the integration tests and benchmarks use is held to
+// the same contract as SQL and Vault - GetExistingSignerInfo included (#1892).
+func TestIdentityDBWithInMemoryKVS(t *testing.T) {
+	for _, c := range dbtest.IdentityCases {
+		t.Run(c.Name, func(xt *testing.T) {
+			backend, err := kvs.NewInMemory()
+			require.NoError(xt, err)
+			// NewInMemory shares one underlying store per process, so the cases - and repeated
+			// runs of them, as with -count=N - are kept apart by a TMS id unique to this
+			// invocation, which prefixes every composite key this store writes.
+			db := kvs.NewIdentityStore(backend, token2.TMSID{Network: "idb-" + c.Name + "-" + strconv.FormatInt(time.Now().UnixNano(), 36), Channel: "pears", Namespace: "strawberries"})
+			c.Fn(xt, db)
 		})
 	}
 }

@@ -143,7 +143,9 @@ func unescapeComponent(component string) (string, error) {
 // GetExisting returns the subset of the passed ids that hold a state, in the order the ids
 // were passed. Vault's KV v1 API has no multi-read endpoint, so this is one Exists round trip
 // per id and, as in Exists, an id whose read fails is reported as absent rather than as an
-// error.
+// error. It is therefore best-effort: callers that must tell a failed read apart from a miss
+// have to read each state with Get instead, as the panurus KVS-backed identity and wallet
+// stores do.
 func (v *KVS) GetExisting(ctx context.Context, ids ...string) []string {
 	results := make([]string, 0)
 
@@ -161,8 +163,12 @@ func (v *KVS) GetExisting(ctx context.Context, ids ...string) []string {
 // The kvs.KVS interface gives this no error return, so a failed read is reported as "does not
 // exist" — it is logged as an error rather than at debug level so that a storage problem is at
 // least visible, instead of being indistinguishable from a genuine miss in the logs too.
-// Callers that must tell the two apart have to read the state instead (see Get, and the way
-// WalletStore.IdentityExists uses it).
+// Callers that must tell the two apart have to read the state instead (see Get); the panurus
+// KVS-backed identity and wallet stores do, and use neither Exists nor GetExisting to decide
+// presence.
+//
+// An id is reported as existing when it holds an entry of this KVS (see ownEntry), whether or
+// not that entry's value decodes: a corrupt entry is present, and Get reports it as an error.
 func (v *KVS) Exists(ctx context.Context, id string) bool {
 	id = v.NormalizeID(id)
 
@@ -173,20 +179,30 @@ func (v *KVS) Exists(ctx context.Context, id string) bool {
 		return false
 	}
 
-	if secret == nil || secret.Data == nil {
-		logger.Debugf("state of id [%s] does not exist", id)
-
-		return false
-	}
-
-	data, ok := secret.Data[Data].(map[string]any)
-	if !ok || len(data) == 0 {
+	if _, ok := ownEntry(secret); !ok {
 		logger.Debugf("state of id [%s] does not exist", id)
 
 		return false
 	}
 
 	return true
+}
+
+// ownEntry returns the "data" map of the passed secret if the secret is an entry written by
+// this KVS, and false for every shape Vault has for "nothing of ours is stored here": no secret
+// at the path, a secret carrying no data at all, and a secret whose "data" field is missing,
+// empty or not a map. Exists and read share it so that the two agree on what exists; it does
+// not look inside the map, so it says nothing about whether the entry's value decodes.
+func ownEntry(secret *vault.Secret) (map[string]any, bool) {
+	if secret == nil || secret.Data == nil {
+		return nil, false
+	}
+	data, ok := secret.Data[Data].(map[string]any)
+	if !ok || len(data) == 0 {
+		return nil, false
+	}
+
+	return data, true
 }
 
 // Delete removes the state stored under the passed id. Deleting an id that holds no state is
@@ -235,8 +251,10 @@ func (v *KVS) Put(ctx context.Context, id string, state any) error {
 //
 // An id that holds no state is reported as success with state left untouched. That deviates
 // from the FSC in-tree KVS, which returns a "does not exist" error that callers such as
-// WalletStore.GetWalletID classify as an authoritative miss, so callers of this backend that
-// must tell a miss apart from a stored zero value have to probe with Exists first.
+// WalletStore.GetWalletID classify as an authoritative miss. Callers that must tell a miss apart
+// from a stored value can decode into a destination that records any stored value (for example
+// a json.RawMessage, which a miss leaves nil); probing with Exists first is not enough, because
+// Exists reports a failed read as a miss.
 func (v *KVS) Get(ctx context.Context, id string, state any) error {
 	raw, found, err := v.read(ctx, id)
 	if err != nil {
@@ -261,7 +279,8 @@ func (v *KVS) Get(ctx context.Context, id string, state any) error {
 // answering some of them with an error made a prefix scan abort on an entry it should have
 // skipped - a secret written under the same mount by something other than this KVS has no
 // "data" map and is reachable by any scan over that mount, KV v1 having one mount for every
-// writer. Exists classifies the three the same way, so the two agree on what exists.
+// writer. Exists classifies the three the same way, through the same ownEntry predicate, so
+// the two agree on what exists.
 //
 // A secret that does carry a "data" map is this KVS' own entry, so a "value" inside it that
 // is missing, not a string or not decodable stays an error: that entry is corrupt, not
@@ -273,13 +292,9 @@ func (v *KVS) read(ctx context.Context, id string) ([]byte, bool, error) {
 		return nil, false, errors.Wrapf(err, "failed retrieving state of id [%s]", normalized)
 	}
 
-	if secret == nil || secret.Data == nil {
-		// In this case no value found for the input id
-		return nil, false, nil
-	}
-
-	data, ok := secret.Data[Data].(map[string]any)
-	if !ok || len(data) == 0 {
+	data, ok := ownEntry(secret)
+	if !ok {
+		// In this case no value of ours is stored under the input id
 		return nil, false, nil
 	}
 
