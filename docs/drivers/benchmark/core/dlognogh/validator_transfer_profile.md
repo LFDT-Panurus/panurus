@@ -351,7 +351,7 @@ It's spent in `verifyIPA` doing work that's NOT in instrumented child functions:
 This call tree was generated using the Profiler tool. To get an updated version after code changes:
 
 ```bash
-cd /path/to/panurus/tools/profiler
+cd /path/to/panurus/cmd/profiler
 ./profile.sh BenchmarkValidatorTransfer -f VerifyTokenRequestFromRaw
 ```
 

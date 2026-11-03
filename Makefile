@@ -42,7 +42,7 @@ TOP = .
 include $(TOP)/checks.mk
 
 # Define all Go module directories
-GO_MODULES := . integration token/services/storage/db/kvs/hashicorp cmd/artifactgen cmd/tokengen cmd/token_validation_service cmd/profiler cmd/skicleanup cmd/tokendiag cmd/node x/token/services/network/evm
+GO_MODULES := . integration token/services/storage/db/kvs/hashicorp cmd/artifactgen cmd/tokengen cmd/token_validation_service cmd/skicleanup cmd/tokendiag cmd/node x/token/services/network/evm
 TIDY_GO_MODULES := $(GO_MODULES) tools
 
 # include fabricx target
@@ -308,7 +308,7 @@ txgen:
 # regenerate validator transfer profile documentation
 profile-validator-transfer:
 	@echo "Regenerating validator transfer profile..."
-	@cd tools/profiler && ./profile.sh BenchmarkValidatorTransfer -f VerifyTokenRequestFromRaw 
+	@cd cmd/profiler && ./profile.sh BenchmarkValidatorTransfer -f VerifyTokenRequestFromRaw 
 
 .PHONY: profile
 # run profiler on any test or benchmark
@@ -323,9 +323,9 @@ profile:
 	fi
 	@echo "Running profiler on $(TEST)..."
 	@if [ -n "$(ROOT)" ]; then \
-		cd tools/profiler && ./profile.sh $(TEST) -f $(ROOT); \
+		cd cmd/profiler && ./profile.sh $(TEST) -f $(ROOT); \
 	else \
-		cd tools/profiler && ./profile.sh $(TEST); \
+		cd cmd/profiler && ./profile.sh $(TEST); \
 	fi
 
 .PHONY: clean-all-containers

@@ -97,7 +97,7 @@ func SimpleFunc() {
 	outputStr := string(output)
 
 	// Check for tracer import (without alias since it's the default)
-	if !strings.Contains(outputStr, `"github.com/LFDT-Panurus/panurus/tools/profiler/tracer"`) {
+	if !strings.Contains(outputStr, `"github.com/LFDT-Panurus/panurus/cmd/profiler/tracer"`) {
 		t.Error("Expected tracer import")
 	}
 
@@ -322,7 +322,7 @@ func MyFunc() {
 	outputStr := string(output)
 
 	// Should have tracer import added (without alias)
-	if !strings.Contains(outputStr, `"github.com/LFDT-Panurus/panurus/tools/profiler/tracer"`) {
+	if !strings.Contains(outputStr, `"github.com/LFDT-Panurus/panurus/cmd/profiler/tracer"`) {
 		t.Error("Expected tracer import to be added")
 	}
 
@@ -366,7 +366,7 @@ func MyFunc() {
 	if !strings.Contains(outputStr, "import") {
 		t.Error("Expected import declaration to be created")
 	}
-	if !strings.Contains(outputStr, `"github.com/LFDT-Panurus/panurus/tools/profiler/tracer"`) {
+	if !strings.Contains(outputStr, `"github.com/LFDT-Panurus/panurus/cmd/profiler/tracer"`) {
 		t.Error("Expected tracer import")
 	}
 }
@@ -590,7 +590,7 @@ func TestInstrumentFile_AlreadyInstrumented(t *testing.T) {
 
 	input := `package main
 
-import tracer "github.com/LFDT-Panurus/panurus/tools/profiler/tracer"
+import tracer "github.com/LFDT-Panurus/panurus/cmd/profiler/tracer"
 
 func MyFunc() {
 	defer tracer.Enter("MyFunc")()
@@ -824,7 +824,7 @@ func TestHasTracerCall_WithTracerCall(t *testing.T) {
 	fset := token.NewFileSet()
 	code := `package main
 
-import tracer "github.com/LFDT-Panurus/panurus/tools/profiler/tracer"
+import tracer "github.com/LFDT-Panurus/panurus/cmd/profiler/tracer"
 
 func MyFunc() {
 	defer tracer.Enter("MyFunc")()
@@ -860,7 +860,7 @@ func TestHasTracerCall_WrongAlias(t *testing.T) {
 	fset := token.NewFileSet()
 	code := `package main
 
-import tracer1 "github.com/LFDT-Panurus/panurus/tools/profiler/tracer"
+import tracer1 "github.com/LFDT-Panurus/panurus/cmd/profiler/tracer"
 
 func MyFunc() {
 	defer tracer1.Enter("MyFunc")()
@@ -979,7 +979,7 @@ func MyFunc() {}
 	// Check that import was added with alias
 	found := false
 	for _, imp := range node.Imports {
-		if imp.Path.Value == `"github.com/LFDT-Panurus/panurus/tools/profiler/tracer"` {
+		if imp.Path.Value == `"github.com/LFDT-Panurus/panurus/cmd/profiler/tracer"` {
 			found = true
 			if imp.Name == nil || imp.Name.Name != "tracer1" {
 				t.Error("Expected import to have alias 'tracer1'")
@@ -1008,7 +1008,7 @@ func MyFunc() {}
 	// Check that import was added without alias
 	found := false
 	for _, imp := range node.Imports {
-		if imp.Path.Value == `"github.com/LFDT-Panurus/panurus/tools/profiler/tracer"` {
+		if imp.Path.Value == `"github.com/LFDT-Panurus/panurus/cmd/profiler/tracer"` {
 			found = true
 			if imp.Name != nil {
 				t.Error("Expected import to have no alias")
@@ -1047,7 +1047,7 @@ func MyFunc() {}
 	// Verify tracer import was added
 	found := false
 	for _, imp := range node.Imports {
-		if imp.Path.Value == `"github.com/LFDT-Panurus/panurus/tools/profiler/tracer"` {
+		if imp.Path.Value == `"github.com/LFDT-Panurus/panurus/cmd/profiler/tracer"` {
 			found = true
 		}
 	}
