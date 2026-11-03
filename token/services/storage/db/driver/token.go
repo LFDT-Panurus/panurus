@@ -367,6 +367,8 @@ type TokenStore interface {
 	// This is used by the keystore cleanup service to identify tokens whose cryptographic keys can be safely removed.
 	// Only tokens without a record in the token_ski_cleanups table are returned, and only tokens owned by this node,
 	// since this node only holds the secret keys for tokens it owns, not for tokens it merely audited or issued.
+	// A token is not returned while its owner identity still owns an unspent token, because the keys derived
+	// from that identity are shared by all of its tokens.
 	GetDeletedTokensPendingSKICleanup(ctx context.Context, olderThan time.Duration, limit int) ([]DeletedToken, error)
 	// MarkTokenCleaned marks a token as having its cryptographic keys cleaned up.
 	// This prevents the cleanup service from processing the same token multiple times.

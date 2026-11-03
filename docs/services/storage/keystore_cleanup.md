@@ -86,9 +86,16 @@ wallet ever owns, and it remains in use long after those tokens are spent. A rea
 provider would make the cleanup sweep delete the wallet's own signing key as soon as the first of
 its tokens aged past the TTL, permanently breaking the wallet.
 
-The Idemix providers are the opposite case: their SKIs identify a one-shot pseudonym key created
-for a single recipient identity. That key is dead once its token is deleted, which is exactly what
-makes it safe to remove.
+The Idemix providers are the opposite case: their SKIs identify a pseudonym key created for a
+single recipient identity. That key is dead once every token owned by that identity is deleted,
+which is exactly what makes it safe to remove.
+
+A recipient identity usually owns a single token, but nothing enforces that: an application can
+give the same recipient identity more than one output, or reuse it across transfers. The cleanup
+therefore only picks up a deleted token once its owner identity owns no unspent token on this
+node anymore. Until then the token is not even returned by the query, so it does not occupy the
+sweep's batch; once the last token of the identity is spent, all of its tokens become eligible
+together.
 
 **Consequence to be aware of:** a deleted X.509-owned token still gets a row in
 `token_ski_cleanups`, because the cleanup manager records "no key material to delete" the same way
@@ -284,6 +291,7 @@ cleanupManager := cleanup.NewServiceManager(
 1. **Startup**: Manager starts and runs initial sweep immediately
 2. **Leadership Acquisition**: Manager attempts to acquire PostgreSQL advisory lock
 3. **Query Eligible Tokens**: If leadership acquired, query deleted tokens older than TTL that haven't been cleaned yet
+   and whose owner identity owns no unspent token anymore
 4. **Create Worker Pool**: Spawn configured number of workers for this sweep
 5. **Distribute Work**: Fan out tokens to worker pool via channel
 6. **Per Token Processing**:
@@ -443,7 +451,8 @@ Key metrics to monitor:
 - **TTL Safety**: 24-hour default ensures tokens are finalized before key deletion
 - **Idempotency**: Safe to retry cleanup operations
 - **Audit Trail**: `token_ski_cleanups` table provides cleanup history with timestamps and instance tracking
-- **Key Isolation**: Only deletes keys for deleted tokens, never active tokens
+- **Key Isolation**: Only deletes keys for deleted tokens, never active tokens, and never while
+  the same owner identity still owns an unspent token
 - **All-or-Nothing Marking**: A token is only recorded as cleaned once *all* of its keys are gone,
   so a failed deletion can never be silently forgotten
 - **X.509 Exclusion**: X.509 key material is never deleted by design — a `token_ski_cleanups` row
