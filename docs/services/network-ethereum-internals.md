@@ -259,7 +259,9 @@ sources, and both distinctions matter enough to have caused real bugs:
   library change can't silently reintroduce malleable signatures.
 - **The nonce manager** tracks each submitter's next nonce explicitly, with an `initialized` flag rather than
   treating `nonce == 0` as "uninitialized" — zero is a legitimate first nonce. `RecoverNonce` re-syncs from
-  the node's pending-nonce view and is wired into the retry path. A submitter address shared across
+  the node's pending-nonce view and is wired into the retry path. It also re-reads that view, throttled,
+  to notice a hole left by a transaction that dropped out of the pool after a successful broadcast, and
+  fills it once it has persisted for a grace period (`checkGap` in `nonce.go`). A submitter address shared across
   processes needs external coordination: the node's own pending-nonce view does not see nonces another
   process has reserved locally but not yet broadcast.
 
