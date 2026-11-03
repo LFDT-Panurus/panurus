@@ -92,6 +92,23 @@ type Provider struct {
 	signers cache[*SignerEntry]
 }
 
+// DefaultSignerCacheSize is the default number of entries of the Provider's signer cache.
+const DefaultSignerCacheSize = 50
+
+// ProviderOption configures a Provider.
+type ProviderOption func(*providerOptions)
+
+type providerOptions struct {
+	signerCacheSize int
+}
+
+// WithSignerCacheSize sets the signer cache size; n <= 0 selects DefaultSignerCacheSize.
+func WithSignerCacheSize(n int) ProviderOption {
+	return func(o *providerOptions) {
+		o.signerCacheSize = n
+	}
+}
+
 // NewProvider returns a new instance of Provider. m may be nil, in which case the provider's
 // metrics are a noop.
 func NewProvider(
@@ -101,9 +118,17 @@ func NewProvider(
 	binder NetworkBinderService,
 	enrollmentIDUnmarshaler EnrollmentIDUnmarshaler,
 	m *Metrics,
+	opts ...ProviderOption,
 ) *Provider {
 	if m == nil {
 		m = NewMetrics(nil)
+	}
+	o := &providerOptions{}
+	for _, opt := range opts {
+		opt(o)
+	}
+	if o.signerCacheSize <= 0 {
+		o.signerCacheSize = DefaultSignerCacheSize
 	}
 
 	return &Provider{
@@ -112,7 +137,7 @@ func NewProvider(
 		enrollmentIDUnmarshaler: enrollmentIDUnmarshaler,
 		deserializer:            deserializer,
 		storage:                 storage,
-		signers:                 cache2.NewSecondChanceCache[*SignerEntry](50, 1),
+		signers:                 cache2.NewSecondChanceCache[*SignerEntry](o.signerCacheSize, 1),
 		metrics:                 m,
 	}
 }

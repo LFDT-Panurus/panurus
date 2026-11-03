@@ -18,6 +18,7 @@ type Config interface {
 
 type Wallets struct {
 	DefaultCacheSize int                         `yaml:"defaultCacheSize,omitempty"`
+	SignerCacheSize  int                         `yaml:"signerCacheSize,omitempty"`
 	Certifiers       []driver.ConfiguredIdentity `yaml:"certifiers,omitempty"`
 	Owners           []driver.ConfiguredIdentity `yaml:"owners,omitempty"`
 	Issuers          []driver.ConfiguredIdentity `yaml:"issuers,omitempty"`
@@ -54,6 +55,11 @@ func (i *IdentityConfig) CacheSizeForOwnerID(id string) int {
 
 func (i *IdentityConfig) DefaultCacheSize() int {
 	return i.Wallets.DefaultCacheSize
+}
+
+// SignerCacheSize returns the configured identity Provider signer cache size; 0 if unset.
+func (i *IdentityConfig) SignerCacheSize() int {
+	return i.Wallets.SignerCacheSize
 }
 
 func (i *IdentityConfig) TranslatePath(path string) string {

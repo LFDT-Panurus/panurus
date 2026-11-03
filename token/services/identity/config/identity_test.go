@@ -39,6 +39,25 @@ func TestCacheSizeIdentityConfig(t *testing.T) {
 	assert.Equal(t, 3, identityConfig.CacheSizeForOwnerID("unknown"))
 }
 
+// emptyConfig is a Config with no keys set.
+type emptyConfig struct{}
+
+func (emptyConfig) TranslatePath(path string) string          { return path }
+func (emptyConfig) UnmarshalKey(key string, rawVal any) error { return nil }
+
+func TestSignerCacheSizeIdentityConfig(t *testing.T) {
+	cp, err := config3.NewProvider("./testdata/token0")
+	require.NoError(t, err)
+	identityConfig, err := config.NewIdentityConfig(config2.NewConfiguration(cp, "n1c1ns1", driver.TMSID{}))
+	require.NoError(t, err)
+	assert.Equal(t, 200, identityConfig.SignerCacheSize())
+
+	// unset: 0, so the Provider uses its default
+	identityConfig, err = config.NewIdentityConfig(emptyConfig{})
+	require.NoError(t, err)
+	assert.Equal(t, 0, identityConfig.SignerCacheSize())
+}
+
 func TestTranslatePath(t *testing.T) {
 	cp, err := config3.NewProvider("./testdata/token0")
 	require.NoError(t, err)

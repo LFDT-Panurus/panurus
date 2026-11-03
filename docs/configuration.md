@@ -500,6 +500,9 @@ token:
       wallets:
         # Default cache size reference that can be used by any wallet that supports caching.
         defaultCacheSize: 3
+        # Number of entries of the identity provider's signer cache. Each typed identity takes 2 entries.
+        # 0 or unset: 50. See docs/services/identity.md#signer-cache-size.
+        signerCacheSize: 50
         # owner wallets
         owners:
         - id: alice # the unique identifier of this wallet. Here is an example of use: `ttx.GetWallet(context, "alice")` 
