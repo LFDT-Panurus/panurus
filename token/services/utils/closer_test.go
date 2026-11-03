@@ -18,6 +18,8 @@ import (
 
 // TestIgnoreError verifies that IgnoreError silently ignores errors
 func TestIgnoreError(t *testing.T) {
+	t.Parallel()
+
 	called := false
 	fn := func() error {
 		called = true
@@ -33,6 +35,8 @@ func TestIgnoreError(t *testing.T) {
 
 // TestIgnoreError_NoError verifies IgnoreError works with functions that don't error
 func TestIgnoreError_NoError(t *testing.T) {
+	t.Parallel()
+
 	called := false
 	fn := func() error {
 		called = true
@@ -47,6 +51,8 @@ func TestIgnoreError_NoError(t *testing.T) {
 
 // TestIgnoreErrorWithOneArg verifies that IgnoreErrorWithOneArg silently ignores errors
 func TestIgnoreErrorWithOneArg(t *testing.T) {
+	t.Parallel()
+
 	called := false
 	var receivedArg string
 
@@ -66,6 +72,8 @@ func TestIgnoreErrorWithOneArg(t *testing.T) {
 
 // TestIgnoreErrorWithOneArg_NoError verifies IgnoreErrorWithOneArg works with functions that don't error
 func TestIgnoreErrorWithOneArg_NoError(t *testing.T) {
+	t.Parallel()
+
 	called := false
 	var receivedArg int
 

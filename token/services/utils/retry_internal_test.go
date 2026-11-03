@@ -28,6 +28,8 @@ func internalTestLogger() logging.Logger {
 
 // With the default constructor the jitter factor is zero, so every delay is exact.
 func TestNextDelay_ExponentialUntilCapped(t *testing.T) {
+	t.Parallel()
+
 	r := NewRetryRunner(internalTestLogger(), 15, 10*time.Millisecond, true)
 
 	// 10ms doubling: the 13th attempt (index 12) is the first that would exceed the 30s cap.
@@ -45,6 +47,8 @@ func TestNextDelay_ExponentialUntilCapped(t *testing.T) {
 
 // Without exponential backoff every attempt waits the initial delay.
 func TestNextDelay_ConstantWhenBackoffDisabled(t *testing.T) {
+	t.Parallel()
+
 	r := NewRetryRunner(internalTestLogger(), 5, 25*time.Millisecond, false)
 
 	for _, attempt := range []int{0, 1, 7, 50} {
@@ -52,8 +56,29 @@ func TestNextDelay_ConstantWhenBackoffDisabled(t *testing.T) {
 	}
 }
 
+// A zero or negative maxDelay falls back to the 30s default cap. Checking the cap directly
+// replaces walking 15 real attempts up to it, which cost about 131s per test.
+func TestNewRetryRunnerWithJitter_InvalidMaxDelayUsesDefault(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, 30*time.Second, defaultMaxDelay, "the documented default cap changed")
+
+	for _, maxDelay := range []time.Duration{0, -10 * time.Second} {
+		r := NewRetryRunnerWithJitter(internalTestLogger(), 15, 10*time.Millisecond, maxDelay, 2.0, 0.0)
+
+		assert.Equal(t, defaultMaxDelay, r.maxDelay, "maxDelay %s", maxDelay)
+		// 10ms doubling stays under the cap through attempt 11 and is capped from attempt 12 on.
+		assert.Equal(t, 10*time.Millisecond<<11, r.nextDelay(11), "maxDelay %s", maxDelay)
+		for _, attempt := range []int{12, 14, 100} {
+			assert.Equal(t, defaultMaxDelay, r.nextDelay(attempt), "maxDelay %s, attempt %d", maxDelay, attempt)
+		}
+	}
+}
+
 // A custom cap is honoured, and growth stops there rather than at the default.
 func TestNextDelay_RespectsCustomMaxDelay(t *testing.T) {
+	t.Parallel()
+
 	r := NewRetryRunnerWithJitter(internalTestLogger(), 10, 100*time.Millisecond, time.Second, 2.0, 0.0)
 
 	assert.Equal(t, 100*time.Millisecond, r.nextDelay(0))
@@ -68,6 +93,8 @@ func TestNextDelay_RespectsCustomMaxDelay(t *testing.T) {
 // Jitter is random, so the delay is only bounded, not exact. It must stay inside the documented
 // band and must never push a capped delay above the cap by more than the jitter allows.
 func TestNextDelay_JitterStaysWithinBand(t *testing.T) {
+	t.Parallel()
+
 	const (
 		initial = 100 * time.Millisecond
 		maxD    = time.Second
@@ -95,6 +122,8 @@ func TestNextDelay_JitterStaysWithinBand(t *testing.T) {
 // through the public API is half the base delay. The negative guard is therefore unreachable that
 // way, which is worth pinning so nobody assumes otherwise.
 func TestNextDelay_ConstructorClampsJitter(t *testing.T) {
+	t.Parallel()
+
 	for _, requested := range []float64{1.0, 2.0, 3.0, 100.0} {
 		r := NewRetryRunnerWithJitter(internalTestLogger(), 10, 10*time.Millisecond, time.Second, 2.0, requested)
 		assert.LessOrEqual(t, r.jitterFactor, 1.0, "jitterFactor %v should have been clamped", requested)
@@ -110,6 +139,8 @@ func TestNextDelay_ConstructorClampsJitter(t *testing.T) {
 // than assert a branch that cannot fire: at jf=3.0 roughly one draw in six would otherwise go
 // negative, and each of those must come back as initialDelay instead.
 func TestNextDelay_FallsBackWhenJitterWouldGoNegative(t *testing.T) {
+	t.Parallel()
+
 	r := &retryRunner{
 		initialDelay:      10 * time.Millisecond,
 		maxDelay:          time.Second,

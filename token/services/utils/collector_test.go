@@ -18,6 +18,8 @@ import (
 )
 
 func TestAnswersCollector_AllAnswersArrive(t *testing.T) {
+	t.Parallel()
+
 	c := NewAnswersCollector[string, int](3, time.Second)
 
 	go c.Send("a", 1, nil)
@@ -37,6 +39,8 @@ func TestAnswersCollector_AllAnswersArrive(t *testing.T) {
 }
 
 func TestAnswersCollector_WorkerError(t *testing.T) {
+	t.Parallel()
+
 	c := NewAnswersCollector[string, int](2, time.Second)
 
 	boom := errors.New("boom")
@@ -58,6 +62,8 @@ func TestAnswersCollector_WorkerError(t *testing.T) {
 }
 
 func TestAnswersCollector_Timeout(t *testing.T) {
+	t.Parallel()
+
 	c := NewAnswersCollector[string, int](2, 20*time.Millisecond)
 
 	go c.Send("a", 1, nil)
@@ -70,6 +76,8 @@ func TestAnswersCollector_Timeout(t *testing.T) {
 }
 
 func TestAnswersCollector_ContextCanceled(t *testing.T) {
+	t.Parallel()
+
 	c := NewAnswersCollector[string, int](2, time.Second)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -86,6 +94,8 @@ func TestAnswersCollector_ContextCanceled(t *testing.T) {
 }
 
 func TestAnswersCollector_LateSendAfterTimeoutDoesNotBlock(t *testing.T) {
+	t.Parallel()
+
 	c := NewAnswersCollector[string, int](2, 10*time.Millisecond)
 
 	release := make(chan struct{})
@@ -109,6 +119,8 @@ func TestAnswersCollector_LateSendAfterTimeoutDoesNotBlock(t *testing.T) {
 }
 
 func TestAnswersCollector_DefaultTimeoutApplied(t *testing.T) {
+	t.Parallel()
+
 	c := NewAnswersCollector[string, int](1, 0)
 	assert.Equal(t, DefaultAnswersCollectorTimeout, c.timeout)
 

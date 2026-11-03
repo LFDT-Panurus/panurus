@@ -93,12 +93,62 @@ unit-tests:
 	@tail -n +2 x/token/services/network/evm/profile.cov >> profile.cov
 	@rm -f x/token/services/network/evm/profile.cov
 
+# unit-tests-race is split into shards that CI runs as parallel jobs. A shard selects its
+# root-module packages by import path; unit-tests-race-rest takes every package the other
+# shards do not match, so a new package always lands in exactly one shard. The split follows
+# the per-package durations under -race on CI: the Postgres-backed selector and storage
+# packages, the zkatdlog crypto packages, and everything else take a comparable time.
+UNIT_RACE_PKGS_CMD = go list ./... | grep -v '/integration/' | grep -v 'regression'
+
+# race_shard runs the race tests of the root-module packages that `grep $(1)` keeps from
+# UNIT_RACE_PKGS_CMD. It fails if the filter keeps none: an empty list would make go test fall
+# back to the current directory instead of testing nothing.
+define race_shard
+	@pkgs="$$($(UNIT_RACE_PKGS_CMD) | grep $(1))"; \
+	if [ -z "$$pkgs" ]; then echo "$@: no packages match the shard filter" >&2; exit 1; fi; \
+	export GORACE=history_size=7; go test -race $(RACE_COVER_FLAGS) $$pkgs
+endef
+UNIT_RACE_DB_RE = /token/services/(selector|storage)(/|$$)
+UNIT_RACE_CORE_RE = /token/core/
+
+# COVERAGE=1 makes a unit-tests-race-* shard write a coverage profile to COVERAGE_PROFILE,
+# instrumenting every root-module package (-coverpkg=./...) the same way `make unit-tests`
+# does, so CI uploads the coverage of the race run instead of running the suite twice.
+# Each shard overwrites COVERAGE_PROFILE, so use it with one shard at a time.
+COVERAGE_PROFILE ?= $(CURDIR)/profile.cov
+ifdef COVERAGE
+RACE_COVER_FLAGS = -coverpkg=./... -coverprofile=$(COVERAGE_PROFILE)
+EVM_RACE_COVER_FLAGS = -coverpkg=./... -coverprofile=profile.cov
+else
+RACE_COVER_FLAGS = -cover
+EVM_RACE_COVER_FLAGS = -cover
+endif
+
 .PHONY: unit-tests-race
-# run unit tests with race detection
-unit-tests-race:
-	@export GORACE=history_size=7; go test -race -cover $(shell go list ./... | grep -v '/integration/'  | grep -v 'regression')
+# run unit tests with race detection (every shard below, one after the other)
+unit-tests-race: unit-tests-race-db unit-tests-race-core unit-tests-race-rest
+
+.PHONY: unit-tests-race-db
+# run the selector and storage unit tests (most need Postgres or Vault) with race detection
+unit-tests-race-db:
+	$(call race_shard,-E '$(UNIT_RACE_DB_RE)')
+	cd token/services/storage/db/kvs/hashicorp/; go test -cover ./...
+
+.PHONY: unit-tests-race-core
+# run the token/core (driver and crypto) unit tests with race detection
+unit-tests-race-core:
+	$(call race_shard,-E '$(UNIT_RACE_CORE_RE)')
+
+.PHONY: unit-tests-race-rest
+# run the remaining unit tests, the nwo harness tests and the evm module tests with race detection
+unit-tests-race-rest:
+	$(call race_shard,-vE '$(UNIT_RACE_DB_RE)|$(UNIT_RACE_CORE_RE)')
 	cd integration/nwo/; go test -cover ./...
-	@export GORACE=history_size=7; cd x/token/services/network/evm; go test -race -cover ./...
+	@export GORACE=history_size=7; cd x/token/services/network/evm; go test -race $(EVM_RACE_COVER_FLAGS) ./...
+ifdef COVERAGE
+	@tail -n +2 x/token/services/network/evm/profile.cov >> $(COVERAGE_PROFILE)
+	@rm -f x/token/services/network/evm/profile.cov
+endif
 
 .PHONY: unit-tests-regression
 # run regression unit tests

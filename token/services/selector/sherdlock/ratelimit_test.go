@@ -18,6 +18,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock/mocks"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -134,18 +135,26 @@ func TestServiceRateLimiting(t *testing.T) {
 		selector, err := mgr.NewSelector("tx1")
 		require.NoError(t, err)
 
-		// Drain the default burst of 200. Allowed selections reach the absent lock store of this
-		// harness and panic there, which says nothing about the limiter: swallow it.
-		for range 200 {
-			func() {
-				defer func() { _ = recover() }()
-				_, _, _ = selector.Select(t.Context(), &unitTestMockOwnerFilter{id: "alice"}, "50", "ABC")
-			}()
-		}
-		assert.Zero(t, counter.AddCallCount(), "allowed requests must not be counted as denials")
+		// Drain the default burst of 200 until the first denial. Allowed selections reach the
+		// absent lock store of this harness and panic there, which says nothing about the
+		// limiter: swallow it. The limiter refills on the wall clock (100 requests/s by
+		// default), so a slow run (e.g. -race on a loaded runner) may be allowed a few more
+		// than 200 requests: loop until denied instead of assuming the 201st is denied.
+		selectOnce := func() (err error) {
+			defer func() { _ = recover() }()
+			_, _, err = selector.Select(t.Context(), &unitTestMockOwnerFilter{id: "alice"}, "50", "ABC")
 
-		_, _, err = selector.Select(t.Context(), &unitTestMockOwnerFilter{id: "alice"}, "50", "ABC")
+			return err
+		}
+		allowed := 0
+		for ; allowed < 100000; allowed++ {
+			if err = selectOnce(); errors.Is(err, token.SelectorRateLimited) {
+				break
+			}
+			require.Zero(t, counter.AddCallCount(), "allowed requests must not be counted as denials")
+		}
 		require.ErrorIs(t, err, token.SelectorRateLimited)
+		assert.GreaterOrEqual(t, allowed, 200, "the default burst must allow at least 200 requests")
 
 		assert.Equal(t, 1, counter.AddCallCount())
 		assert.Equal(t, 1, gauge.SetCallCount())
@@ -184,7 +193,7 @@ func newServiceUnderTestWithMetrics(t *testing.T, metricsProvider *mocks.FakePro
 	fetcherProvider.GetFetcherReturns(newFetcherOf("100"), nil)
 	lockStoreManager := &mocks.FakeTokenLockStoreServiceManager{}
 	lockStoreManager.StoreServiceByTMSIdReturns(nil, nil)
-	svc := sherdlock.NewService(fetcherProvider, lockStoreManager, &mocks.FakeConfigProvider{}, metricsProvider, opts...)
+	svc := sherdlock.NewService(fetcherProvider, lockStoreManager, noLeaseCleanerConfig(), metricsProvider, opts...)
 
 	driverTMS := &drivermock.TokenManagerService{}
 	ppm := &drivermock.PublicParamsManager{}

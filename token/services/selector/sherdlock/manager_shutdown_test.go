@@ -120,6 +120,9 @@ func TestManager_Stop(t *testing.T) {
 }
 
 func TestManager_StopReturnsTimeoutError(t *testing.T) {
+	// Waits out the full stopTimeout on a Manager of its own, so it shares nothing.
+	t.Parallel()
+
 	m := &Manager{
 		cancel:      func() {},
 		cleanerDone: make(chan struct{}),

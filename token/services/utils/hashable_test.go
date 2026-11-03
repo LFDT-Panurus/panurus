@@ -19,6 +19,8 @@ import (
 
 // TestHashable_Raw verifies that Raw() computes SHA256 hash correctly
 func TestHashable_Raw(t *testing.T) {
+	t.Parallel()
+
 	t.Run("non-empty data", func(t *testing.T) {
 		data := Hashable([]byte("test data"))
 		hash := data.Raw()
@@ -52,6 +54,8 @@ func TestHashable_Raw(t *testing.T) {
 
 // TestHashable_String verifies that String() returns base64 encoded hash
 func TestHashable_String(t *testing.T) {
+	t.Parallel()
+
 	data := Hashable([]byte("test data"))
 	str := data.String()
 
@@ -66,6 +70,8 @@ func TestHashable_String(t *testing.T) {
 
 // TestHashable_RawString verifies that RawString() returns raw bytes as string
 func TestHashable_RawString(t *testing.T) {
+	t.Parallel()
+
 	data := Hashable([]byte("test data"))
 	rawStr := data.RawString()
 
@@ -75,6 +81,8 @@ func TestHashable_RawString(t *testing.T) {
 
 // TestHasher_AddInt32 verifies adding int32 values to hash
 func TestHasher_AddInt32(t *testing.T) {
+	t.Parallel()
+
 	h := NewSHA256Hasher()
 
 	err := h.AddInt32(42)
@@ -86,6 +94,8 @@ func TestHasher_AddInt32(t *testing.T) {
 
 // TestHasher_AddInt verifies adding int values to hash
 func TestHasher_AddInt(t *testing.T) {
+	t.Parallel()
+
 	h := NewSHA256Hasher()
 
 	err := h.AddInt(12345)
@@ -97,6 +107,8 @@ func TestHasher_AddInt(t *testing.T) {
 
 // TestHasher_AddUInt64 verifies adding uint64 values to hash
 func TestHasher_AddUInt64(t *testing.T) {
+	t.Parallel()
+
 	h := NewSHA256Hasher()
 
 	err := h.AddUInt64(9876543210)
@@ -108,6 +120,8 @@ func TestHasher_AddUInt64(t *testing.T) {
 
 // TestHasher_AddBytes verifies adding byte slices to hash
 func TestHasher_AddBytes(t *testing.T) {
+	t.Parallel()
+
 	h := NewSHA256Hasher()
 
 	err := h.AddBytes([]byte("test data"))
@@ -119,6 +133,8 @@ func TestHasher_AddBytes(t *testing.T) {
 
 // TestHasher_AddString verifies adding strings to hash
 func TestHasher_AddString(t *testing.T) {
+	t.Parallel()
+
 	h := NewSHA256Hasher()
 
 	err := h.AddString("test string")
@@ -130,6 +146,8 @@ func TestHasher_AddString(t *testing.T) {
 
 // TestHasher_AddBool verifies adding boolean values to hash
 func TestHasher_AddBool(t *testing.T) {
+	t.Parallel()
+
 	t.Run("true", func(t *testing.T) {
 		h := NewSHA256Hasher()
 
@@ -167,6 +185,8 @@ func TestHasher_AddBool(t *testing.T) {
 
 // TestHasher_AddFloat64 verifies adding float64 values to hash
 func TestHasher_AddFloat64(t *testing.T) {
+	t.Parallel()
+
 	h := NewSHA256Hasher()
 
 	err := h.AddFloat64(3.14159)
@@ -178,6 +198,8 @@ func TestHasher_AddFloat64(t *testing.T) {
 
 // TestHasher_Digest verifies Digest returns correct hash
 func TestHasher_Digest(t *testing.T) {
+	t.Parallel()
+
 	h := NewSHA256Hasher()
 	_ = h.AddString("test")
 
@@ -187,6 +209,8 @@ func TestHasher_Digest(t *testing.T) {
 
 // TestHasher_HexDigest verifies HexDigest returns hex-encoded hash
 func TestHasher_HexDigest(t *testing.T) {
+	t.Parallel()
+
 	h := NewSHA256Hasher()
 	_ = h.AddString("test")
 
@@ -202,6 +226,8 @@ func TestHasher_HexDigest(t *testing.T) {
 
 // TestHasher_AddG1s verifies adding G1 elements to hash
 func TestHasher_AddG1s(t *testing.T) {
+	t.Parallel()
+
 	curve := math.Curves[1] // BN254
 	g1 := curve.GenG1
 
@@ -241,6 +267,8 @@ func TestHasher_AddG1s(t *testing.T) {
 
 // TestHasher_Deterministic verifies that hashing is deterministic
 func TestHasher_Deterministic(t *testing.T) {
+	t.Parallel()
+
 	// Create two hashers with the same data
 	h1 := NewSHA256Hasher()
 	_ = h1.AddString("test")
@@ -258,6 +286,8 @@ func TestHasher_Deterministic(t *testing.T) {
 
 // TestHasher_OrderMatters verifies that order of additions matters
 func TestHasher_OrderMatters(t *testing.T) {
+	t.Parallel()
+
 	h1 := NewSHA256Hasher()
 	_ = h1.AddString("first")
 	_ = h1.AddString("second")

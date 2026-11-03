@@ -13,6 +13,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	drivermock "github.com/LFDT-Panurus/panurus/token/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/config"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock/mocks"
 	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
@@ -26,7 +27,7 @@ import (
 func TestServiceUnit(t *testing.T) {
 	mockFP := &mocks.FakeFetcherProvider{}
 	mockLSM := &mocks.FakeTokenLockStoreServiceManager{}
-	mockCP := &mocks.FakeConfigProvider{}
+	mockCP := noLeaseCleanerConfig()
 	metricsProvider, _ := setupMetricsMocks()
 
 	svc := sherdlock.NewService(mockFP, mockLSM, mockCP, metricsProvider)
@@ -62,6 +63,23 @@ func TestServiceUnit(t *testing.T) {
 	})
 }
 
+// noLeaseCleanerConfig returns a selector configuration that disables the lease cleaner. With the
+// default configuration every manager the service builds starts a cleaner that ticks after a
+// minute and outlives the test, and these harnesses back the manager with no lock store, so a
+// tick in a later test (go test -shuffle=on can put one there) dereferences a nil store.
+func noLeaseCleanerConfig() *mocks.FakeConfigProvider {
+	cp := &mocks.FakeConfigProvider{}
+	cp.UnmarshalKeyCalls(func(key string, val any) error {
+		if c, ok := val.(*config.Config); ok {
+			c.LeaseCleanupTickPeriod = -1
+		}
+
+		return nil
+	})
+
+	return cp
+}
+
 // Minimal VaultProvider mock for NewManagementService
 type tokenMockVP struct{}
 
@@ -78,7 +96,7 @@ func TestServicePrecisionFollowsPublicParamsUpdate(t *testing.T) {
 	lockStoreManager := &mocks.FakeTokenLockStoreServiceManager{}
 	lockStoreManager.StoreServiceByTMSIdReturns(&tokenlockdb.StoreService{TokenLockStore: acceptingLockStore{}}, nil)
 	metricsProvider, _ := setupMetricsMocks()
-	svc := sherdlock.NewService(fetcherProvider, lockStoreManager, &mocks.FakeConfigProvider{}, metricsProvider)
+	svc := sherdlock.NewService(fetcherProvider, lockStoreManager, noLeaseCleanerConfig(), metricsProvider)
 
 	before, err := svc.SelectorManager(newTMSWithPrecision(t, 32))
 	require.NoError(t, err)
