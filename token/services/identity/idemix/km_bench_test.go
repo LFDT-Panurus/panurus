@@ -217,3 +217,32 @@ func TestParallelBenchmarkIdemixDeserializeSignerNoProbe(t *testing.T) {
 	)
 	r.Print()
 }
+
+// BenchmarkSigningIdentitySign measures Idemix signing with generated and deserialized signers.
+func BenchmarkSigningIdentitySign(b *testing.B) {
+	keyManager, cleanup := setupKeyManager(b, "./testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
+	defer cleanup()
+	desc, err := keyManager.Identity(b.Context(), nil)
+	require.NoError(b, err)
+	message := []byte("hello world")
+
+	b.Run("generated", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			if _, err := desc.Signer.Sign(message); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("deserialized", func(b *testing.B) {
+		signer, err := keyManager.DeserializeSigner(b.Context(), desc.Identity)
+		require.NoError(b, err)
+		b.ReportAllocs()
+		for b.Loop() {
+			if _, err := signer.Sign(message); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}
