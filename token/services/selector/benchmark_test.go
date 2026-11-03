@@ -289,6 +289,9 @@ func reportSherdlockMetrics(b *testing.B, mp *benchMetricsProvider) {
 	if avg, count, ok := mp.histogramAvg("selection_duration_seconds"); ok && count > 0 {
 		b.Logf("metrics: selection_duration_seconds avg=%.6f (n=%d)", avg, count)
 	}
+	if avg, count, ok := mp.histogramAvg("candidate_permutation_duration_seconds"); ok && count > 0 {
+		b.Logf("metrics: candidate_permutation_duration_seconds avg=%.6f (n=%d)", avg, count)
+	}
 	for label, v := range mp.counterByLabel("unspent_tokens_invocations") {
 		b.Logf("metrics: unspent_tokens_invocations[%s]=%.0f", label, v)
 	}

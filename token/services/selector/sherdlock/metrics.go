@@ -18,6 +18,11 @@ const (
 	eager            string            = "eager"
 )
 
+// permutationDurationBuckets spans microseconds to half a second: a shuffle is far shorter than a
+// whole selection (see selectionDurationBuckets), from a handful of tokens up to a wallet of
+// millions, with finer steps around the 6-18ms measured at 1M cached tokens (#2491).
+var permutationDurationBuckets = []float64{1e-5, 1e-4, 1e-3, 5e-3, 7.5e-3, 1e-2, 1.5e-2, 2e-2, 2.5e-2, 5e-2, .1, .5}
+
 var selectionDurationBuckets = []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}
 
 type Metrics struct {
@@ -78,6 +83,14 @@ type Metrics struct {
 	// means the freshness interval is long relative to how fast the wallet turns over, and
 	// the eager strategy is paying for a snapshot it cannot keep.
 	CacheInvalidations metrics.Counter
+	// CandidatePermutationDuration tracks, in seconds, the time spent in
+	// bucketedIterator.NewPermutation: copying and shuffling a wallet's whole candidate
+	// list. It is observed once per permutation performed (not per permutation consumed),
+	// labelled by the fetcher_type that paid it: eager for a cache hit (the eager strategy
+	// and the eager leg of mixed), lazy for a list just read from the store. It lets a
+	// large cached wallet's share of selection_duration_seconds be told apart from the
+	// database and from lock contention. See #2491, #2510.
+	CandidatePermutationDuration metrics.Histogram
 }
 
 func NewMetrics(p metrics.Provider) *Metrics {
@@ -120,6 +133,12 @@ func NewMetrics(p metrics.Provider) *Metrics {
 		StaleCandidates: p.NewCounter(metrics.CounterOpts{
 			Name: "stale_candidates_total",
 			Help: "Total number of candidate tokens dropped because they were no longer spendable when the lock was attempted",
+		}),
+		CandidatePermutationDuration: p.NewHistogram(metrics.HistogramOpts{
+			Name:       "candidate_permutation_duration_seconds",
+			Help:       "Duration in seconds of copying and shuffling a wallet's candidate token list (NewPermutation)",
+			Buckets:    permutationDurationBuckets,
+			LabelNames: []string{fetcherTypeLabel},
 		}),
 		CacheInvalidations: p.NewCounter(metrics.CounterOpts{
 			Name: "cache_invalidations_total",

@@ -236,6 +236,17 @@ bound on most calls means the freshness interval is long relative to how fast th
 over, and the eager strategy is paying for a snapshot it cannot keep — `fetcherStrategy: lazy`
 (or a shorter `fetcherCacheRefresh`) is then the cheaper configuration.
 
+`candidate_permutation_duration_seconds` (#2510) is the time `NewPermutation` spends copying and
+shuffling a wallet's whole candidate list (the within-amount shuffle that spreads contention). It
+is observed once per permutation performed and labelled `fetcher_type`: `eager` for a cache hit
+(the eager strategy and the eager leg of mixed), `lazy` for a list just read from the store. A cache
+miss shuffles nothing and observes nothing. In mixed, a call is normally observed under one of the
+two; if the eager leg's iterator then fails its peek, the call falls through to the lazy leg and
+observes under both. Read it against `selection_duration_seconds`: if its sum is a large share of the selection
+time, the shuffle (not the database or lock contention) is what a large cached wallet is paying; the
+cost grows with the number of candidates (see `BenchmarkNewPermutation`). If #2491 changes the
+shuffle, the histogram measures whatever `NewPermutation` then does.
+
 For `StubbornSelector`, both `selection_immediate_retries` and `distinct_tokens_attempted` are
 observed once per outer `Select()` call, aggregated over every internal backoff-retry attempt it
 makes — not once per attempt. They aggregate differently: `selection_immediate_retries` counts
@@ -253,6 +264,7 @@ tokens and so unions them, meaning a token contended across several attempts is 
 | `panurus_services_selector_sherdlock_lock_store_errors_total` | counter | — | Total number of TryLock/TryLockBatch failures that are not lock conflicts (a genuine store error) |
 | `panurus_services_selector_sherdlock_stale_candidates_total` | counter | — | Total number of candidate tokens dropped because they were no longer spendable when the lock was attempted |
 | `panurus_services_selector_sherdlock_cache_invalidations_total` | counter | — | Total number of times the candidate source was told its snapshot is behind the token store, forcing the next read to refresh it |
+| `panurus_services_selector_sherdlock_candidate_permutation_duration_seconds` | histogram | `fetcher_type` | Duration in seconds of copying and shuffling a wallet's candidate token list (NewPermutation) |
 
 Source: `token/services/selector/sherdlock/metrics.go`.
 
