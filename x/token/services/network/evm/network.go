@@ -576,7 +576,9 @@ func (n *Network) AreTokensSpent(
 
 // LookupTransferMetadataKey reads a transfer metadata value from namespace's own TokenState contract,
 // polling until it appears or the timeout expires. The value is written when the transaction carrying
-// it is applied, so a caller may legitimately ask before it exists.
+// it is applied, so a caller may legitimately ask before it exists. A failed read is retried on the
+// next tick like a missing value, so one transient node error does not end the wait; if the timeout
+// expires after a failed read, that error is returned.
 func (n *Network) LookupTransferMetadataKey(namespace string, key string, timeout time.Duration) ([]byte, error) {
 	binding, err := n.binding(namespace)
 	if err != nil {
@@ -592,14 +594,18 @@ func (n *Network) LookupTransferMetadataKey(namespace string, key string, timeou
 
 	for {
 		value, err := binding.reader.transferMetadata(ctx, metadataKey)
-		if err != nil {
-			return nil, err
-		}
-		if len(value) != 0 {
+		if err == nil && len(value) != 0 {
 			return value, nil
+		}
+		if err != nil {
+			logger.Debugf("reading transfer metadata key [%s] failed, retrying: %v", key, err)
 		}
 		select {
 		case <-ctx.Done():
+			if err != nil {
+				return nil, errors.Wrapf(err, "transfer metadata key [%s] not found within %s", key, timeout)
+			}
+
 			return nil, errors.Errorf("transfer metadata key [%s] not found within %s", key, timeout)
 		case <-ticker.C:
 		}

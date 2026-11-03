@@ -557,6 +557,40 @@ func TestFinalityTimeout(t *testing.T) {
 	assert.Zero(t, n.FinalityTimeout("unknown"))
 }
 
+// TestLookupTransferMetadataKeyRetriesAFailedRead checks a transient node error is retried within the
+// timeout instead of ending the wait.
+func TestLookupTransferMetadataKeyRetriesAFailedRead(t *testing.T) {
+	evm := &mock.EVMClient{}
+	evm.CallReturnsOnCall(0, nil, errors.New("connection reset by peer"))
+	evm.CallReturns(abiBytes([]byte("preimage")), nil)
+	n := testNetwork(t, evm, nil)
+	binding, err := n.binding(testNamespace)
+	require.NoError(t, err)
+	binding.config.Finality.PollInterval = 10 * time.Millisecond
+
+	value, err := n.LookupTransferMetadataKey("token", "key", 5*time.Second)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("preimage"), value)
+	assert.Equal(t, 2, evm.CallCallCount())
+}
+
+// TestLookupTransferMetadataKeyReportsTheLastReadError checks a wait that times out after a failed
+// read says why, rather than only that the key was not found.
+func TestLookupTransferMetadataKeyReportsTheLastReadError(t *testing.T) {
+	evm := &mock.EVMClient{}
+	evm.CallReturns(nil, errors.New("connection reset by peer"))
+	n := testNetwork(t, evm, nil)
+	binding, err := n.binding(testNamespace)
+	require.NoError(t, err)
+	binding.config.Finality.PollInterval = 10 * time.Millisecond
+
+	_, err = n.LookupTransferMetadataKey("token", "key", 50*time.Millisecond)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+	assert.Contains(t, err.Error(), "connection reset by peer")
+	assert.Greater(t, evm.CallCallCount(), 1, "the read is retried until the timeout")
+}
+
 func TestLookupTransferMetadataKeyFound(t *testing.T) {
 	evm := &mock.EVMClient{}
 	evm.CallReturns(abiBytes([]byte("value")), nil)

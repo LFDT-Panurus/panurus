@@ -224,9 +224,7 @@ func (m *Manager) watch(anchor [32]byte, anchorID string) {
 	if code, hash, message, err := m.StatusByAnchor(ctx, anchor); err == nil {
 		observed = true
 		if code == driver.Valid {
-			for _, l := range m.take(anchorID) {
-				l.OnStatus(ctx, anchorID, code, message, hash)
-			}
+			m.notifyValid(anchorID, message, hash)
 
 			return
 		}
@@ -241,9 +239,7 @@ func (m *Manager) watch(anchor [32]byte, anchorID string) {
 			}
 			observed = true
 			if code == driver.Valid {
-				for _, l := range m.take(anchorID) {
-					l.OnStatus(ctx, anchorID, code, message, hash)
-				}
+				m.notifyValid(anchorID, message, hash)
 
 				return
 			}
@@ -266,6 +262,16 @@ func (m *Manager) watch(anchor [32]byte, anchorID string) {
 
 			return
 		}
+	}
+}
+
+// notifyValid hands a Valid verdict to the anchor's listeners. They get a fresh context, not the
+// watch's: that one expires at the finality timeout, and a listener commits the transaction (with its
+// own retries) under the context it is given, so an anchor found late in the window would leave it
+// almost no time.
+func (m *Manager) notifyValid(anchorID string, message string, hash []byte) {
+	for _, l := range m.take(anchorID) {
+		l.OnStatus(context.Background(), anchorID, driver.Valid, message, hash)
 	}
 }
 
