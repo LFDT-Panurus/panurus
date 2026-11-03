@@ -128,7 +128,8 @@ func (f *IdentityFactory) GetFullIdentity(sidInfo *SigningIdentityInfo) (*fullId
 	}
 
 	// Find the matching private key in the BCCSP keystore
-	_, err = f.bccsp.GetKey(pubKey.SKI())
+	ski := pubKey.SKI()
+	key, err := f.bccsp.GetKey(ski)
 	// Less Secure: Attempt to import Private Key from KeyInfo, if BCCSP was not able to find the key
 	if err != nil {
 		if sidInfo.PrivateSigner == nil || sidInfo.PrivateSigner.KeyMaterial == nil {
@@ -142,10 +143,15 @@ func (f *IdentityFactory) GetFullIdentity(sidInfo *SigningIdentityInfo) (*fullId
 		if err != nil {
 			return nil, errors.WithMessagef(err, "failed to import EC private key")
 		}
+		// look up by the certificate's SKI, so a mismatched key fails here
+		key, err = f.bccsp.GetKey(ski)
+		if err != nil {
+			return nil, errors.WithMessagef(err, "failed to retrieve the imported key for SKI [%s]", ski)
+		}
 	}
 
 	// get the peer signer
-	identitySigner, err := NewSKIBasedSigner(f.bccsp, pubKey.SKI(), cryptoPK)
+	identitySigner, err := newSKIBasedSigner(f.bccsp, ski, cryptoPK, key)
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to create identity signer")
 	}
@@ -173,13 +179,14 @@ func (f *IdentityFactory) DeserializeFullIdentity(raw []byte) (*fullIdentity, er
 	}
 
 	// Find the matching private key in the BCCSP keystore
-	_, err = f.bccsp.GetKey(pubKey.SKI())
+	ski := pubKey.SKI()
+	key, err := f.bccsp.GetKey(ski)
 	if err != nil {
 		return nil, err
 	}
 
 	// get the peer signer
-	identitySigner, err := NewSKIBasedSigner(f.bccsp, pubKey.SKI(), cryptoPK)
+	identitySigner, err := newSKIBasedSigner(f.bccsp, ski, cryptoPK, key)
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to create identity signer")
 	}

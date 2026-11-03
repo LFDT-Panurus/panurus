@@ -51,15 +51,7 @@ func (d *ecdsaVerifier) Verify(message, sigma []byte) error {
 		return err
 	}
 
-	hash := sha256.New()
-	n, err := hash.Write(message)
-	if n != len(message) {
-		return errors.Errorf("hash failure")
-	}
-	if err != nil {
-		return err
-	}
-	digest := hash.Sum(nil)
+	digest := sha256.Sum256(message)
 
 	lowS, err := IsLowS(d.pk, signature.S)
 	if err != nil {
@@ -69,7 +61,7 @@ func (d *ecdsaVerifier) Verify(message, sigma []byte) error {
 		return errors.New("signature is not in lowS")
 	}
 
-	valid := ecdsa.Verify(d.pk, digest, signature.R, signature.S)
+	valid := ecdsa.Verify(d.pk, digest[:], signature.R, signature.S)
 	if !valid {
 		return errors.Errorf("signature not valid")
 	}

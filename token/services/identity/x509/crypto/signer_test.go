@@ -22,6 +22,12 @@ import (
 )
 
 func TestNewSKIBasedSigner(t *testing.T) {
+	keyFound := func() *mocks.BCCSP {
+		m := &mocks.BCCSP{}
+		m.On("GetKey", mock.Anything).Return(&mocks.Key{}, nil)
+
+		return m
+	}
 	tests := []struct {
 		name    string
 		csp     bccsp.BCCSP
@@ -29,6 +35,13 @@ func TestNewSKIBasedSigner(t *testing.T) {
 		pk      crypto.PublicKey
 		wantErr bool
 	}{
+		{
+			name:    "Valid",
+			csp:     keyFound(),
+			ski:     []byte("test"),
+			pk:      &testPublicKey{},
+			wantErr: false,
+		},
 		{
 			name:    "Invalid CSP",
 			csp:     nil,
@@ -50,6 +63,19 @@ func TestNewSKIBasedSigner(t *testing.T) {
 			pk:      nil,
 			wantErr: true,
 		},
+		{
+			// the key is resolved at construction
+			name: "GetKey Failure",
+			csp: func() *mocks.BCCSP {
+				m := &mocks.BCCSP{}
+				m.On("GetKey", mock.Anything).Return(nil, errors.New("get key failed"))
+
+				return m
+			}(),
+			ski:     []byte("test"),
+			pk:      &testPublicKey{},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -66,7 +92,9 @@ func TestNewSKIBasedSigner(t *testing.T) {
 
 func TestSKIBasedSigner_Public(t *testing.T) {
 	pk := &testPublicKey{}
-	signer, err := NewSKIBasedSigner(&mocks.BCCSP{}, []byte("test"), pk)
+	mockCsp := &mocks.BCCSP{}
+	mockCsp.On("GetKey", mock.Anything).Return(&mocks.Key{}, nil)
+	signer, err := NewSKIBasedSigner(mockCsp, []byte("test"), pk)
 	require.NoError(t, err)
 
 	actualPk := signer.Public()
@@ -76,68 +104,37 @@ func TestSKIBasedSigner_Public(t *testing.T) {
 func TestSKIBasedSigner_Sign(t *testing.T) {
 	tests := []struct {
 		name    string
-		setup   func() (crypto.Signer, *mocks.BCCSP)
-		digest  []byte
-		opts    crypto.SignerOpts
+		signErr error
 		wantErr bool
-		signer  crypto.Signer
 	}{
-		{
-			name: "Success",
-			setup: func() (crypto.Signer, *mocks.BCCSP) {
-				mockCsp := &mocks.BCCSP{}
-				signer, err := NewSKIBasedSigner(mockCsp, []byte("test"), &testPublicKey{})
-				require.NoError(t, err)
-				mockCsp.On("GetKey", mock.Anything).Return(&mocks.Key{}, nil)
-				mockCsp.On("Sign", mock.Anything, mock.Anything, mock.Anything).Return([]byte("signature"), nil)
-
-				return signer, mockCsp
-			},
-			digest:  []byte("digest"),
-			opts:    nil,
-			wantErr: false,
-		},
-		{
-			name: "GetKey Failure",
-			setup: func() (crypto.Signer, *mocks.BCCSP) {
-				mockCsp := &mocks.BCCSP{}
-				signer, err := NewSKIBasedSigner(mockCsp, []byte("test"), &testPublicKey{})
-				require.NoError(t, err)
-				mockCsp.On("GetKey", mock.Anything).Return(nil, errors.New("get key failed"))
-
-				return signer, mockCsp
-			},
-			digest:  []byte("digest"),
-			opts:    nil,
-			wantErr: true,
-		},
-		{
-			name: "Sign Failure",
-			setup: func() (crypto.Signer, *mocks.BCCSP) {
-				mockCsp := &mocks.BCCSP{}
-				signer, err := NewSKIBasedSigner(mockCsp, []byte("test"), &testPublicKey{})
-				require.NoError(t, err)
-				mockCsp.On("GetKey", mock.Anything).Return(&mocks.Key{}, nil)
-				mockCsp.On("Sign", mock.Anything, mock.Anything, mock.Anything).Return(nil, errors.New("sign failed"))
-
-				return signer, mockCsp
-			},
-			digest:  []byte("digest"),
-			opts:    nil,
-			wantErr: true,
-		},
+		{name: "Success"},
+		{name: "Sign Failure", signErr: errors.New("sign failed"), wantErr: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			signer, mockCsp := tt.setup()
-			_, err := signer.Sign(nil, tt.digest, tt.opts)
-			mockCsp.AssertExpectations(t)
-			if tt.wantErr {
-				require.Error(t, err)
+			mockCsp := &mocks.BCCSP{}
+			key := &mocks.Key{}
+			mockCsp.On("GetKey", mock.Anything).Return(key, nil).Once()
+			if tt.signErr != nil {
+				mockCsp.On("Sign", key, mock.Anything, mock.Anything).Return(nil, tt.signErr)
 			} else {
-				require.NoError(t, err)
+				mockCsp.On("Sign", key, mock.Anything, mock.Anything).Return([]byte("signature"), nil)
 			}
+			signer, err := NewSKIBasedSigner(mockCsp, []byte("test"), &testPublicKey{})
+			require.NoError(t, err)
+
+			// sign twice: GetKey is not called again
+			for range 2 {
+				_, err = signer.Sign(nil, []byte("digest"), nil)
+				if tt.wantErr {
+					require.Error(t, err)
+				} else {
+					require.NoError(t, err)
+				}
+			}
+			mockCsp.AssertExpectations(t)
+			mockCsp.AssertNumberOfCalls(t, "GetKey", 1)
 		})
 	}
 }

@@ -588,7 +588,8 @@ func TestFullIdentity_SignError(t *testing.T) {
 		cert, err := PemDecodeCert(certPEM)
 		require.NoError(t, err)
 
-		signer, err := NewSKIBasedSigner(csp, key.SKI(), &priv.PublicKey)
+		// temporary key: not in the keystore
+		signer, err := newSKIBasedSigner(csp, key.SKI(), &priv.PublicKey, key)
 		require.NoError(t, err)
 
 		fi := &fullIdentity{

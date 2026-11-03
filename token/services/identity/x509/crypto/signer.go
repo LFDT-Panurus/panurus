@@ -14,27 +14,51 @@ import (
 	"github.com/hyperledger/fabric-lib-go/bccsp"
 )
 
-// SKIBasedSigner implements a crypto.Signer based on the bccsp
+// SKIBasedSigner implements a crypto.Signer based on the bccsp.
+// The private key is resolved once, at construction.
 type SKIBasedSigner struct {
 	csp bccsp.BCCSP
 	SKI []byte
 	pk  crypto.PublicKey
+	key bccsp.Key
 }
 
-// NewSKIBasedSigner returns a new SKIBasedSigner
+// NewSKIBasedSigner returns a new SKIBasedSigner for the key the BCCSP holds under ski.
 func NewSKIBasedSigner(csp bccsp.BCCSP, ski []byte, pk crypto.PublicKey) (crypto.Signer, error) {
-	// Validate arguments
-	if csp == nil {
-		return nil, errors.New("bccsp instance must be different from nil")
+	if err := checkSignerArgs(csp, ski, pk); err != nil {
+		return nil, err
 	}
-	if len(ski) == 0 {
-		return nil, errors.New("SKI is empty")
-	}
-	if pk == nil {
-		return nil, errors.New("PK is nil")
+	key, err := csp.GetKey(ski)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed to retrieve key for SKI [%s]", ski)
 	}
 
-	return &SKIBasedSigner{csp: csp, SKI: ski, pk: pk}, nil
+	return newSKIBasedSigner(csp, ski, pk, key)
+}
+
+func newSKIBasedSigner(csp bccsp.BCCSP, ski []byte, pk crypto.PublicKey, key bccsp.Key) (*SKIBasedSigner, error) {
+	if err := checkSignerArgs(csp, ski, pk); err != nil {
+		return nil, err
+	}
+	if key == nil {
+		return nil, errors.New("key is nil")
+	}
+
+	return &SKIBasedSigner{csp: csp, SKI: ski, pk: pk, key: key}, nil
+}
+
+func checkSignerArgs(csp bccsp.BCCSP, ski []byte, pk crypto.PublicKey) error {
+	if csp == nil {
+		return errors.New("bccsp instance must be different from nil")
+	}
+	if len(ski) == 0 {
+		return errors.New("SKI is empty")
+	}
+	if pk == nil {
+		return errors.New("PK is nil")
+	}
+
+	return nil
 }
 
 // Public returns the public key corresponding to the opaque,
@@ -56,10 +80,5 @@ func (s *SKIBasedSigner) Public() crypto.PublicKey {
 // the caller is responsible for hashing the larger message and passing
 // the hash (as digest) and the hash function (as opts) to Sign.
 func (s *SKIBasedSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	key, err := s.csp.GetKey(s.SKI)
-	if err != nil {
-		return nil, errors.WithMessagef(err, "failed to retrieve key for SKI [%s]", s.SKI)
-	}
-
-	return s.csp.Sign(key, digest, opts)
+	return s.csp.Sign(s.key, digest, opts)
 }

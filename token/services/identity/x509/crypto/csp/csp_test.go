@@ -843,3 +843,25 @@ func TestECDSAKey_SKI_NilKey(t *testing.T) {
 		assert.Nil(t, ski)
 	})
 }
+
+// TestKVSStore_StoreKey_RejectsEmptySKI checks a key with an empty SKI (P-224) is refused.
+func TestKVSStore_StoreKey_RejectsEmptySKI(t *testing.T) {
+	keyStore := NewKVSStore(kvs.NewTrackedMemory())
+	priv, err := ecdsa.GenerateKey(elliptic.P224(), rand.Reader)
+	require.NoError(t, err)
+
+	for name, key := range map[string]bccsp.Key{
+		"private": &ecdsaPrivateKey{privKey: priv},
+		"public":  &ecdsaPublicKey{pubKey: &priv.PublicKey},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.Empty(t, key.SKI())
+			err := keyStore.StoreKey(key)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "empty SKI")
+
+			_, err = keyStore.GetKey(nil)
+			require.Error(t, err, "nothing may have been stored under the empty key")
+		})
+	}
+}

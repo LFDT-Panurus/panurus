@@ -99,6 +99,10 @@ func (ks *KVSStore) StoreKey(k bccsp.Key) error {
 	default:
 		return errors.Errorf("unknown type [%T] for the supplied key", key)
 	}
+	if len(id) == 0 {
+		// SKI() is empty when ECDH() fails (e.g. P-224)
+		return errors.Errorf("cannot store a key with an empty SKI [%T]", k)
+	}
 	var err error
 	value.Raw, err = ser.marshall()
 	if err != nil {
