@@ -83,3 +83,23 @@ func TestRegisterIdentityDescriptor_SkippedInsertRollsBackSavepoint(t *testing.T
 	}, nil))
 	require.NoError(t, f.mock.ExpectationsWereMet())
 }
+
+// TestStoreSignerInfo_CachedPresenceSkipsInsert checks a cached "present" skips the INSERT.
+func TestStoreSignerInfo_CachedPresenceSkipsInsert(t *testing.T) {
+	f := newTestIdentityStore(t)
+	f.store.signerInfoCache = cache2.NewSecondChanceCache[bool](10, 1)
+
+	f.mock.ExpectExec(signerInfoInsert).WillReturnResult(sqlmock.NewResult(1, 1))
+	require.NoError(t, f.store.StoreSignerInfo(t.Context(), tdriver.Identity("alice"), nil))
+	require.NoError(t, f.mock.ExpectationsWereMet())
+
+	// cached: no statement may reach the database
+	require.NoError(t, f.store.StoreSignerInfo(t.Context(), tdriver.Identity("alice"), nil))
+	require.NoError(t, f.mock.ExpectationsWereMet())
+
+	// cached as absent: still written
+	f.store.signerInfoCache.Add(tdriver.Identity("bob").UniqueID(), false)
+	f.mock.ExpectExec(signerInfoInsert).WillReturnResult(sqlmock.NewResult(1, 1))
+	require.NoError(t, f.store.StoreSignerInfo(t.Context(), tdriver.Identity("bob"), nil))
+	require.NoError(t, f.mock.ExpectationsWereMet())
+}
