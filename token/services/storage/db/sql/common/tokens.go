@@ -1536,11 +1536,17 @@ func (db *TokenStore) GetCertifications(ctx context.Context, ids []*token.ID) ([
 // that haven't had their SKI keys cleaned up yet (no record in token_ski_cleanups table).
 // Only tokens owned by this node are considered, since this node only holds the secret keys
 // for tokens it owns, not for tokens it merely audited or issued.
+//
+// A token is returned only once its owner identity holds no unspent token anymore, see
+// ownerHasNoUnspentTokens: the keys derived from the owner identity are shared by every token
+// that identity owns, so deleting them while one of those tokens is still unspent would make it
+// unspendable.
 func (db *TokenStore) GetDeletedTokensPendingSKICleanup(ctx context.Context, olderThan time.Duration, limit int) ([]driver.DeletedToken, error) {
 	cutoffTime := time.Now().UTC().Add(-olderThan)
 
 	tokenTable := q.Table(db.table.Tokens)
 	cleanupTable := q.Table(db.table.TokenSKICleanups)
+	liveTokenTable := q.AliasedTable(db.table.Tokens, "live_tokens")
 
 	if limit == 0 {
 		limit = common3.ZeroLimit
@@ -1564,6 +1570,7 @@ func (db *TokenStore) GetDeletedTokensPendingSKICleanup(ctx context.Context, old
 			cond.CmpVal(tokenTable.Field("owner"), "=", true),
 			cond.CmpVal(tokenTable.Field("spent_at"), "<", cutoffTime),
 			cond.IsNil(cleanupTable.Field("tx_id")),
+			ownerHasNoUnspentTokens(tokenTable, liveTokenTable),
 		)).
 		OrderBy(q.Asc(tokenTable.Field("spent_at"))).
 		Limit(limit).
@@ -1595,6 +1602,29 @@ func (db *TokenStore) GetDeletedTokensPendingSKICleanup(ctx context.Context, old
 	logger.DebugfContext(ctx, "found %d deleted tokens older than %v pending SKI cleanup", len(tokens), olderThan)
 
 	return tokens, nil
+}
+
+// ownerHasNoUnspentTokens excludes a deleted token whose owner identity still owns an unspent
+// token on this node. The cleanup derives the keys to delete from the owner identity alone, so
+// those keys are shared by every token the identity owns: an application can give the same
+// recipient identity more than one output, or reuse it across transfers. Deleting the keys when
+// the first of those tokens is spent would leave the others unspendable.
+//
+// The exclusion is done here rather than in the cleanup manager so that such tokens do not come
+// back on every sweep and fill its batch. Once the last token of the identity is spent, all of its
+// deleted tokens become eligible and the keys are deleted then.
+func ownerHasNoUnspentTokens(tokenTable, liveTokenTable common3.Table) cond.Condition {
+	return cond.NotExists(
+		q.Select().
+			Fields(common3.FieldName("1")).
+			From(liveTokenTable).
+			Where(cond.And(
+				cond.Cmp(liveTokenTable.Field("owner_identity"), "=", tokenTable.Field("owner_identity")),
+				cond.Cmp(liveTokenTable.Field("owner_type"), "=", tokenTable.Field("owner_type")),
+				cond.CmpVal(liveTokenTable.Field("owner"), "=", true),
+				cond.CmpVal(liveTokenTable.Field("is_deleted"), "=", false),
+			)),
+	)
 }
 
 // MarkTokenCleaned marks a token as having its cryptographic keys cleaned up.
