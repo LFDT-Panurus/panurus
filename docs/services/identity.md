@@ -228,6 +228,42 @@ func (d *Base) NewWalletService(...) (*wallet.Service, error) {
 }
 ```
 
+### Signer resolution and ownership checks
+
+`Provider` (`token/services/identity/provider.go`) answers two hot-path questions: *which signer
+signs for this identity* (`GetSigner`) and *is this identity mine* (`AreMe`/`IsMe`).
+
+*   **Signer cache.** Resolved signers are kept in a bounded in-memory cache keyed by the
+    identity's `UniqueID()`. A `TypedIdentity` occupies two entries — the outer typed bytes and the
+    bare inner identity — since both are real lookup keys.
+*   **Concurrent misses are coalesced.** Callers resolving the same uncached identity at the same
+    time share one resolution (a `golang.org/x/sync/singleflight` group keyed by the identity hash),
+    so a burst of requests for a cold Idemix identity runs the deserializer — and its sign+verify
+    probe — once. As in the wallet registry (see [Wallet Registry concurrency](#wallet-registry-concurrency)),
+    each caller stops waiting when its *own* context is done, and a resolution that failed only
+    because the winning caller's context was cancelled is retried (a bounded number of times)
+    rather than reported to callers that did not cancel. A failure counts as such a cancellation
+    when the winner's context was done at the time, since deserializers do not always wrap the
+    context error. `GetSigner` metrics stay per call: every caller records one observation,
+    labeled with the path the shared resolution took.
+*   **Nil cache entries** are treated as misses. No code path stores one today (FSC's cache
+    `Delete` removes the key); the guard is defense in depth against a nil-pointer panic (#2065).
+*   **Presence markers.** Every resolution records that a signer exists for the identity
+    (`StoreSignerInfo` with a nil blob). The write never overwrites an existing row; the SQL store
+    skips the `INSERT` entirely when its signer-info cache already knows the row exists. The cache
+    marks a row present only after writing or reading it back, and signer rows are never deleted,
+    so a cached "present" cannot be stale. The KVS store checks `Exists`.
+*   **`AreMe` result.** The returned hashes follow the order of the passed identities, and an
+    identity passed more than once is reported once. Cache hits are answered without touching
+    storage; the remaining identities are checked with one `GetExistingSignerInfo` call. On a
+    storage failure the slice is `nil` and the error tells a cancelled/expired context
+    (`errors.Is(err, context.Canceled)` / `context.DeadlineExceeded`, "gave up") apart from a
+    broken backend, so a caller abort is not misread as a storage outage. A backend that returns
+    values other than identity hashes (the KVS store, #1892) has them appended after the ordered
+    results.
+*   **`IsMe`** answers from the signer cache without a storage call when it can, and otherwise
+    asks storage about that single identity, with the same error semantics as `AreMe`.
+
 ### SignerRouter (conf_id-pinned fast path)
 
 `GetSigner`'s default resolution path is a **fallback deserializer**: a linear scan across every `KeyManager` registered under the identity's type, each probed with a cryptographic sign+verify to find the one that actually matches. `SignerRouter` (`token/services/identity/signer_router.go`) is an optional fast path that skips this scan-and-probe entirely: it resolves the `conf_id` an identity was bound under (via a `ConfIDResolver`) and dispatches straight to the single `KeyManager` registered for that `conf_id`.
@@ -265,7 +301,7 @@ Three consequences worth knowing:
 
 | Metric | Type | Labels | Purpose |
 |:-------|:-----|:-------|:--------|
-| `identity_signer_resolutions_total` | Counter | `network`, `channel`, `namespace`, `outcome` = `cache` \| `routed` \| `fallback` | How each `GetSigner` call was ultimately resolved. |
+| `identity_signer_resolutions_total` | Counter | `network`, `channel`, `namespace`, `outcome` = `cache` \| `routed` \| `fallback` | How each `GetSigner` call was ultimately resolved. Callers that joined a concurrent resolution of the same identity each count once, under that resolution's path. |
 | `identity_get_signer_duration_seconds` | Histogram | `network`, `channel`, `namespace`, `path` = `cache` \| `routed` \| `fallback` | `GetSigner` wall-clock time by resolution path; compares the latency saved by skipping the probe. |
 | `identity_signer_router_registrations_total` | Counter | `network`, `channel`, `namespace` | `conf_id`→`KeyManager` bindings registered with the `SignerRouter`. A near-zero count in production means routing is never populated and every call falls back. |
 | `identity_signer_router_no_probe_errors_total` | Counter | `network`, `channel`, `namespace` | Failures of the probe-free deserialization path — since that path skips the cryptographic check, a non-zero count is worth investigating as a `conf_id` routing bug. |
