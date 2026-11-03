@@ -257,6 +257,21 @@ func CheckAuditedTransactions(network *integration.Infrastructure, auditor *toke
 	}
 }
 
+// checkFreshNetwork fails unless the given auditor has not audited any transaction yet. It
+// only looks at that auditor's audit history. TestAll calls it first, because it asserts
+// the whole transaction history and so must be the first spec of a token.ShareNetwork
+// container: TestAll's own first history assertions would fail anyway on a used network,
+// but this check says why.
+func checkFreshNetwork(network *integration.Infrastructure, auditor *token3.NodeReference) {
+	txsBoxed, err := network.Client(auditor.ReplicaName()).CallView("historyAuditing", common.JSONMarshall(&views.ListAuditedTransactions{
+		SearchDirection: ttxdb.FromBeginning,
+	}))
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to list the transactions audited by [%s]", auditor)
+	var txs []*ttxdb.TransactionRecord
+	common.JSONUnmarshal(txsBoxed.([]byte), &txs)
+	gomega.Expect(txs).To(gomega.BeEmpty(), "TestAll must run on a fresh network (first spec of a ShareNetwork container), but auditor [%s] has already audited [%d] transaction records", auditor, len(txs))
+}
+
 func CheckAcceptedTransactions(network *integration.Infrastructure, id *token3.NodeReference, wallet string, expected []TransactionRecord, start *time.Time, end *time.Time, statuses []ttxdb.TxStatus, actionTypes ...ttxdb.ActionType) {
 	eIDBoxed, err := network.Client(id.ReplicaName()).CallView("GetEnrollmentID", common.JSONMarshall(&views.GetEnrollmentID{
 		Wallet: wallet,
@@ -1892,7 +1907,8 @@ func PrepareUpdatedPublicParams(network *integration.Infrastructure, auditor str
 	tokenPlatform, ok := network.NWOCtx.PlatformsByName["token"].(*tplatform.Platform)
 	gomega.Expect(ok).To(gomega.BeTrue(), "failed to get token platform from context")
 
-	// Deserialize current params
+	// Deserialize the genesis public parameters: UpdatePublicParams does not rewrite this
+	// file, so earlier updates are not included
 	ppBytes, err := os.ReadFile(tokenPlatform.PublicParametersFile(tms))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1948,7 +1964,8 @@ func PreparePublicParamsWithNewIssuer(network *integration.Infrastructure, issue
 	tokenPlatform, ok := network.NWOCtx.PlatformsByName["token"].(*tplatform.Platform)
 	gomega.Expect(ok).To(gomega.BeTrue(), "failed to get token platform from context")
 
-	// Deserialize current params
+	// Deserialize the genesis public parameters: UpdatePublicParams does not rewrite this
+	// file, so earlier updates are not included
 	ppBytes, err := os.ReadFile(tokenPlatform.PublicParametersFile(tms))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 

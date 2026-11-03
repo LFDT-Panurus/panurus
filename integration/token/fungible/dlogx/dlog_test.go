@@ -70,7 +70,7 @@ var _ = Describe("EndToEnd", func() {
 					false,
 					// #2255: the endorser must keep endorsing commit-able transactions
 					// after a restart that follows a public parameters update
-					endorserNode,
+					fungible.WithRestartAfterUpdate(endorserNode),
 				)
 			})
 			It("Update public params (append new auditor and issuer)", Label("T2.1"), func() {
@@ -82,7 +82,7 @@ var _ = Describe("EndToEnd", func() {
 					false,
 					selector,
 					true,
-					endorserNode,
+					fungible.WithRestartAfterUpdate(endorserNode),
 				)
 			})
 			It("Test Identity Revocation", Label("T3"), func() { fungible.TestRevokeIdentity(ts.II, "auditor", selector) })
@@ -104,7 +104,7 @@ var _ = Describe("EndToEnd", func() {
 					true,
 					selector,
 					false,
-					endorserNode,
+					fungible.WithRestartAfterUpdate(endorserNode),
 				)
 			})
 		})

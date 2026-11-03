@@ -37,27 +37,41 @@ const namespacePolicyEitherOrg = "OR ('Org1MSP.member','Org2MSP.member')"
 
 var _ = Describe("EndToEnd", func() {
 	for _, t := range integration2.AllTestTypes {
-		Describe("T1 Fungible with Auditor ne Issuer", t.Label, func() {
-			ts, selector := newTestSuite(t.CommType, Aries, t.ReplicationFactor, "", "alice", "bob", "charlie")
-			BeforeEach(ts.Setup)
-			AfterEach(ts.TearDown)
-			It("succeeded", Label("T1"), func() { fungible.TestAll(ts.II, "auditor", nil, true, selector) })
-		})
-
-		Describe("Extras with websockets", t.Label, func() {
+		// TestAll and the small specs that need the same topology share one network, see
+		// token2.ShareNetwork. The order is what makes this safe:
+		//   - TestAll (T1) runs first, on a fresh network, so its assertions on the whole
+		//     transaction history and on the issuer's 241 USD quota hold unchanged; it
+		//     checks that it is first.
+		//   - Every later spec issues and moves its own token type (WithTokenType), so the
+		//     balances TestAll leaves behind are invisible to it, and it does not count
+		//     against the USD quota, which applies to the exact type "USD" only. T4 and T5
+		//     use different types because both assert absolute balances of the same wallets.
+		//   - T17 authorizes the issuer for redeem, as TestAll already did (a KVS
+		//     overwrite, so it changes nothing), and also newIssuer, which no later spec
+		//     redeems with. It runs before T2.1 and T2 because it relies on newIssuer not
+		//     being in the public parameters, which T2.1 and T2 add.
+		//   - T3 revokes bob for good, so it runs after T4 and T5, which move tokens to bob.
+		//   - T2.1 and T2 change the public parameters, so they run last. T2.1 rebuilds
+		//     from the genesis parameters, so it drops TestAll's issuer.ExtraId, which no
+		//     later spec uses.
+		// Aries alone and Aries|WebEnabled give the same network but for the FSC web server
+		// that T5 needs; the other specs still talk to the nodes over gRPC. Each label still
+		// runs on its own network when filtered alone.
+		Describe("T1 Fungible with Auditor ne Issuer and extras", Ordered, ContinueOnFailure, t.Label, func() {
 			ts, selector := newTestSuite(t.CommType, Aries|WebEnabled, t.ReplicationFactor, "", "alice", "bob", "charlie")
-			BeforeEach(ts.Setup)
-			AfterEach(ts.TearDown)
-			It("Update public params (new auditor and issuer)", Label("T2"), func() {
-				fungible.TestPublicParamsUpdate(
-					ts.II,
-					"newAuditor",
-					fungible.PrepareUpdatedPublicParams(ts.II, "newAuditor", "newIssuer", "default", false),
-					"default",
-					false,
-					selector,
-					false,
-				)
+			token2.ShareNetwork(ts)
+			It("succeeded", Label("T1"), func() { fungible.TestAll(ts.II, "auditor", nil, true, selector) })
+			It("Test redeem rejected with unauthorized issuer", Label("T17"), func() {
+				fungible.TestRedeemUnauthorizedIssuer(ts.II, selector, "default", fungible.WithTokenType("USDt17"))
+			})
+			It("Test Remote Wallet (GRPC)", Label("T4"), func() {
+				fungible.TestRemoteOwnerWallet(ts.II, "auditor", selector, false, fungible.WithTokenType("USDt4"))
+			})
+			It("Test Remote Wallet (WebSocket)", Label("T5"), func() {
+				fungible.TestRemoteOwnerWallet(ts.II, "auditor", selector, true, fungible.WithTokenType("USDt5"))
+			})
+			It("Test Identity Revocation", Label("T3"), func() {
+				fungible.TestRevokeIdentity(ts.II, "auditor", selector, fungible.WithTokenType("USDt3"))
 			})
 			It("Update public params (append new auditor and issuer)", Label("T2.1"), func() {
 				fungible.TestPublicParamsUpdate(
@@ -68,17 +82,31 @@ var _ = Describe("EndToEnd", func() {
 					false,
 					selector,
 					true,
+					fungible.WithTokenType("USDt21"),
 				)
 			})
-			It("Test Identity Revocation", Label("T3"), func() { fungible.TestRevokeIdentity(ts.II, "auditor", selector) })
-			It("Test Remote Wallet (GRPC)", Label("T4"), func() { fungible.TestRemoteOwnerWallet(ts.II, "auditor", selector, false) })
-			It("Test Remote Wallet (WebSocket)", Label("T5"), func() { fungible.TestRemoteOwnerWallet(ts.II, "auditor", selector, true) })
+			It("Update public params (new auditor and issuer)", Label("T2"), func() {
+				fungible.TestPublicParamsUpdate(
+					ts.II,
+					"newAuditor",
+					fungible.PrepareUpdatedPublicParams(ts.II, "newAuditor", "newIssuer", "default", false),
+					"default",
+					false,
+					selector,
+					false,
+					fungible.WithTokenType("USDt2"),
+				)
+			})
 		})
 
-		Describe("Fungible with Auditor = Issuer", t.Label, func() {
+		// TestAll (T6) and the public parameters update (T7) share one network, see
+		// token2.ShareNetwork: TestAll runs first, on a fresh network, and T7 uses its own
+		// token type, so TestAll's balances and the USD quota do not affect it, and it
+		// changes the public parameters, so it runs last. T7 rebuilds from the genesis
+		// parameters, so it drops TestAll's issuer.ExtraId, which no later spec uses.
+		Describe("Fungible with Auditor = Issuer", Ordered, ContinueOnFailure, t.Label, func() {
 			ts, selector := newTestSuite(t.CommType, Aries|AuditorAsIssuer, t.ReplicationFactor, "", "alice", "bob", "charlie")
-			BeforeEach(ts.Setup)
-			AfterEach(ts.TearDown)
+			token2.ShareNetwork(ts)
 			It("succeeded", Label("T6"), func() { fungible.TestAll(ts.II, "issuer", nil, true, selector) })
 			It("Update public params", Label("T7"), func() {
 				fungible.TestPublicParamsUpdate(
@@ -89,6 +117,7 @@ var _ = Describe("EndToEnd", func() {
 					true,
 					selector,
 					false,
+					fungible.WithTokenType("USDt7"),
 				)
 			})
 		})
@@ -136,16 +165,6 @@ var _ = Describe("EndToEnd", func() {
 				fungible.TestPolicyAND(ts.II, selector)
 			})
 		})
-
-		Describe("Redeem with an unauthorized issuer", t.Label, func() {
-			ts, selector := newTestSuite(t.CommType, Aries, t.ReplicationFactor, "", "alice", "bob", "charlie")
-			BeforeEach(ts.Setup)
-			AfterEach(ts.TearDown)
-			It("Test redeem rejected with unauthorized issuer", Label("T17"), func() {
-				fungible.TestRedeemUnauthorizedIssuer(ts.II, selector, "default")
-			})
-		})
-
 	}
 
 	// Endorser selection is orthogonal to the P2P communication type, and TestAll is the
