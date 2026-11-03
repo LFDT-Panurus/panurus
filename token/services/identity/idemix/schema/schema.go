@@ -159,22 +159,10 @@ func (*DefaultManager) SignerOpts(schema string) (*bccsp.IdemixSignerOpts, error
 			EidIndex: eidIdx,
 		}, nil
 	case W3CSchema:
-		var idemixAttrs []bccsp.IdemixAttribute
-		for i := range attributeNames {
-			switch i {
-			case 25:
-				idemixAttrs = append(idemixAttrs, bccsp.IdemixAttribute{
-					Type: bccsp.IdemixHiddenAttribute,
-				})
-			case 24:
-				idemixAttrs = append(idemixAttrs, bccsp.IdemixAttribute{
-					Type: bccsp.IdemixHiddenAttribute,
-				})
-			default:
-				idemixAttrs = append(idemixAttrs, bccsp.IdemixAttribute{
-					Type: bccsp.IdemixHiddenAttribute,
-				})
-			}
+		// all hidden; fresh per call since callers mutate the opts
+		idemixAttrs := make([]bccsp.IdemixAttribute, len(attributeNames))
+		for i := range idemixAttrs {
+			idemixAttrs[i] = bccsp.IdemixAttribute{Type: bccsp.IdemixHiddenAttribute}
 		}
 
 		return &bccsp.IdemixSignerOpts{

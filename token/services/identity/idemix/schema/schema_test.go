@@ -467,3 +467,17 @@ func TestAuditOpts_SufficientAttributesAccepted(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "w3c-rh", rhOpts.RevocationHandle)
 }
+
+// TestDefaultManager_SignerOpts_NotShared checks SignerOpts calls never share state.
+func TestDefaultManager_SignerOpts_NotShared(t *testing.T) {
+	manager := NewDefaultManager()
+	for _, schema := range []string{DefaultSchema, W3CSchema} {
+		a, err := manager.SignerOpts(schema)
+		require.NoError(t, err)
+		b, err := manager.SignerOpts(schema)
+		require.NoError(t, err)
+		require.NotSame(t, a, b)
+		a.Attributes[0].Type = bccsp.IdemixBytesAttribute
+		assert.Equal(t, bccsp.IdemixHiddenAttribute, b.Attributes[0].Type, "schema [%s]", schema)
+	}
+}
