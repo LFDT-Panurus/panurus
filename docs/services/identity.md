@@ -447,6 +447,7 @@ Standard PKIX identities.
     - `TypedIdentity` payload: Raw X.509 certificate bytes.
     - Audit Info: JSON.
 *   **Usage**: Ideal for infrastructure components (nodes, services) or scenarios where anonymity is not required.
+*   **Signing key lifetime**: an x509 signer (`crypto.SKIBasedSigner`) resolves its private key from the BCCSP once, when it is created, and keeps it for as long as the signer lives (the `Provider` caches signers). A signature therefore costs no keystore lookup. x509 keys are never removed from the keystore, so the cached key cannot go stale. When the key is imported from the signing identity's key material, it is looked up again by the certificate's SKI, so a key that does not match the certificate fails at construction rather than producing signatures that do not verify. The software keystore (`csp.KVSStore`) refuses to store a key whose SKI cannot be computed (`SKI()` is empty when `ECDH()` fails, e.g. for P-224) rather than storing it under an empty identifier, where any other such key would overwrite it.
 *   **Implementation**: `token/services/identity/x509`.
 
 ##### Expected Folder Structure
@@ -491,6 +492,7 @@ Advanced identity encryption based on Zero-Knowledge Proofs (ZKP).
 *   **Unlinkability**: Different transactions from the same user appear uncorrelated.
 *   **Auditability**: Authorized auditors can reveal the Enrollment ID using the audit info.
 *   **Signature Format**: Signatures are **nym signatures** (pseudonym-based) that do not carry attributes, providing unlinkability between transactions.
+*   **Key lifetime**: the long-term user secret key is resolved once, when the `KeyManager` is created, and shared by the signing identities it builds. The per-identity nym secret key is looked up in the keystore on every signature, because keystore cleanup deletes nym keys once the tokens owned by that pseudonym are spent. A remote (verify-only) key manager holds no user key and cannot sign. The schema manager builds `SignerOpts` fresh on every call, because callers fill in and mutate the returned options.
 *   **Implementation**: `token/services/identity/idemix`.
 
 ##### Expected Folder Structure
