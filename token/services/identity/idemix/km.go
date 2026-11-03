@@ -57,7 +57,9 @@ type SignerService interface {
 type KeyManager struct {
 	*crypto.Deserializer
 	userKeySKI SKI
-	conf       *config.IdemixConfig
+	// userKey is resolved at construction; nil for a remote key manager.
+	userKey bccsp.Key
+	conf    *config.IdemixConfig
 
 	sigType bccsp.SignatureType
 	verType bccsp.VerificationType
@@ -210,6 +212,7 @@ func NewKeyManagerWithSchema(
 			Schema:          schemaName,
 		},
 		userKeySKI:    userKeySKI,
+		userKey:       userKey,
 		conf:          conf,
 		sigType:       sigType,
 		verType:       verType,
@@ -221,10 +224,14 @@ func NewKeyManagerWithSchema(
 // Identity returns the identity descriptor for the given audit information
 func (p *KeyManager) Identity(ctx context.Context, auditInfo []byte) (*idriver.IdentityDescriptor, error) {
 	logger.DebugfContext(ctx, "get user secret key")
-	// Load the user key
-	userKey, err := p.Csp.GetKey(p.userKeySKI)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to retrieve user key with ski [%s]", p.userKeySKI)
+	// Load the user key; a remote key manager falls back to the lookup and its error
+	userKey := p.userKey
+	if userKey == nil {
+		var err error
+		userKey, err = p.Csp.GetKey(p.userKeySKI)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to retrieve user key with ski [%s]", p.userKeySKI)
+		}
 	}
 
 	// Derive nymPublicKey
@@ -289,6 +296,7 @@ func (p *KeyManager) Identity(ctx context.Context, auditInfo []byte) (*idriver.I
 		Identity:     id,
 		NymKeySKI:    nymPublicKey.SKI(),
 		UserKeySKI:   p.userKeySKI,
+		UserKey:      p.userKey,
 		EnrollmentId: enrollmentID,
 	}
 	serializedIdentity, err := sID.Serialize()
@@ -449,6 +457,7 @@ func (p *KeyManager) deserializeSigningIdentity(ctx context.Context, raw []byte)
 		CSP:          p.Csp,
 		Identity:     id.Identity,
 		UserKeySKI:   p.userKeySKI,
+		UserKey:      p.userKey,
 		NymKeySKI:    id.NymPublicKey.SKI(),
 		EnrollmentId: p.conf.Signer.EnrollmentId,
 	}, nil

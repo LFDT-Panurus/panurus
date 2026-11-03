@@ -564,6 +564,44 @@ func TestSigningIdentity_Sign_ErrorPaths(t *testing.T) {
 		assert.Contains(t, err.Error(), "sign error")
 	})
 
+	// Test that a resolved user key is used as is
+	t.Run("Sign uses the resolved user key", func(t *testing.T) {
+		mockCSP := &idemixmock.BCCSP{}
+		mockIdemixCSP := &idemixmock.BCCSP{}
+		mockNymSK := &idemixmock.Key{}
+		mockUserSK := &idemixmock.Key{}
+
+		signingIdentity := &SigningIdentity{
+			Identity: &Identity{
+				Idemix: &Deserializer{
+					Name:            "test",
+					Csp:             mockIdemixCSP,
+					IssuerPublicKey: &idemixmock.Key{},
+				},
+				NymPublicKey: &idemixmock.Key{},
+			},
+			CSP:          mockCSP,
+			EnrollmentId: "test-user",
+			NymKeySKI:    []byte("nym-ski"),
+			UserKeySKI:   []byte("user-ski"),
+			UserKey:      mockUserSK,
+		}
+		mockCSP.GetKeyReturns(mockNymSK, nil)
+		mockIdemixCSP.SignReturns([]byte("signature"), nil)
+
+		for range 2 {
+			sig, err := signingIdentity.Sign([]byte("test message"))
+			require.NoError(t, err)
+			assert.Equal(t, []byte("signature"), sig)
+		}
+		// only the nym key is looked up
+		require.Equal(t, 2, mockCSP.GetKeyCallCount())
+		assert.Equal(t, []byte("nym-ski"), mockCSP.GetKeyArgsForCall(0))
+		assert.Equal(t, []byte("nym-ski"), mockCSP.GetKeyArgsForCall(1))
+		k, _, _ := mockIdemixCSP.SignArgsForCall(0)
+		assert.Same(t, mockUserSK, k)
+	})
+
 	// Test a successful sign operation by a valid signing identity
 	t.Run("Sign succeeds", func(t *testing.T) {
 		// Create fresh mocks for this test

@@ -142,6 +142,8 @@ type SigningIdentity struct {
 	NymKeySKI []byte
 	// User secret key identifier
 	UserKeySKI []byte
+	// UserKey is the resolved user secret key; when nil, Sign looks it up by UserKeySKI.
+	UserKey bccsp.Key `json:"-"`
 }
 
 // Sign creates a signature using secret keys.
@@ -152,9 +154,12 @@ func (id *SigningIdentity) Sign(msg []byte) ([]byte, error) {
 	}
 
 	// Load the user key
-	userKey, err := id.CSP.GetKey(id.UserKeySKI)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to retrieve user key with ski [%s]", id.UserKeySKI)
+	userKey := id.UserKey
+	if userKey == nil {
+		userKey, err = id.CSP.GetKey(id.UserKeySKI)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to retrieve user key with ski [%s]", id.UserKeySKI)
+		}
 	}
 
 	sig, err := id.Idemix.Csp.Sign(

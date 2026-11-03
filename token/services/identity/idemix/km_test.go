@@ -198,7 +198,8 @@ func testIdentityWithEidRhNymPolicy(t *testing.T, configPath string, curveID mat
 	require.NoError(t, auditInfo2.Match(t.Context(), id))
 	require.NoError(t, auditInfo2.Match(t.Context(), id2))
 
-	assert.Equal(t, 3, tracker.GetCounter)
+	// Identity() reuses the user key resolved at construction
+	assert.Equal(t, 1, tracker.GetCounter)
 
 	// deserialize an invalid signer
 	_, err = keyManager.DeserializeSigner(t.Context(), nil)
@@ -207,12 +208,13 @@ func testIdentityWithEidRhNymPolicy(t *testing.T, configPath string, curveID mat
 	require.Error(t, err)
 	_, err = keyManager.DeserializeSigner(t.Context(), []byte{0, 1, 2})
 	require.Error(t, err)
-	assert.Equal(t, 3, tracker.GetCounter)
+	assert.Equal(t, 1, tracker.GetCounter)
 	// deserialize a valid signer
 	signer, err := keyManager.DeserializeSigner(t.Context(), id)
 	require.NoError(t, err)
-	assert.Equal(t, 5, tracker.GetCounter) // this is due the call to Sign used to test if the signer belong to this key manager
-	assert.Equal(t, hex.EncodeToString(keyManager.userKeySKI), tracker.GetHistory[4].Key)
+	// the probe signature looks up the nym key only
+	assert.Equal(t, 2, tracker.GetCounter)
+	assert.NotEqual(t, hex.EncodeToString(keyManager.userKeySKI), tracker.GetHistory[1].Key)
 
 	// deserialize an invalid verifier
 	_, err = keyManager.DeserializeVerifier(t.Context(), nil)
@@ -229,11 +231,10 @@ func testIdentityWithEidRhNymPolicy(t *testing.T, configPath string, curveID mat
 	sigma, err := signer.Sign([]byte("hello world!!!"))
 	require.NoError(t, err)
 	require.NoError(t, verifier.Verify([]byte("hello world!!!"), sigma))
-	assert.Equal(t, 7, tracker.GetCounter)
-	assert.Equal(t, tracker.GetHistory[3].Key, tracker.GetHistory[5].Key)
-	assert.Equal(t, tracker.GetHistory[3].Value, tracker.GetHistory[5].Value)
-	assert.Equal(t, hex.EncodeToString(keyManager.userKeySKI), tracker.GetHistory[6].Key)
-	assert.Equal(t, tracker.GetHistory[4].Value, tracker.GetHistory[6].Value)
+	// each signature looks up the nym key, never the user key
+	assert.Equal(t, 3, tracker.GetCounter)
+	assert.Equal(t, tracker.GetHistory[1].Key, tracker.GetHistory[2].Key)
+	assert.Equal(t, tracker.GetHistory[1].Value, tracker.GetHistory[2].Value)
 }
 
 func TestIdentityStandard(t *testing.T) {
@@ -971,6 +972,11 @@ func testKeyManager_DeserializeSigningIdentityNoProbeRemote(t *testing.T, config
 
 	_, err = remoteKM.DeserializeSigningIdentityNoProbe(t.Context(), identityDescriptor.Identity)
 	require.Error(t, err)
+
+	// a remote key manager keeps failing on the user key lookup
+	_, err = remoteKM.Identity(t.Context(), nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to retrieve user key")
 }
 
 // verifyOverridingCSP decorates a real bccsp.BCCSP and forces the outcome of credential
