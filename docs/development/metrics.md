@@ -363,12 +363,15 @@ Source: `token/services/storage/services/checks/metrics.go`.
 ## Fabric-X finality queue
 
 Recorded by the Fabric-X event queue that dispatches finality notifications to workers.
-`pending_events` is the backlog gauge; `enqueue_drops_total` increments when the buffer was full and an
-event was discarded, which means a lost finality notification.
+`pending_events` is the backlog gauge: it counts events accepted by the queue and not yet taken by a
+worker. A caller blocked in `EnqueueBlocking` on a full buffer is counted as soon as it starts waiting, so
+the gauge can exceed the configured queue size (`token.finality.notification.queueSize`); a value above it
+means producers are blocked waiting for space. `enqueue_drops_total` increments when the buffer was full
+and an event was discarded, which means a lost finality notification.
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
-| `panurus_services_network_fabricx_finality_queue_finality_queue_pending_events` | gauge | — | Current number of finality events waiting in the queue buffer |
+| `panurus_services_network_fabricx_finality_queue_finality_queue_pending_events` | gauge | — | Number of finality events waiting for a worker, including EnqueueBlocking callers blocked on a full buffer, so it can exceed the queue size |
 | `panurus_services_network_fabricx_finality_queue_finality_queue_enqueue_drops_total` | counter | — | Total number of finality events dropped because the queue was full |
 | `panurus_services_network_fabricx_finality_queue_finality_queue_processing_errors_total` | counter | — | Total number of errors returned by event.Process in worker goroutines |
 | `panurus_services_network_fabricx_finality_queue_finality_queue_processing_duration_seconds` | histogram | — | Histogram of successful event processing time in worker goroutines (seconds) |

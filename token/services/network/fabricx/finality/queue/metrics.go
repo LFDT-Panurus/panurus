@@ -14,9 +14,14 @@ import (
 
 // Metrics holds the instrumentation for the EventQueue.
 type Metrics struct {
-	// PendingEvents is a gauge tracking how many events are currently waiting
-	// in the queue buffer. It is raised when an event is accepted and lowered
-	// when a worker takes it, so it returns to zero once the queue drains.
+	// PendingEvents is a gauge tracking how many events are waiting to be taken
+	// by a worker. It is raised before an event is handed to the buffer and
+	// lowered when a worker takes it, or when the event is not accepted, so it
+	// returns to zero once the queue drains. Raising it before the send keeps a
+	// worker from lowering it first and driving it negative; the trade-off is
+	// that an EnqueueBlocking caller blocked on a full buffer is already
+	// counted, so the gauge can exceed QueueSize, and a value above QueueSize
+	// means producers are waiting for space.
 	PendingEvents metrics.Gauge
 	// EnqueueDrops counts the total number of events dropped because the queue
 	// was full at the time of a non-blocking Enqueue call.
@@ -38,7 +43,7 @@ func newMetrics(p metrics.Provider) *Metrics {
 	return &Metrics{
 		PendingEvents: p.NewGauge(metrics.GaugeOpts{
 			Name: "finality_queue_pending_events",
-			Help: "Current number of finality events waiting in the queue buffer",
+			Help: "Number of finality events waiting for a worker, including EnqueueBlocking callers blocked on a full buffer, so it can exceed the queue size",
 		}),
 		EnqueueDrops: p.NewCounter(metrics.CounterOpts{
 			Name: "finality_queue_enqueue_drops_total",
