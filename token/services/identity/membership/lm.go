@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"sort"
 	"sync"
 	"unicode/utf8"
 
@@ -429,17 +430,14 @@ func (l *LocalMembership) Load(ctx context.Context, identities []idriver.Configu
 	// filter out stored configuration that are already in identityConfigurations
 	var filtered []IdentityConfiguration
 	if len(storedIdentityConfigurations) != 0 {
+		type idURL struct{ id, url string }
+		configured := make(map[idURL]struct{}, len(identityConfigurations))
+		for _, ic := range identityConfigurations {
+			configured[idURL{id: ic.ID, url: ic.URL}] = struct{}{}
+		}
 		for _, stored := range storedIdentityConfigurations {
-			found := false
-			// if stored is in identityConfigurations, skip it
-			for _, ic := range identityConfigurations {
-				if stored.ID == ic.ID && stored.URL == ic.URL {
-					// we don't need this configuration
-					found = true
-				}
-			}
-			if !found {
-				// keep this
+			// if stored is in identityConfigurations, we don't need it
+			if _, found := configured[idURL{id: stored.ID, url: stored.URL}]; !found {
 				filtered = append(filtered, stored)
 			}
 		}
@@ -893,15 +891,13 @@ func (l *LocalMembership) addLocalIdentity(ctx context.Context, config *Identity
 		}
 	}
 
-	list, ok := l.localIdentitiesByName[name]
-	if !ok {
-		list = make([]LocalIdentityWithPriority, 0)
-	}
-	list = append(list, LocalIdentityWithPriority{
+	// sorted insert at the upper bound: first registered wins ties
+	list := l.localIdentitiesByName[name]
+	at := sort.Search(len(list), func(i int) bool { return list[i].Priority > priority })
+	list = slices.Insert(list, at, LocalIdentityWithPriority{
 		Identity: localIdentity,
 		Priority: priority,
 	})
-	slices.SortFunc(list, PriorityComparison)
 	l.localIdentitiesByName[name] = list
 
 	l.logger.Debugf("new local identity for [%s:%s] - [%d][%v]", name, eID, len(list), list)

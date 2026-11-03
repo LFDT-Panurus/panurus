@@ -175,7 +175,10 @@ The `LocalMembership` component (`token/services/identity/membership`) plays a p
     Stored configurations are resolved concurrently — `KeyManagerProvider.Get` must support concurrent calls for distinct configurations, and
     each returned `KeyManager` must either be independently owned by the caller or safe for concurrent `EnrollmentID` calls — and the results
     are committed to the in-memory indices sequentially in the original store order, so identity ordering (e.g. fallback default selection,
-    same-name tie-breaks) is deterministic.
+    same-name tie-breaks) is deterministic. A stored configuration with the same `(ID, URL)` as a configured one is skipped.
+*   **Same-name resolution**: identities sharing a name are kept ordered by priority, and a lookup by that name returns the first one. An
+    identity matching one of the `Load` target identities gets the highest priority (`MaxPriority`); otherwise the priority is the index of
+    the `KeyManagerProvider` that loaded it. Among equal priorities the identity registered first wins.
 *   **Reloading replaces, it does not merge**: `Load` may be called more than once on the same `LocalMembership`, and each call is a full
     replacement of the in-memory view. It resets **all four** indices — `localIdentities`, `localIdentitiesByName`,
     `localIdentitiesByConfig` and `localIdentitiesByIdentity` — plus the cached default identifier, so an identity that was present only in an
