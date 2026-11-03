@@ -126,6 +126,14 @@ func (r *Role) MapToIdentity(ctx context.Context, v driver.WalletLookupID) (driv
 // 3. If the label corresponds to a local member (IsMe), try to fetch its identifier; if not available return the identity
 // 4. Fallback: return the string label as identifier
 func (r *Role) mapStringToID(ctx context.Context, v string) (driver.Identity, string, error) {
+	label := v
+	labelAsIdentity := driver.Identity(label)
+
+	// check immediately if there is an identifier with that label
+	if idIdentifier, err := r.localMembership.GetIdentifier(ctx, labelAsIdentity); err == nil {
+		return nil, idIdentifier, nil
+	}
+
 	defaultNetworkIdentity := r.localMembership.DefaultNetworkIdentity()
 	defaultIdentifier := r.localMembership.GetDefaultIdentifier()
 
@@ -136,14 +144,6 @@ func (r *Role) mapStringToID(ctx context.Context, v string) (driver.Identity, st
 		defaultNetworkIdentity,
 		r.nodeIdentity,
 	)
-
-	label := v
-	labelAsIdentity := driver.Identity(label)
-
-	// check immediately if there is an identifier with that label
-	if idIdentifier, err := r.localMembership.GetIdentifier(ctx, labelAsIdentity); err == nil {
-		return nil, idIdentifier, nil
-	}
 
 	switch {
 	case len(label) == 0:

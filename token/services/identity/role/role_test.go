@@ -108,6 +108,9 @@ func TestRole_MapToIdentity_mapStringToID_branches(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, id)
 	require.Equal(t, "id123", ident)
+	// defaults not consulted
+	assert.Equal(t, 0, m.DefaultNetworkIdentityCallCount())
+	assert.Equal(t, 0, m.GetDefaultIdentifierCallCount())
 
 	// empty label -> default identifier
 	m.GetDefaultIdentifierReturns("def")
