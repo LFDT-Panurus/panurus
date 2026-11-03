@@ -1120,16 +1120,22 @@ func (r *Request) RequestToBytes() ([]byte, error) {
 
 // Bytes serializes the complete request (anchor, actions, and metadata).
 func (r *Request) Bytes() ([]byte, error) {
-	requestProto, err := r.Actions.ToProtos()
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to marshal request in tx [%s]", r.Anchor)
+	var requestProto *request.TokenRequest
+	if r.Actions != nil {
+		var err error
+		requestProto, err = r.Actions.ToProtos()
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to marshal request in tx [%s]", r.Anchor)
+		}
 	}
+	var metadataProto *request.TokenRequestMetadata
 	if r.Metadata != nil {
 		r.Metadata.Anchor = r.Anchor
-	}
-	metadataProto, err := r.Metadata.ToProtos()
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to marshal metadata in tx [%s]", r.Anchor)
+		var err error
+		metadataProto, err = r.Metadata.ToProtos()
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to marshal metadata in tx [%s]", r.Anchor)
+		}
 	}
 	requestWithMetadata := &request.TokenRequestWithMetadata{
 		Version:  driver.ProtocolV1,
@@ -1154,11 +1160,17 @@ func (r *Request) FromBytes(raw []byte) error {
 
 	r.Anchor = RequestAnchor(requestWithMetadata.Anchor)
 	if requestWithMetadata.Request != nil {
+		if r.Actions == nil {
+			r.Actions = &driver.TokenRequest{}
+		}
 		if err := r.Actions.FromProtos(requestWithMetadata.Request); err != nil {
 			return errors.Wrapf(err, "failed unmarshalling actions")
 		}
 	}
 	if requestWithMetadata.Metadata != nil {
+		if r.Metadata == nil {
+			r.Metadata = &driver.TokenRequestMetadata{}
+		}
 		if err := r.Metadata.FromProtos(requestWithMetadata.Metadata); err != nil {
 			return errors.Wrapf(err, "failed unmarshalling metadata")
 		}

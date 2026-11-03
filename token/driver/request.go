@@ -1031,11 +1031,18 @@ func (m *TokenRequestMetadata) FromBytes(raw []byte) error {
 }
 
 func (m *TokenRequestMetadata) ToProtos() (*request.TokenRequestMetadata, error) {
-	appMeta := m.Application
+	if _, exists := m.Application[AnchorApplicationMetadataKey]; exists {
+		return nil, errors.Errorf("application metadata contains reserved key [%s]", AnchorApplicationMetadataKey)
+	}
+
+	var appMeta map[string][]byte
 	if len(m.Anchor) > 0 {
 		appMeta = make(map[string][]byte, len(m.Application)+1)
 		maps.Copy(appMeta, m.Application)
 		appMeta[AnchorApplicationMetadataKey] = []byte(m.Anchor)
+	} else if m.Application != nil {
+		appMeta = make(map[string][]byte, len(m.Application))
+		maps.Copy(appMeta, m.Application)
 	}
 
 	trm := &request.TokenRequestMetadata{
@@ -1087,10 +1094,24 @@ func (m *TokenRequestMetadata) FromProtos(trm *request.TokenRequestMetadata) err
 		return errors.Errorf("invalid token request metadata version, expected [%d], got [%d]", ProtocolV1, trm.Version)
 	}
 
-	m.Application = trm.ApplicationMetadata
-	if anchorBytes, ok := trm.ApplicationMetadata[AnchorApplicationMetadataKey]; ok {
-		m.Anchor = TokenRequestAnchor(anchorBytes)
-		delete(m.Application, AnchorApplicationMetadataKey)
+	m.Anchor = ""
+	m.Application = nil
+	if trm.ApplicationMetadata != nil {
+		if anchorBytes, ok := trm.ApplicationMetadata[AnchorApplicationMetadataKey]; ok {
+			m.Anchor = TokenRequestAnchor(anchorBytes)
+		}
+		appCount := len(trm.ApplicationMetadata)
+		if _, ok := trm.ApplicationMetadata[AnchorApplicationMetadataKey]; ok {
+			appCount--
+		}
+		if appCount > 0 {
+			m.Application = make(map[string][]byte, appCount)
+			for k, v := range trm.ApplicationMetadata {
+				if k != AnchorApplicationMetadataKey {
+					m.Application[k] = v
+				}
+			}
+		}
 	}
 	m.Actions = make([]*ActionMetadataEntry, 0, len(trm.Metadata))
 

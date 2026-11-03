@@ -76,6 +76,23 @@ func TestRequestSerialization(t *testing.T) {
 	assert.Equal(t, mRaw, mRaw2)
 }
 
+func TestRequest_Bytes_NilMetadata(t *testing.T) {
+	r := &Request{
+		Anchor:  "anchor-nil-meta",
+		Actions: &driver.TokenRequest{},
+	}
+	assert.Nil(t, r.Metadata)
+
+	raw, err := r.Bytes()
+	require.NoError(t, err)
+	require.NotEmpty(t, raw)
+
+	r2 := &Request{}
+	err = r2.FromBytes(raw)
+	require.NoError(t, err)
+	assert.Equal(t, RequestAnchor("anchor-nil-meta"), r2.Anchor)
+}
+
 // TestRequest_FromBytes_ErrorCases tests error paths in FromBytes method
 func TestRequest_FromBytes_ErrorCases(t *testing.T) {
 	t.Run("invalid bytes", func(t *testing.T) {
