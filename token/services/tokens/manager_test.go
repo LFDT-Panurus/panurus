@@ -47,5 +47,14 @@ func TestServiceManager(t *testing.T) {
 	spErr.GetServiceReturns(nil, assert.AnError)
 
 	_, err = tokens.GetService(spErr, tmsID)
-	assert.Error(t, err)
+	require.Error(t, err)
+
+	// Test GetService wrong service type
+	spWrongType := &mock.FakeServiceProvider{}
+	spWrongType.GetServiceReturns(&mock.FakeCache{}, nil)
+
+	serviceWrong, err := tokens.GetService(spWrongType, tmsID)
+	assert.Nil(t, serviceWrong)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid manager service")
 }

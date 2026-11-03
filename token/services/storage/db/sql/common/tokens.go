@@ -1915,13 +1915,19 @@ func (t *TokenTransaction) Delete(ctx context.Context, tokenID token.ID, deleted
 }
 
 func (t *TokenTransaction) StoreToken(ctx context.Context, tr driver.TokenRecord, owners []string) error {
+	_, err := t.StoreTokenIfAbsent(ctx, tr, owners)
+
+	return err
+}
+
+func (t *TokenTransaction) StoreTokenIfAbsent(ctx context.Context, tr driver.TokenRecord, owners []string) (bool, error) {
 	if len(tr.OwnerWalletID) == 0 && len(owners) == 0 && tr.Owner {
-		return errors.Errorf("no owners specified [%s]", string(debug.Stack()))
+		return false, errors.Errorf("no owners specified [%s]", string(debug.Stack()))
 	}
 	// The amount column is NUMERIC(78, 0) NOT NULL: refuse a missing or over-range value
 	// rather than storing one that disagrees with the authoritative quantity column.
 	if err := validateTokenAmount(tr.Amount); err != nil {
-		return errors.WithMessagef(err, "invalid amount for token [%s:%d]", tr.TxID, tr.Index)
+		return false, errors.WithMessagef(err, "invalid amount for token [%s:%d]", tr.TxID, tr.Index)
 	}
 
 	// Store token
@@ -1951,26 +1957,32 @@ func (t *TokenTransaction) StoreToken(ctx context.Context, tr driver.TokenRecord
 		Format()
 	logging.Debug(logger, query, args)
 
-	if _, err := t.tx.ExecContext(ctx, query, args...); err != nil {
+	res, err := t.tx.ExecContext(ctx, query, args...)
+	if err != nil {
 		logger.Errorf("error storing token [%s] in table [%s] [%s]: [%s][%s]", tr.TxID, t.table.Tokens, query, err, string(debug.Stack()))
 
-		return errors.Wrapf(err, "error storing token [%s] in table [%s]", tr.TxID, t.table.Tokens)
+		return false, errors.Wrapf(err, "error storing token [%s] in table [%s]", tr.TxID, t.table.Tokens)
 	}
+	rows, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return false, errors.Wrapf(rowsErr, "error checking rows affected storing token [%s] in table [%s]", tr.TxID, t.table.Tokens)
+	}
+	inserted := rows > 0
 
 	if len(owners) == 0 {
 		logger.Debugf("no additional owner reference apart [%s]", tr.OwnerWalletID)
 
-		return nil
+		return inserted, nil
 	}
 
 	// Store ownership
-	rows := make([]common3.Tuple, len(owners))
+	rowsToInsert := make([]common3.Tuple, len(owners))
 	for i, eid := range owners {
-		rows[i] = common3.Tuple{tr.TxID, tr.Index, eid}
+		rowsToInsert[i] = common3.Tuple{tr.TxID, tr.Index, eid}
 	}
 	query, args = q.InsertInto(t.table.Ownership).
 		Fields("tx_id", "idx", "wallet_id").
-		Rows(rows).
+		Rows(rowsToInsert).
 		OnConflictDoNothing().
 		Format()
 	logging.Debug(logger, query, args)
@@ -1978,10 +1990,10 @@ func (t *TokenTransaction) StoreToken(ctx context.Context, tr driver.TokenRecord
 	if _, err := t.tx.ExecContext(ctx, query, args...); err != nil {
 		logger.Errorf("error storing token ownerships [%s]: %s", query, err)
 
-		return errors.Wrapf(err, "error storing token ownership [%s]", tr.TxID)
+		return false, errors.Wrapf(err, "error storing token ownership [%s]", tr.TxID)
 	}
 
-	return nil
+	return inserted, nil
 }
 
 func (t *TokenTransaction) SetSpendable(ctx context.Context, tokenID token.ID, spendable bool) error {
