@@ -353,9 +353,18 @@ lint-auto-fix:
 
 .PHONY: install-linter-tool
 # install golangci-lint
+# Number of attempts for the CDN download below; overridable, e.g. LINTER_INSTALL_ATTEMPTS=5.
+LINTER_INSTALL_ATTEMPTS ?= 3
 install-linter-tool:
 	@echo "Installing golangci Linter"
-	@curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $(HOME)/go/bin v2.14.0
+# The install script downloads the pinned release binary from GitHub's CDN, which
+# intermittently returns 504 (Gateway Time-out). Its own retry budget is too short to
+# ride out those windows, so retry up to $(LINTER_INSTALL_ATTEMPTS) times with escalating backoff.
+	@for i in $$(seq 1 $(LINTER_INSTALL_ATTEMPTS)); do \
+	  curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $(HOME)/go/bin v2.14.0 && break; \
+	  if [ "$$i" = "$(LINTER_INSTALL_ATTEMPTS)" ]; then echo "golangci-lint install failed after $(LINTER_INSTALL_ATTEMPTS) attempts" >&2; exit 1; fi; \
+	  echo "golangci-lint install attempt $$i failed; retrying in $$((i*10))s" >&2; sleep $$((i*10)); \
+	done
 
 .PHONY: fmt
 fmt: ## Run gofmt on the entire project
