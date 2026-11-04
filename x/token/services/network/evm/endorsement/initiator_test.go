@@ -430,3 +430,22 @@ func TestInitiatorBindChecksSetupParameters(t *testing.T) {
 		})
 	}
 }
+
+// TestInitiatorBindRejectsSetupDeltaForNonSetupRequest checks the symmetric half of the setup check:
+// a non-setup request (an approval) must not be answered with a setup delta, even though the delta is
+// otherwise structurally well formed and bound to the right anchor.
+func TestInitiatorBindRejectsSetupDeltaForNonSetupRequest(t *testing.T) {
+	req := validRequest()
+	init := NewInitiator(nil, 1, testDomain(), req)
+
+	setupDelta := endorsedDelta(t)
+	setupDelta.IsSetup = true
+	setupDelta.SetupParameters = []byte("public-parameters")
+
+	err := init.bind(requestAnchor(t), setupDelta)
+	require.ErrorIs(t, err, ErrDeltaMismatch)
+	assert.Contains(t, err.Error(), "non-setup request answered with a setup delta")
+
+	// And the ordinary approval delta still binds cleanly.
+	require.NoError(t, init.bind(requestAnchor(t), endorsedDelta(t)))
+}

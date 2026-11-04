@@ -157,6 +157,9 @@ func (r *Responder) endorse(
 		if err != nil {
 			return nil, nil, errors.Wrapf(err, "this endorser does not serve tms [%s]", req.TMSID)
 		}
+		if f == nil {
+			return nil, nil, errors.Errorf("this endorser does not serve tms [%s]", req.TMSID)
+		}
 		factory = f
 	case KindApproval:
 		// A TMS this endorser cannot resolve is one it does not serve, so refusing here is the same
@@ -164,6 +167,9 @@ func (r *Responder) endorse(
 		f, err := r.factoryFor(req.TMSID)
 		if err != nil {
 			return nil, nil, errors.Wrapf(err, "this endorser does not serve tms [%s]", req.TMSID)
+		}
+		if f == nil {
+			return nil, nil, errors.Errorf("this endorser does not serve tms [%s]", req.TMSID)
 		}
 		factory = f
 	default:

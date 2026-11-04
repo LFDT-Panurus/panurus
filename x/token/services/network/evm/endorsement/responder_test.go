@@ -444,5 +444,47 @@ func TestResponderRejectsSetupWithNilSetupFactory(t *testing.T) {
 	assert.Empty(t, resp.Signature)
 }
 
+// TestResponderRejectsApprovalWithNilFactory checks a KindApproval request errors rather than panics
+// when factoryFor returns a nil DeltaFactory with no error: a resolver returning (nil, nil) must not
+// be treated as a usable factory.
+func TestResponderRejectsApprovalWithNilFactory(t *testing.T) {
+	auth, err := NewAuthorizer([]view.Identity{view.Identity(testCaller)})
+	require.NoError(t, err)
+
+	r := NewResponder(
+		fixedAuthorizer(auth),
+		func(token2.TMSID) (*DeltaFactory, error) { return nil, nil },
+		func(token2.TMSID) (*SetupDeltaFactory, error) { return nil, errors.New("not a KindSetup test") },
+		newSigner(t, 1),
+		func(token2.TMSID) (eip712.Domain, error) { return testDomain(), nil },
+	)
+
+	resp := r.Handle(context.Background(), view.Identity(testCaller), validRequest())
+	require.Error(t, resp.Error())
+	assert.Contains(t, resp.Error().Error(), "does not serve")
+	assert.Empty(t, resp.Signature)
+}
+
+// TestResponderRejectsSetupWithNilFactoryValue checks a KindSetup request errors rather than panics
+// when setupFactoryFor returns a nil SetupDeltaFactory with no error, the setup counterpart to
+// TestResponderRejectsApprovalWithNilFactory.
+func TestResponderRejectsSetupWithNilFactoryValue(t *testing.T) {
+	auth, err := NewAuthorizer([]view.Identity{view.Identity(testCaller)})
+	require.NoError(t, err)
+
+	r := NewResponder(
+		fixedAuthorizer(auth),
+		func(token2.TMSID) (*DeltaFactory, error) { return nil, errors.New("not a KindApproval test") },
+		func(token2.TMSID) (*SetupDeltaFactory, error) { return nil, nil },
+		newSigner(t, 1),
+		func(token2.TMSID) (eip712.Domain, error) { return testDomain(), nil },
+	)
+
+	resp := r.Handle(context.Background(), view.Identity(testCaller), validSetupRequest())
+	require.Error(t, resp.Error())
+	assert.Contains(t, resp.Error().Error(), "does not serve")
+	assert.Empty(t, resp.Signature)
+}
+
 // compile-time check that the concrete signer satisfies the injected interface.
 var _ EndorserSigner = (*eip712.Signer)(nil)
