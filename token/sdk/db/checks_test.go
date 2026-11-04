@@ -241,3 +241,60 @@ func TestSweeper_StartTracksTheManagerBeforeReturning(t *testing.T) {
 	assert.Empty(t, s.managers, "Stop must clear the tracked managers")
 	s.mu.Unlock()
 }
+
+// TestSweeper_StartIsIdempotentPerStore is the regression test for a goroutine (and, on
+// postgres, advisory-lock connection) leak when a TMS build is retried. CheckService, which
+// calls sweeper.start, is not guaranteed to run exactly once per TMS: a build that fails after
+// CheckService has already run (e.g. on a later GetNetwork step) is retried, and the lazy
+// service provider does not cache failed builds, so start runs again for the same store. start
+// must start at most one manager per (tmsID, role): the second and later calls find a manager
+// already tracked and do nothing.
+func TestSweeper_StartIsIdempotentPerStore(t *testing.T) {
+	s := &sweeper{configuration: failingConfiguration{}}
+	tmsID := token.TMSID{Network: "n1", Channel: "c1", Namespace: "ns1"}
+
+	start := func() error {
+		return s.start(
+			&mock.TokenManagementServiceProvider{},
+			&mock.NetworkProvider{},
+			nil,
+			&checksmock.Storage{},
+			nil,
+			tmsID,
+			nil,
+			checks.RoleOwner,
+			0,
+		)
+	}
+
+	require.NoError(t, start())
+	require.NoError(t, start(), "a retried build must not fail")
+	require.NoError(t, start(), "a retried build must not fail")
+
+	s.mu.Lock()
+	require.Len(t, s.managers, 1, "a store must have at most one manager no matter how many times start runs")
+	s.mu.Unlock()
+
+	// A different store (same TMS, other role) is independent and still gets its own manager.
+	require.NoError(t, s.start(
+		&mock.TokenManagementServiceProvider{},
+		&mock.NetworkProvider{},
+		nil,
+		&checksmock.Storage{},
+		nil,
+		tmsID,
+		nil,
+		checks.RoleAuditor,
+		0,
+	))
+
+	s.mu.Lock()
+	require.Len(t, s.managers, 2, "a distinct store must get its own manager")
+	s.mu.Unlock()
+
+	require.NoError(t, s.Stop())
+
+	s.mu.Lock()
+	assert.Empty(t, s.managers, "Stop must clear the tracked managers")
+	s.mu.Unlock()
+}

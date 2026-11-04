@@ -35,7 +35,23 @@ type sweeper struct {
 	configuration   checks.Configuration
 	metricsProvider metrics.Provider
 	mu              sync.Mutex
-	managers        []*checks.Manager
+	// managers is keyed by store identity - (tmsID, role), the same fields the
+	// manager derives its advisory lock from - so that at most one manager is
+	// ever started per store. CheckService, which calls start, is not guaranteed
+	// to run exactly once per TMS: a TMS build that fails after CheckService has
+	// already run (for example on a later GetNetwork step) is retried, and the
+	// lazy service provider does not cache failed builds, so start runs again for
+	// the same store. Without this key each retry would start another manager,
+	// leaking a sweep goroutine (and, on postgres, an advisory-lock connection)
+	// per attempt.
+	managers map[string]*checks.Manager
+}
+
+// storeKey identifies the store a sweep runs over, so repeated start calls for
+// the same store map to the same manager. It mirrors the fields the manager's
+// advisory lock id is derived from.
+func storeKey(tmsID token.TMSID, role string) string {
+	return tmsID.String() + "/" + role
 }
 
 // start builds a drift checks manager for one store and starts it.
@@ -54,6 +70,21 @@ func (s *sweeper) start(
 		// nothing to configure the sweep from, which is the case in setups that wire
 		// the check service by hand. The on-demand checks still work.
 		logger.Debugf("no configuration available, not starting drift checks for [%s][%s]", tmsID, role)
+
+		return nil
+	}
+
+	key := storeKey(tmsID, role)
+
+	// Already started for this store (a retried TMS build calls start again): do
+	// nothing, so the store keeps its single sweep instead of accumulating one
+	// per attempt. Checked under the lock below as well; this early check only
+	// avoids building a manager we would throw away in the common case.
+	s.mu.Lock()
+	_, exists := s.managers[key]
+	s.mu.Unlock()
+	if exists {
+		logger.Debugf("drift checks already running for [%s][%s], not starting another", tmsID, role)
 
 		return nil
 	}
@@ -94,10 +125,21 @@ func (s *sweeper) start(
 	// TMSes start concurrently through one sweeper.
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Re-check under the lock: a concurrent retry for the same store could have
+	// started its manager between the early check above and here. Starting a
+	// second one would leak it, so defer to the one already tracked.
+	if _, exists := s.managers[key]; exists {
+		logger.Debugf("drift checks already running for [%s][%s], not starting another", tmsID, role)
+
+		return nil
+	}
 	if err := manager.Start(); err != nil {
 		return errors.Wrapf(err, "failed to start drift checks for [%s][%s]", tmsID, role)
 	}
-	s.managers = append(s.managers, manager)
+	if s.managers == nil {
+		s.managers = make(map[string]*checks.Manager)
+	}
+	s.managers[key] = manager
 
 	return nil
 }
