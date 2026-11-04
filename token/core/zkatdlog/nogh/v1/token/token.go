@@ -75,15 +75,15 @@ func (t *Token) Deserialize(bytes []byte) error {
 func (t *Token) ToClear(meta *Metadata, pp *noghv1.PublicParams) (*token.Token, error) {
 	// Validate only nil-checks the commitment; a wrong-curve one panics Equals (issue #2554).
 	if err := math2.CheckElement(t.Data, pp.Curve); err != nil {
-		return nil, errors.Join(ErrInvalidTokenCommitment, err)
+		return nil, errors.Join(err, ErrInvalidTokenCommitment)
 	}
 	// The metadata arrives with the commitment and is equally untrusted: a foreign-curve
 	// value or blinding factor panics the Mul inside commit below.
 	if err := math2.CheckBaseElement(meta.Value, pp.Curve); err != nil {
-		return nil, errors.Join(ErrInvalidMetadataElement, err)
+		return nil, errors.Join(err, ErrInvalidMetadataElement)
 	}
 	if err := math2.CheckBaseElement(meta.BlindingFactor, pp.Curve); err != nil {
-		return nil, errors.Join(ErrInvalidMetadataElement, err)
+		return nil, errors.Join(err, ErrInvalidMetadataElement)
 	}
 	com, err := commit([]*math.Zr{
 		math.Curves[pp.Curve].HashToZr([]byte(meta.Type)),
