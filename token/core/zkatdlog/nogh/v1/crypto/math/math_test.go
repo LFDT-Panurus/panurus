@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package math
 
 import (
+	"fmt"
 	"testing"
 
 	math "github.com/IBM/mathlib"
@@ -33,6 +34,8 @@ func TestCheckElement(t *testing.T) {
 	err = CheckElement(g1, math.BLS12_381_BBS)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "element curve must equal curve ID")
+	// The message names both curves, so a rejection says which curve arrived.
+	require.Contains(t, err.Error(), fmt.Sprintf("got [%d], expected [%d]", math.BN254, math.BLS12_381_BBS))
 
 	inf := curve.NewG1()
 	err = CheckElement(inf, math.BN254)
@@ -54,6 +57,7 @@ func TestCheckBaseElement(t *testing.T) {
 	err = CheckBaseElement(zr, math.BLS12_381_BBS)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "element curve must equal curve ID")
+	require.Contains(t, err.Error(), fmt.Sprintf("got [%d], expected [%d]", math.BN254, math.BLS12_381_BBS))
 }
 
 func TestCheckElements(t *testing.T) {

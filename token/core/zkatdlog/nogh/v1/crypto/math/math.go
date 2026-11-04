@@ -76,7 +76,7 @@ func CheckElement[E Element](element E, curveID mathlib.CurveID) (err error) {
 		return errors.Errorf("element is nil")
 	}
 	if element.CurveID() != curveID {
-		return errors.Errorf("element curve must equal curve ID")
+		return errors.Errorf("element curve must equal curve ID: got [%d], expected [%d]", element.CurveID(), curveID)
 	}
 	if element.IsInfinity() {
 		return errors.New("element is infinity")
@@ -98,7 +98,7 @@ func CheckBaseElement[E BaseElement](element E, curveID mathlib.CurveID) (err er
 		return errors.Errorf("element is nil")
 	}
 	if element.CurveID() != curveID {
-		return errors.Errorf("element curve must equal curve ID")
+		return errors.Errorf("element curve must equal curve ID: got [%d], expected [%d]", element.CurveID(), curveID)
 	}
 
 	return nil
