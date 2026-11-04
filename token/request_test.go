@@ -529,6 +529,36 @@ func TestNewRequestFromBytes(t *testing.T) {
 	})
 }
 
+// TestNewRequestFromBytes_NoAnchorBackfill verifies that metadata serialized without an
+// embedded anchor is not silently backfilled with the requested txID during deserialization.
+// This prevents an adversary from omitting the anchor key and passing validation under any txID.
+func TestNewRequestFromBytes_NoAnchorBackfill(t *testing.T) {
+	// Create a minimal request with actions
+	original := NewRequest(nil, "tx-A")
+	original.Actions = &driver.TokenRequest{
+		Actions: []*driver.TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+		},
+	}
+	actionsBytes, err := original.Actions.Bytes()
+	require.NoError(t, err)
+
+	// Create metadata with no anchor
+	meta := &driver.TokenRequestMetadata{
+		Anchor: "",
+		Actions: []*driver.ActionMetadataEntry{
+			{ActionID: 0, IssueMetadata: &driver.IssueMetadata{}},
+		},
+	}
+	metaBytes, err := meta.Bytes()
+	require.NoError(t, err)
+
+	// Deserialize under a different anchor — the anchor must NOT be backfilled
+	restored, err := NewRequestFromBytes(nil, "tx-B", actionsBytes, metaBytes)
+	require.NoError(t, err)
+	assert.Empty(t, restored.Metadata.Anchor, "metadata anchor must not be backfilled from txID")
+}
+
 // TestNewFullRequestFromBytes tests NewFullRequestFromBytes function
 func TestNewFullRequestFromBytes(t *testing.T) {
 	t.Run("valid request", func(t *testing.T) {

@@ -267,9 +267,6 @@ func NewRequestFromBytes(tokenService *ManagementService, anchor RequestAnchor, 
 			return nil, errors.Wrapf(err, "failed unmarshalling token request metadata [%d]", len(trmRaw))
 		}
 	}
-	if len(trm.Anchor) == 0 {
-		trm.Anchor = anchor
-	}
 
 	return &Request{
 		Anchor:       anchor,
@@ -1173,9 +1170,6 @@ func (r *Request) FromBytes(raw []byte) error {
 		}
 		if err := r.Metadata.FromProtos(requestWithMetadata.Metadata); err != nil {
 			return errors.Wrapf(err, "failed unmarshalling metadata")
-		}
-		if len(r.Metadata.Anchor) == 0 {
-			r.Metadata.Anchor = r.Anchor
 		}
 	}
 
