@@ -37,6 +37,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/tracing"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
+	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -85,21 +86,39 @@ func NewLedger(ch *fabric.Channel, network string, keyTranslator translator.KeyT
 // Status retrieves the validation status of a transaction from the Fabric ledger.
 // FSC's underlying Ledger.GetTransactionByID takes no context, so ctx cannot bound the
 // query itself; it is used only for context-aware logging.
+//
+// A point lookup for a txID returns the lowest (block, txNum) envelope carrying it,
+// which a forged envelope ordered ahead of the honest one would win (see
+// finality.SkipShadowedEnvelopes). So when the looked-up transaction is not VALID,
+// its block is scanned for a VALID envelope with the same txID, and that envelope's
+// verdict is used when one exists. Only that block needs checking: an honest
+// envelope in a later block is always DUPLICATE_TXID.
 func (l *ledger) Status(ctx context.Context, id string) (driver.ValidationCode, error) {
 	tx, err := l.l.GetTransactionByID(id)
 	if err != nil {
 		return driver.Unknown, errors.Wrapf(err, "failed to get transaction [%s]", id)
 	}
 	logger.DebugfContext(ctx, "ledger status of [%s] is [%d]", id, tx.ValidationCode())
-	switch peer.TxValidationCode(tx.ValidationCode()) {
-	case peer.TxValidationCode_VALID:
+	if peer.TxValidationCode(tx.ValidationCode()) == peer.TxValidationCode_VALID {
 		return driver.Valid, nil
-	default:
-		return driver.Invalid, nil
 	}
+
+	// The looked-up envelope is not VALID; a VALID envelope for the same txID in the
+	// same block, if present, is the real outcome.
+	if _, _, found, scanErr := l.honestEnvelope(ctx, id); scanErr != nil {
+		logger.DebugfContext(ctx, "failed resolving honest envelope for [%s], using point-lookup verdict: %s", id, scanErr)
+	} else if found {
+		return driver.Valid, nil
+	}
+
+	return driver.Invalid, nil
 }
 
 // GetTransactionStatus retrieves the current status and token request hash for a transaction.
+//
+// Like Status, it treats a non-VALID point-lookup result as potentially shadowed: if
+// the transaction's block holds a VALID envelope with the same txID, that envelope's
+// verdict and token request hash are returned instead of the forgery's.
 func (l *ledger) GetTransactionStatus(ctx context.Context, namespace, txID string) (status int, tokenRequestHash []byte, message string, err error) {
 	// Get the transaction from the ledger
 	tx, err := l.l.GetTransactionByID(txID)
@@ -107,28 +126,39 @@ func (l *ledger) GetTransactionStatus(ctx context.Context, namespace, txID strin
 		return driver.Unknown, nil, "", errors.Wrapf(err, "failed to get transaction [%s]", txID)
 	}
 
-	// Map validation code to driver status
-	validationCode := tx.ValidationCode()
-	var txStatus driver.ValidationCode
-	var statusMessage string
-	switch peer.TxValidationCode(validationCode) {
-	case peer.TxValidationCode_VALID:
-		txStatus = driver.Valid
-	default:
-		txStatus = driver.Invalid
-		statusMessage = peer.TxValidationCode(validationCode).String()
-	}
-
-	// If invalid, return early without token request hash
-	if txStatus == driver.Invalid {
-		return txStatus, nil, statusMessage, nil
-	}
-
-	// Extract token request hash from the transaction
 	mapper := &finality.EndorserTxInfoMapper{
 		Network:       l.network,
 		KeyTranslator: l.keyTranslator,
 	}
+
+	// Map validation code to driver status
+	validationCode := tx.ValidationCode()
+	if peer.TxValidationCode(validationCode) != peer.TxValidationCode_VALID {
+		// The point lookup returned a non-VALID envelope. If a VALID envelope with the
+		// same txID shares its block, that envelope's verdict and token request hash are
+		// the transaction's true outcome; otherwise the non-VALID verdict stands.
+		block, txNum, found, scanErr := l.honestEnvelope(ctx, txID)
+		if scanErr != nil {
+			logger.DebugfContext(ctx, "failed resolving honest envelope for [%s], using point-lookup verdict: %s", txID, scanErr)
+		}
+		if !found {
+			return driver.Invalid, nil, peer.TxValidationCode(validationCode).String(), nil
+		}
+
+		txInfos, err := mapper.MapTxData(ctx, block.Data.Data[txNum], block.Metadata, block.Header.GetNumber(), txNum)
+		if err != nil {
+			return driver.Unknown, nil, "", errors.Wrapf(err, "failed to map honest envelope for transaction [%s]", txID)
+		}
+		if info, ok := txInfos[namespace]; ok {
+			return info.Status, info.RequestHash, info.Message, nil
+		}
+
+		// No matching namespace in the honest envelope: the transaction is VALID, but it
+		// carries no token request for this namespace (nothing to hash).
+		return driver.Valid, nil, "", nil
+	}
+
+	// Extract token request hash from the transaction
 	txInfos, err := mapper.MapProcessedTx(tx)
 	if err != nil {
 		return driver.Unknown, nil, "", errors.Wrapf(err, "failed to map transaction [%s]", txID)
@@ -142,7 +172,13 @@ func (l *ledger) GetTransactionStatus(ctx context.Context, namespace, txID strin
 	}
 
 	// If no matching namespace found, return status without hash
-	return txStatus, nil, statusMessage, nil
+	return driver.Valid, nil, "", nil
+}
+
+// honestEnvelope resolves the envelope whose verdict is the real outcome of txID
+// when a point lookup may have returned a forgery. See finality.HonestEnvelope.
+func (l *ledger) honestEnvelope(ctx context.Context, txID string) (block *common.Block, txNum uint64, found bool, err error) {
+	return finality.HonestEnvelope(ctx, l.l, l.ch.Delivery(), txID)
 }
 
 // GetStates performs a multi-key state query against the token chaincode.

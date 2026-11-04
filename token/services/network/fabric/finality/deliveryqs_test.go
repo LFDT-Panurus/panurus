@@ -12,11 +12,13 @@ import (
 	"fmt"
 	"testing"
 
+	ndriver "github.com/LFDT-Panurus/panurus/token/services/network/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/finality"
 	cdriver "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
 	events2 "github.com/hyperledger-labs/fabric-smart-client/platform/fabric/core/generic/events"
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
+	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -57,6 +59,9 @@ func (f *fakeScanner) ScanFromBlock(_ context.Context, block uint64, _ fabric.De
 
 type fakeMapper struct {
 	results map[*fabric.ProcessedTransaction]fakeMapperResult
+	// txData, when set, is the honest-envelope result keyed by the txNum passed to
+	// MapTxData (the index resolved within the scanned block).
+	txData map[cdriver.TxNum]map[cdriver.Namespace]finality.TxInfo
 }
 
 type fakeMapperResult struct {
@@ -73,7 +78,11 @@ func (f *fakeMapper) MapProcessedTx(tx *fabric.ProcessedTransaction) ([]finality
 	return r.infos, r.err
 }
 
-func (f *fakeMapper) MapTxData(_ context.Context, _ []byte, _ *common.BlockMetadata, _ cdriver.BlockNum, _ cdriver.TxNum) (map[cdriver.Namespace]finality.TxInfo, error) {
+func (f *fakeMapper) MapTxData(_ context.Context, _ []byte, _ *common.BlockMetadata, _ cdriver.BlockNum, txNum cdriver.TxNum) (map[cdriver.Namespace]finality.TxInfo, error) {
+	if f.txData != nil {
+		return f.txData[txNum], nil
+	}
+
 	return nil, nil
 }
 
@@ -240,4 +249,83 @@ func TestQueryByID_FallbackScanStartingBlock(t *testing.T) {
 			assert.Equal(t, tc.expected, scanner.startBlock)
 		})
 	}
+}
+
+// TestQueryByID_ShadowedForgery_ResolvesHonestEnvelope is the path-4 regression for
+// #2647: an evicted listener's txID whose point lookup returns a forged, Invalid
+// envelope must be resolved to the honest VALID envelope's verdict when a VALID
+// envelope with the same txID shares its block, rather than the forgery's Invalid.
+func TestQueryByID_ShadowedForgery_ResolvesHonestEnvelope(t *testing.T) {
+	ctx := context.Background()
+
+	// The point lookup for tx1 returns a (forged) envelope the mapper maps to Invalid.
+	forged := new(fabric.ProcessedTransaction)
+	invalidInfo := finality.TxInfo{TxId: "tx1", Status: ndriver.Invalid, Message: "BAD_PROPOSAL_TXID"}
+	honestInfo := finality.TxInfo{TxId: "tx1", Namespace: "ns", Status: ndriver.Valid, RequestHash: []byte("hash")}
+
+	// tx1's block: forged BAD_PROPOSAL_TXID at index 0, honest VALID at index 1.
+	b := block(t, 7,
+		[][]byte{endorserEnvelope(t, "tx1"), endorserEnvelope(t, "tx1")},
+		[]peer.TxValidationCode{peer.TxValidationCode_BAD_PROPOSAL_TXID, peer.TxValidationCode_VALID},
+	)
+
+	q := &finality.DeliveryScanQueryByID{
+		Delivery: &fakeScanner{},
+		Ledger:   &fakeLedger{results: map[string]fakeLedgerResult{"tx1": {pt: forged}}},
+		Mapper: &fakeMapper{
+			results: map[*fabric.ProcessedTransaction]fakeMapperResult{
+				forged: {infos: []finality.TxInfo{invalidInfo}},
+			},
+			// The honest envelope resolved at index 1 maps to a Valid info.
+			txData: map[cdriver.TxNum]map[cdriver.Namespace]finality.TxInfo{
+				1: {"ns": honestInfo},
+			},
+		},
+		BlockNumberByTxID: &fakeBlockNumberByTxID{nums: map[string]uint64{"tx1": 7}},
+		BlockDelivery:     &fakeBlockScanner{byNumber: map[uint64]*common.Block{7: b}},
+	}
+
+	received := drain(mustQuery(t, q, ctx, evicted("tx1")))
+	require.Equal(t, []finality.TxInfo{honestInfo}, received,
+		"the honest VALID envelope's verdict must override the forged Invalid one")
+}
+
+// TestQueryByID_NoShadow_KeepsPointLookupVerdict verifies the honest-envelope scan
+// does not change a genuinely-invalid transaction: when its block holds no VALID
+// envelope for the txID, the Invalid point-lookup verdict stands.
+func TestQueryByID_NoShadow_KeepsPointLookupVerdict(t *testing.T) {
+	ctx := context.Background()
+
+	rejected := new(fabric.ProcessedTransaction)
+	invalidInfo := finality.TxInfo{TxId: "tx1", Status: ndriver.Invalid, Message: "MVCC_READ_CONFLICT"}
+
+	// tx1's block holds only the invalid envelope.
+	b := block(t, 7,
+		[][]byte{endorserEnvelope(t, "tx1")},
+		[]peer.TxValidationCode{peer.TxValidationCode_MVCC_READ_CONFLICT},
+	)
+
+	q := &finality.DeliveryScanQueryByID{
+		Delivery: &fakeScanner{},
+		Ledger:   &fakeLedger{results: map[string]fakeLedgerResult{"tx1": {pt: rejected}}},
+		Mapper: &fakeMapper{
+			results: map[*fabric.ProcessedTransaction]fakeMapperResult{
+				rejected: {infos: []finality.TxInfo{invalidInfo}},
+			},
+		},
+		BlockNumberByTxID: &fakeBlockNumberByTxID{nums: map[string]uint64{"tx1": 7}},
+		BlockDelivery:     &fakeBlockScanner{byNumber: map[uint64]*common.Block{7: b}},
+	}
+
+	received := drain(mustQuery(t, q, ctx, evicted("tx1")))
+	require.Equal(t, []finality.TxInfo{invalidInfo}, received,
+		"a genuinely invalid transaction keeps its point-lookup verdict")
+}
+
+func mustQuery(t *testing.T, q *finality.DeliveryScanQueryByID, ctx context.Context, ev map[cdriver.TxID][]events2.ListenerEntry[finality.TxInfo]) <-chan []finality.TxInfo {
+	t.Helper()
+	ch, err := q.QueryByID(ctx, 20, ev)
+	require.NoError(t, err)
+
+	return ch
 }
