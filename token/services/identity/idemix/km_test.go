@@ -1115,3 +1115,101 @@ func testNewKeyManagerTamperedCredential(t *testing.T, configPath string, curveI
 	require.Nil(t, keyManager)
 	require.ErrorContains(t, err, "credential is not cryptographically valid")
 }
+
+const charlieFabricCADir = "./testdata/fp256bn_amcl/charlie.ExtraId2"
+
+func newCharlieFabricCAConfig(t *testing.T) *crypto.Config {
+	t.Helper()
+	ipkBytes, err := crypto.ReadFile(filepath.Join(charlieFabricCADir, idemixmsp.IdemixConfigFileIssuerPublicKey))
+	require.NoError(t, err)
+	config, err := crypto.NewConfigWithIPK(ipkBytes, charlieFabricCADir, true)
+	require.NoError(t, err)
+
+	return config
+}
+
+func newTestBCCSP(t *testing.T, curveID math.CurveID) types.BCCSP {
+	t.Helper()
+	kvs, err := kvs2.NewInMemory()
+	require.NoError(t, err)
+	keyStore, err := crypto.NewKeyStore(curveID, kvs2.Keystore(kvs))
+	require.NoError(t, err)
+	cryptoProvider, err := crypto.NewBCCSP(keyStore, curveID)
+	require.NoError(t, err)
+
+	return cryptoProvider
+}
+
+// TestNewKeyManagerRevocationPublicKey checks that the configured revocation public key is imported.
+func TestNewKeyManagerRevocationPublicKey(t *testing.T) {
+	t.Run("Fabric-CA BN254", func(t *testing.T) {
+		config := newCharlieFabricCAConfig(t)
+		require.NotEmpty(t, config.RevocationPk)
+		km, err := NewKeyManager(config, types.Standard, newTestBCCSP(t, math.BN254))
+		require.NoError(t, err)
+		assert.NotNil(t, km.RevocationPK)
+	})
+
+	for _, tc := range []struct {
+		configPath string
+		curveID    math.CurveID
+	}{
+		{"./testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY},
+		{"./testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY},
+	} {
+		t.Run(tc.configPath, func(t *testing.T) {
+			config, err := crypto.NewConfig(tc.configPath)
+			require.NoError(t, err)
+			require.NotEmpty(t, config.RevocationPk)
+			km, err := NewKeyManager(config, types.EidNymRhNym, newTestBCCSP(t, tc.curveID))
+			require.NoError(t, err)
+			assert.NotNil(t, km.RevocationPK)
+			// TODO: add the wrong-key case for BLS once idemix pr91/3-perf lands.
+		})
+	}
+
+	t.Run("Invalid key bytes", func(t *testing.T) {
+		config := newCharlieFabricCAConfig(t)
+		config.RevocationPk = []byte("garbage")
+		_, err := NewKeyManager(config, types.Standard, newTestBCCSP(t, math.BN254))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to import revocation public key")
+	})
+
+	t.Run("No key configured", func(t *testing.T) {
+		config := newCharlieFabricCAConfig(t)
+		config.RevocationPk = nil
+		km, err := NewKeyManager(config, types.Standard, newTestBCCSP(t, math.BN254))
+		require.NoError(t, err)
+		assert.Nil(t, km.RevocationPK)
+
+		identityDescriptor, err := km.Identity(t.Context(), nil)
+		require.NoError(t, err)
+		signer, err := km.DeserializeSigner(t.Context(), identityDescriptor.Identity)
+		require.NoError(t, err)
+		verifier, err := km.DeserializeVerifier(t.Context(), identityDescriptor.Identity)
+		require.NoError(t, err)
+		sigma, err := signer.Sign([]byte("hello world!!!"))
+		require.NoError(t, err)
+		require.NoError(t, verifier.Verify([]byte("hello world!!!"), sigma))
+	})
+
+	t.Run("Wrong key BN254", func(t *testing.T) {
+		config := newCharlieFabricCAConfig(t)
+		wrongKey, err := crypto.ReadFile("./testdata/bls12_381_bbs/idemix/msp/RevocationPublicKey")
+		require.NoError(t, err)
+		require.NotEqual(t, config.RevocationPk, wrongKey)
+		config.RevocationPk = wrongKey
+		km, err := NewKeyManager(config, types.Standard, newTestBCCSP(t, math.BN254))
+		require.NoError(t, err)
+
+		identityDescriptor, err := km.Identity(t.Context(), nil)
+		require.NoError(t, err)
+		_, err = km.DeserializeVerifier(t.Context(), identityDescriptor.Identity)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "epochPKSig")
+		_, err = km.DeserializeSigner(t.Context(), identityDescriptor.Identity)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "epochPKSig")
+	})
+}
