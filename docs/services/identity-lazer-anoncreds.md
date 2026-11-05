@@ -1097,7 +1097,7 @@ cases of §9.2, `concurrency_test.go` the concurrency checks of §9.3, and `fuzz
 
 **Signatures**
 
-- [Falcon] P.-A. Fouque, J. Hoffstein, P. Kirchner, V. Lyubashevsky, T. Pornin, T. Prest, T. Ricosset, G. Seiler, W. Whyte, Z. Zhang. *Falcon: Fast-Fourier Lattice-based Compact Signatures over NTRU.* Specification v1.2, NIST PQC, 2020. [falcon-sign.info](https://falcon-sign.info/). Being standardized by NIST as FN-DSA (draft [FIPS 206](https://csrc.nist.gov/pubs/fips/206/ipd)).
+- [Falcon] P.-A. Fouque, J. Hoffstein, P. Kirchner, V. Lyubashevsky, T. Pornin, T. Prest, T. Ricosset, G. Seiler, W. Whyte, Z. Zhang. *Falcon: Fast-Fourier Lattice-based Compact Signatures over NTRU.* Specification v1.2, NIST PQC, 2020. [falcon-sign.info](https://falcon-sign.info/). Being standardized by NIST as FN-DSA ([FIPS 206](https://csrc.nist.gov/projects/post-quantum-cryptography/post-quantum-cryptography-standardization), in development).
 - [DP16] L. Ducas, T. Prest. *Fast Fourier Orthogonalization.* ISSAC 2016. [ePrint 2015/1014](https://eprint.iacr.org/2015/1014).
 - [FS86] A. Fiat, A. Shamir. *How to Prove Yourself: Practical Solutions to Identification and Signature Problems.* CRYPTO 1986.
 - [Lyu09] V. Lyubashevsky. *Fiat-Shamir with Aborts: Applications to Lattice and Factoring-Based Signatures.* ASIACRYPT 2009.
