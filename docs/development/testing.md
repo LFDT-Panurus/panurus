@@ -302,6 +302,40 @@ from 9 to 3, but each grouped job runs `TestAll` plus every small spec back to b
 1h default suite timeout). If it becomes the critical path of the itest workflow, split the
 container into `TestAll` alone plus a shared container for the small specs.
 
+#### Sharing a network on Fabric-X
+
+The Fabric-X suite (`integration/token/fungible/dlogx`) shares networks too, with two
+differences from the dlog suite:
+
+- **No `TestAll`-first container for the small specs.** Its "Extras" container (T12, T13, T4,
+  T5, T3) has no `TestAll` in front: `TestAll` authorizes the issuer for redeem, which T13
+  needs not to have happened, and the fabricx `TestAll` jobs (T1, T6, T16) are already the
+  longest of the itest workflow, so adding specs behind them would lengthen the critical path.
+  The container follows the rules above: T12 and T13 issue 220 USD between them, within the
+  USD quota; T4, T5 and T3 each use their own token type; T3 runs after T4 and T5, and last.
+  "Extras" runs on the `Aries|WithEndorsers|WebEnabled` topology, so T12 and T13 now also get
+  the FSC web server, which they do not use.
+- **The spec that replaces the issuers must be the last public parameters update.** Fabric-X
+  installs the public parameters through the FSC-endorsement setup path, where every update must
+  be signed by a *current* issuer whose signer the `issuer` node holds
+  (`signPublicParamsWithCurrentIssuer` in
+  `token/services/network/fabric/endorsement/fsc/service.go`). T2 and T7 replace the issuers
+  with `newIssuer`, so nothing can update the public parameters after them. T2.1 appends
+  `newIssuer`, so T2 should be able to follow it, but that order has not been run on Fabric-X.
+
+T2.1, T2 and T7 failed locally on Fabric-X, each on its own network (a `GetPublicParams`
+timeout right after the update; see
+[#1945](https://github.com/LFDT-Panurus/panurus/issues/1945)). T2.1 and T2 therefore stay in a
+container with a network per spec ("Public params update"), and T6 and T7 do not share a
+network; all three are disabled in CI anyway. Once they pass, add T2.1 then T2 after T3 in
+"Extras", each with its own token type, and T7 after T6.
+
+CI runs the specs of "Extras" it enabled before, T13, T4, T5 and T3, with
+`make integration-tests-fabricx-dlog-extras`: all three infrastructure types in one job, one
+network each; `-extras-{websocket,libp2p,replicas}` run one type each. To enable T12, T2.1 or
+T2 in CI, widen `FABRICX_DLOG_EXTRAS_FILTER` in `fabricx.mk` rather than adding a job, and
+split the job per infrastructure type if it then gets close to the longest itest jobs.
+
 ### Enabling the Token Platform Without a TMS
 
 By default, an FSC node only gets `token: enabled: true` written into its generated

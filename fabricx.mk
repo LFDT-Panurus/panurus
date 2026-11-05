@@ -113,6 +113,26 @@ integration-tests-fabricx-dlog-t16-libp2p:
 integration-tests-fabricx-dlog-t16-replicas:
 	make integration-tests-fabricx-dlog TEST_FILTER="T16 && replicas"
 
+# The dlogx "Extras" container (T12, T13, T4, T5, T3) shares one network per infra type.
+# The filter is what CI runs; T12, T2.1 and T2 are disabled (#1945): widen it to enable them.
+FABRICX_DLOG_EXTRAS_FILTER = (T3 || T4 || T5 || T13)
+
+.PHONY: integration-tests-fabricx-dlog-extras
+integration-tests-fabricx-dlog-extras:
+	make integration-tests-fabricx-dlog TEST_FILTER="$(FABRICX_DLOG_EXTRAS_FILTER)"
+
+.PHONY: integration-tests-fabricx-dlog-extras-websocket
+integration-tests-fabricx-dlog-extras-websocket:
+	make integration-tests-fabricx-dlog TEST_FILTER="$(FABRICX_DLOG_EXTRAS_FILTER) && websocket"
+
+.PHONY: integration-tests-fabricx-dlog-extras-libp2p
+integration-tests-fabricx-dlog-extras-libp2p:
+	make integration-tests-fabricx-dlog TEST_FILTER="$(FABRICX_DLOG_EXTRAS_FILTER) && libp2p"
+
+.PHONY: integration-tests-fabricx-dlog-extras-replicas
+integration-tests-fabricx-dlog-extras-replicas:
+	make integration-tests-fabricx-dlog TEST_FILTER="$(FABRICX_DLOG_EXTRAS_FILTER) && replicas"
+
 .PHONY: integration-tests-fabricx-dlog
 integration-tests-fabricx-dlog:
 	cd ./integration/token/fungible/dlogx; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" .

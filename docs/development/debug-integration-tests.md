@@ -39,9 +39,12 @@ the specs that share one network (`token.ShareNetwork`) it uses the grouped
 targets `integration-tests-dlog-fabric-aries-*` (T1, T17, T4, T5, T3, T2.1,
 T2), `integration-tests-dlog-fabric-t6-t7-*` and
 `integration-tests-fabtoken-fabric-all-*` (T1, T17, T4, T5, T3, T2); fabricx
-still uses the per-spec `-t1-*` style targets. The plain `-tN` targets (no
-infra suffix, e.g. `integration-tests-dlog-fabric-t1`) leave the infra label
-unset and run all three types sequentially.
+uses `integration-tests-fabricx-dlog-extras` (T13, T4, T5, T3 of the dlogx
+"Extras" container, all three infra types in one job; `-extras-websocket`,
+`-extras-libp2p` and `-extras-replicas` run one type each) and the per-infra
+`-t1-*`, `-t6-*` and `-t16-*` targets for its `TestAll` specs. The plain `-tN`
+targets (no infra suffix, e.g. `integration-tests-dlog-fabric-t1`) leave the
+infra label unset and run all three types sequentially.
 
 **Local default: websocket only.** Unless the user asks for `libp2p`,
 `replicas`, or "all infra types", always add `&& websocket` (or use an
