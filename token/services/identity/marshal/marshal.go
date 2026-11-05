@@ -229,7 +229,8 @@ func DecodeIdentity(b []byte) (Result, error) {
 	r.Data = b[np : np+l] // zero-copy
 
 	if !r.IsInt {
-		// convert string to int for legacy reasons
+		// convert string to int for legacy reasons; policy and lazer identities
+		// were never string-tagged, so they have no case on purpose
 		switch r.Str {
 		case driver.X509IdentityTypeString:
 			r.Int32 = driver.X509IdentityType

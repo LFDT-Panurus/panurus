@@ -64,8 +64,9 @@ func WrapWithType(idType Type, id Identity) (Identity, error) {
 	return raw, nil
 }
 
-// TypeToString return a string identifier for the given identity type.
-// If the type is unknown, it returns the string "Type (<t>)".
+// TypeToString returns the string identifier of the given identity type, stored
+// as the owner type of tokens. If the type is unknown, it returns "Type (<t>)".
+// Every type declared in token/driver must have a case (see TestTypeToStringIsExhaustive).
 func TypeToString(t driver.IdentityType) string {
 	switch t {
 	case tdriver.IdemixIdentityType:
@@ -78,6 +79,8 @@ func TypeToString(t driver.IdentityType) string {
 		return tdriver.MultiSigIdentityTypeString
 	case tdriver.HTLCScriptIdentityType:
 		return tdriver.HTLCScriptIdentityTypeString
+	case tdriver.PolicyIdentityType:
+		return tdriver.PolicyIdentityTypeString
 	case tdriver.LazerIdentityType:
 		return tdriver.LazerIdentityTypeString
 	default:
