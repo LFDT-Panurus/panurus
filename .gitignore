@@ -18,13 +18,14 @@ plan.md
 x/BUG_HUNT_PROMPT.md
 
 # Every fungible integration suite generates its FSC node mains under out/ (out/cmd/<node>/main.go),
-# and the EVM suites also a network under testdata/. Both hold real Go files, so a stray
+# and the EVM and dlogx suites also a network under testdata/. Both hold real Go files, so a stray
 # "git add -A" commits them and a linter then reports on them.
 integration/token/fungible/*/out/
 integration/token/fungible/evm/testdata/
 integration/token/fungible/evmfabtoken/testdata/
 integration/token/fungible/evmgw/testdata/
 integration/token/fungible/evmgwfabtoken/testdata/
+integration/token/fungible/dlogx/testdata/
 # ginkgo leaves its compiled suite binary behind when a run fails.
 integration/token/fungible/evm/evm.test
 integration/token/fungible/evmfabtoken/evmfabtoken.test

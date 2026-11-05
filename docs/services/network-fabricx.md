@@ -404,9 +404,12 @@ Two consequences of reading the version rather than counting notifications:
   [#2255](https://github.com/LFDT-Panurus/panurus/issues/2255) the keeper treated
   its first observation as "initialization" and stayed behind by exactly the number
   of updates it had not witnessed, which permanently broke any endorser restarted
-  after a parameters update. The FabricX fungible suite covers this end to end: its
-  public-parameters-update specs restart the endorser after the update and then
-  transact against the new parameters.
+  after a parameters update. The FabricX fungible suite
+  (`integration/token/fungible/dlogx`) has specs for this end to end: its
+  public-parameters-update specs (T2, T2.1, T7) restart the endorser after the
+  update and then transact against the new parameters. They are not run in CI yet
+  ([#1945](https://github.com/LFDT-Panurus/panurus/issues/1945)); run them locally
+  with e.g. `make integration-tests-fabricx-dlog TEST_FILTER="(T2.1 || T2) && websocket"`.
 - **No drift**: a missed or coalesced notification, or a version that jumps by more
   than one, cannot desynchronize the keeper, because each update re-reads the real
   version.
