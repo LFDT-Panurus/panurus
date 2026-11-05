@@ -124,6 +124,7 @@ make integration-tests-dlog-fabric TEST_FILTER="T1"
 - **Interfaces**: Define small, focused interfaces on consumer side; favor composition
 - **Concurrency**: Use goroutines and channels; avoid shared state; validate with race detector
 - **Globals**: Avoid global variables for testability
+- **Secret Keys**: Never cache private keys; load them only when needed so they don't linger in memory ([details](docs/services/identity.md#key-handling))
 - **Documentation**: All exported functions MUST have Godoc comments
 
 ### Git Workflow

@@ -4,6 +4,12 @@ The **Identity Service** (`token/services/identity`) is an **internal infrastruc
 
 This independence ensures that token-related cryptographic material (such as Idemix pseudonyms or X.509 certificates used for token ownership) is managed according to the specific privacy and security requirements of the Token Drivers, regardless of the underlying DLT platform.
 
+## Key Handling
+
+Private key material (X.509 signing keys, Idemix long-term user keys and pseudonym keys) **must not be cached** in signers, key managers, closures, or globals.
+Keys are loaded from the keystore only when needed, i.e. at sign time, and released right after use, so they stay in memory for the shortest time possible.
+Performance work on the sign/verify path must not resolve a key once and hold it; optimize allocations, hashing, or lookups of non-secret data instead.
+
 ## Overview
 
 The Identity Service abstracts the complexity of different cryptographic schemes, allowing Panurus to support multiple identity types (e.g., X.509, Idemix) and different storage backends seamlessly. 
