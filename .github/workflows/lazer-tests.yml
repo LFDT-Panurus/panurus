@@ -3,20 +3,13 @@ name: Lazer Tests
 # Unit tests of the experimental post-quantum lazer identity module
 # (x/token/services/identity/lazer). It is a separate Go module that uses cgo and
 # links liblazer.a, so it is not covered by tests.yml / `make unit-tests`.
+# No paths filter: the module depends on many root packages, so any change may break it.
 
 on:
   push:
     branches: [ main ]
-    paths:
-      - 'x/token/services/identity/lazer/**'
-      - 'lazer.mk'
-      - '.github/workflows/lazer-tests.yml'
   pull_request:
     branches: [ main ]
-    paths:
-      - 'x/token/services/identity/lazer/**'
-      - 'lazer.mk'
-      - '.github/workflows/lazer-tests.yml'
   workflow_dispatch:
 
 env:
@@ -63,6 +56,7 @@ jobs:
       # Not cached: lazer is built with -march=native (and HEXL picks AVX-512
       # when present), so a cached build from one runner SIGILLs on another.
       - name: Build and install lazer
+        id: install
         run: make lazer-install
 
       # lazer-check compares the sha256 of every patch with .lazer/REVISION:
@@ -79,5 +73,16 @@ jobs:
           git checkout -- "$patch_file"
           make lazer-check
 
+      # the module is not in GO_MODULES, so `make checks` and `make lint` skip it
+      - name: Install tools
+        if: matrix.arch == 'amd64'
+        run: make install-tools
+
+      - name: Static checks
+        if: matrix.arch == 'amd64'
+        run: make lazer-checks
+
+      # run even if the static checks fail, to report both
       - name: Run unit tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: make lazer-test

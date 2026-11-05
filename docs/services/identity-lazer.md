@@ -276,6 +276,7 @@ make lazer-install LAZER_SRC=~/lazer   # or copy, patch and build a local checko
 make lazer-test                        # go test -race in the module
 make lazer-test-short                  # without the race detector
 make lazer-bench                       # sizes and benchmarks
+make lazer-checks                      # make checks and make lint, on this module only
 make lazer-clean                       # remove ./.lazer
 ```
 
@@ -289,7 +290,9 @@ in `x/token/services/identity/lazer` works too. Without it the module does not c
 of `GO_MODULES` and not covered by `make unit-tests`.
 
 **CI.** `lazer-tests.yml` runs `make lazer-install` and `make lazer-test` on Linux amd64 (`ubuntu-latest`) and
-arm64 (`ubuntu-24.04-arm`). The `fuzz-lazer` job of `nightly-fuzz.yml` runs the fuzz targets of the module. Neither
+arm64 (`ubuntu-24.04-arm`), on every pull request and push to `main`: the module depends on many root packages, so
+it has no paths filter. On amd64 it also runs `make lazer-checks`: the module is not in `GO_MODULES`, so `make
+checks` and `make lint` skip it. The `fuzz-lazer` job of `nightly-fuzz.yml` runs the fuzz targets of the module. Neither
 caches `./.lazer`: lazer is built with `-march=native` (and HEXL picks AVX-512 when present), so a build from one
 runner may not run on another. CI builds Linux only; macOS (arm64, Homebrew) is built and tested locally, not in
 CI.
@@ -345,7 +348,7 @@ misapplied silently.
 **What was built.** `make lazer-install` records the build in `./.lazer/REVISION`: for a fetched build the
 repository, ref and commit; for `LAZER_SRC` the source directory and the checkout's `HEAD`, marked
 `(with uncommitted changes)` if the working tree is dirty; then the applied patches with their sha256.
-`make lazer-check`, run by `lazer-test`, `lazer-test-short` and `lazer-bench`, prints it and fails unless the
+`make lazer-check`, run by `lazer-test`, `lazer-test-short`, `lazer-bench` and `lazer-checks`, prints it and fails unless the
 installed lazer was built with exactly the patches in the directory, so a build with a different patch set cannot
 be used by mistake.
 

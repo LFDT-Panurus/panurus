@@ -126,6 +126,12 @@ lazer-check:
 lazer-test: lazer-check
 	cd $(LAZER_MODULE) && go test -race -count=1 -timeout 30m ./...
 
+.PHONY: lazer-checks
+# static checks of the lazer module: the targets of checks.mk and lint on this
+# module only (tidy-check already covers it through TIDY_GO_MODULES)
+lazer-checks: lazer-check
+	$(MAKE) licensecheck gofmt goimports misspell ineffassign govet gofix staticcheck govulncheck lint GO_MODULES=$(LAZER_MODULE)
+
 .PHONY: lazer-test-short
 # like lazer-test without the race detector
 lazer-test-short: lazer-check

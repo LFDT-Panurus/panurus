@@ -74,6 +74,7 @@ make lazer-install                     # fetch the pinned lazer commit, patch, b
 make lazer-install LAZER_SRC=~/lazer   # or build a local checkout (it is copied, not modified)
 make lazer-test                        # go test -race ./... in this module
 make lazer-bench                       # sizes and benchmarks
+make lazer-checks                      # make checks and make lint, on this module only
 make lazer-clean
 ```
 

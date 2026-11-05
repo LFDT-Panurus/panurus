@@ -43,7 +43,7 @@ include $(TOP)/checks.mk
 
 # Define all Go module directories
 GO_MODULES := . integration token/services/storage/db/kvs/hashicorp cmd/artifactgen cmd/tokengen cmd/token_validation_service cmd/profiler cmd/skicleanup cmd/tokendiag cmd/node x/token/services/network/evm
-# the lazer module (x/) needs `make lazer-install` to build, so it is not in GO_MODULES
+# the lazer module (x/) needs `make lazer-install` to build, so it is not in GO_MODULES: `make lazer-checks` checks it
 TIDY_GO_MODULES := $(GO_MODULES) x/token/services/identity/lazer tools
 
 # include fabricx target
