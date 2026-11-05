@@ -237,9 +237,12 @@ type Network interface {
 // kills is running again, and the public parameters and node configuration are unchanged.
 // It must also not depend on the ledger state that the previous specs leave behind: the
 // fungible checks assert absolute balances, holdings and issued totals, so two specs that
-// issue or move the same token type to the same wallet cannot share a network. A spec
-// that changes the network for good, such as a public parameters update or an identity
-// revocation, may share it only as the last spec of the container.
+// issue or move the same token type to the same wallet cannot share a network (the
+// fungible test functions take fungible.WithTokenType for this). A spec that changes the
+// network for good, such as a public parameters update or an identity revocation, may
+// share it only after every spec that the change would affect, typically at the end of the
+// container. fungible.TestAll asserts the whole history of the network, so it must be the
+// first spec.
 //
 // The network is built in BeforeAll. The DeferCleanup that tears it down is registered
 // before the build starts, so a network whose build failed part-way is torn down too, and

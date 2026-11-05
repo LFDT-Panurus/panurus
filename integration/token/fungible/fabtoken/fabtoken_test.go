@@ -27,29 +27,45 @@ import (
 
 var _ = Describe("EndToEnd", func() {
 	for _, t := range integration2.AllTestTypes {
-		Describe("Fungible", t.Label, func() {
+		// TestAll and the small specs share one network, see token2.ShareNetwork. TestAll
+		// (T1) runs first, on a fresh network, so its assertions on the whole transaction
+		// history and on the issuer's 241 USD quota hold unchanged. Every later spec uses
+		// its own token type, so TestAll's balances and the USD quota, which applies to the
+		// exact type "USD" only, do not affect it; T4 and T5 use different types because
+		// both assert absolute balances of the same wallets. T17 authorizes the issuer for
+		// redeem, as TestAll already did (a KVS overwrite, so it changes nothing), and also
+		// newIssuer, which no later spec redeems with; it runs before T2 because it relies
+		// on newIssuer not being in the public parameters, which T2 adds. T3 revokes bob for
+		// good, so it runs after T4 and T5, which move tokens to bob. T2 changes the public
+		// parameters, so it runs last. Each label still runs on its own network when
+		// filtered alone.
+		Describe("Fungible", Ordered, ContinueOnFailure, t.Label, func() {
 			ts, selector := newTestSuite(t.CommType, t.ReplicationFactor, "alice", "bob", "charlie")
-			BeforeEach(ts.Setup)
-			AfterEach(ts.TearDown)
+			token2.ShareNetwork(ts)
 			It("succeeded", Label("T1"), func() { fungible.TestAll(ts.II, "auditor", nil, true, selector) })
-			It("Update public params", Label("T2"), func() { UpdatePublicParams(ts.II, selector) })
-			It("Test Identity Revocation", Label("T3"), func() { fungible.TestRevokeIdentity(ts.II, "auditor", selector) })
-			It("Test Remote Wallet (GRPC)", Label("T4"), func() { fungible.TestRemoteOwnerWallet(ts.II, "auditor", selector, false) })
-			It("Test Remote Wallet (WebSocket)", Label("T5"), func() { fungible.TestRemoteOwnerWallet(ts.II, "auditor", selector, true) })
-		})
-
-		Describe("Redeem with an unauthorized issuer", t.Label, func() {
-			ts, selector := newTestSuite(t.CommType, t.ReplicationFactor, "alice", "bob", "charlie")
-			BeforeEach(ts.Setup)
-			AfterEach(ts.TearDown)
 			It("Test redeem rejected with unauthorized issuer", Label("T17"), func() {
-				fungible.TestRedeemUnauthorizedIssuer(ts.II, selector, "default")
+				fungible.TestRedeemUnauthorizedIssuer(ts.II, selector, "default", fungible.WithTokenType("USDt17"))
+			})
+			It("Test Remote Wallet (GRPC)", Label("T4"), func() {
+				fungible.TestRemoteOwnerWallet(ts.II, "auditor", selector, false, fungible.WithTokenType("USDt4"))
+			})
+			It("Test Remote Wallet (WebSocket)", Label("T5"), func() {
+				fungible.TestRemoteOwnerWallet(ts.II, "auditor", selector, true, fungible.WithTokenType("USDt5"))
+			})
+			It("Test Identity Revocation", Label("T3"), func() {
+				fungible.TestRevokeIdentity(ts.II, "auditor", selector, fungible.WithTokenType("USDt3"))
+			})
+			It("Update public params", Label("T2"), func() {
+				UpdatePublicParams(ts.II, selector, fungible.WithTokenType("USDt2"))
 			})
 		})
 	}
 })
 
-func UpdatePublicParams(network *integration.Infrastructure, selector *token2.ReplicaSelector) {
+// UpdatePublicParams replaces the auditor and the issuer of the fabtoken public parameters
+// with newAuditor and newIssuer, and checks with fungible.TestPublicParamsUpdate
+// that the network keeps working, with the passed options.
+func UpdatePublicParams(network *integration.Infrastructure, selector *token2.ReplicaSelector, opts ...fungible.TestOption) {
 	tms := fungible.GetTMSByNetworkName(network, "default")
 	auditorId := fungible.GetAuditorIdentity(tms, "newAuditor")
 	issuerId := fungible.GetIssuerIdentity(tms, "newIssuer")
@@ -64,7 +80,7 @@ func UpdatePublicParams(network *integration.Infrastructure, selector *token2.Re
 	ppBytes, err := publicParam.Serialize()
 	Expect(err).NotTo(HaveOccurred())
 
-	fungible.TestPublicParamsUpdate(network, "newAuditor", ppBytes, "default", false, selector, false)
+	fungible.TestPublicParamsUpdate(network, "newAuditor", ppBytes, "default", false, selector, false, opts...)
 }
 
 func newTestSuite(commType fsc.P2PCommunicationType, factor int, names ...string) (*token2.TestSuite, *token2.ReplicaSelector) {

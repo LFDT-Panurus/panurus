@@ -245,10 +245,96 @@ its own; a CI job gains only when its filter selects several specs of the contai
 Only group specs that:
 
 - leave every node running and the public parameters and node configuration unchanged
-  (a spec that updates the public parameters or revokes an identity may only be the last one);
+  (a spec that updates the public parameters or revokes an identity may only run after every
+  spec it would affect, see below);
 - do not assert absolute balances, holdings or issued totals on a wallet and token type that an
   earlier spec of the container also touched, and stay together within the issuer's USD quota
   (241, enforced by the test issuer view).
+
+#### Sharing a network with `TestAll`
+
+`fungible.TestAll` asserts the whole audited and accepted transaction history, the issuer's
+history and the issuer's USD quota, so it only passes on a fresh network. The dlog suite
+(`integration/token/fungible/dlog`) still shares its network with the cheaper specs of the same
+topology, in the containers "T1 Fungible with Auditor ne Issuer and extras" (T1, T17, T4, T5,
+T3, T2.1, T2) and "Fungible with Auditor = Issuer" (T6, T7); the fabtoken suite does the same in
+its "Fungible" container (T1, T17, T4, T5, T3, T2). The rules are:
+
+- **`TestAll` runs first.** It checks this itself: it fails at once, with "TestAll must run on a
+  fresh network (first spec of a ShareNetwork container)", if the auditor has already audited a
+  transaction. The check only looks at that auditor's audit history; its point is a clear error,
+  since `TestAll`'s own first history assertions would fail anyway.
+- **Every later spec uses its own token type**, with `fungible.WithTokenType`, accepted by
+  `TestRedeemUnauthorizedIssuer`, `TestRemoteOwnerWallet(WithWMP)`, `TestRevokeIdentity` and
+  `TestPublicParamsUpdate` (the default stays `"USD"`; `TestPublicParamsUpdate` also takes
+  `fungible.WithRestartAfterUpdate`). Balances, holdings, spending
+  and the auditor's limits are per type, and the USD quota applies to the exact type `"USD"`
+  only, so a spec with its own type does not see what `TestAll` left behind. Two specs that
+  assert absolute balances of the same wallets (T4 and T5) need different types from each other
+  too. The type must not contain `.`: the sherdlock selector keys its cache by wallet ID and type
+  joined by `.`, and wallet IDs are dotted (`alice.id1`). The suites use `USDt17`, `USDt4`, and
+  so on.
+- **Specs that change the network for good go last**, ordered so that no change affects a spec
+  that runs after it: T3 revokes bob, so it runs after T4 and T5, which move tokens to bob; T2.1
+  and T2 change the public parameters, so they close the container.
+- **Re-running a setup step must be harmless.** For example, T17 authorizes the issuer for
+  redeem, which `TestAll` already did; that is a KVS overwrite, so it changes nothing. A spec that
+  needs the *absence* of such state (T13 expects no authorized redeem issuer) cannot run after
+  `TestAll`. Likewise T17 relies on `newIssuer` not being in the public parameters, so it runs
+  before T2.1/T2, which add it.
+- **Public parameters updates start from the genesis file.** `PrepareUpdatedPublicParams` reads
+  the public parameters file written at network generation, which `UpdatePublicParams` does not
+  rewrite, so T2.1 and T7 drop the `issuer.ExtraId` issuer that `TestAll` added. No later spec
+  uses it; a spec that needs an earlier update to persist must not follow one.
+
+To pick the order for a new container: start with `TestAll`, then the specs that only add state
+under their own token type, then those that change shared state (revocations), then those that
+change the public parameters, and check each against the ones before it with the rules above.
+The make targets `integration-tests-dlog-fabric-aries-{websocket,libp2p,replicas}`,
+`integration-tests-dlog-fabric-t6-t7-{websocket,libp2p,replicas}` and
+`integration-tests-fabtoken-fabric-all-{websocket,libp2p,replicas}` run each container once per
+infrastructure type; the single-label targets (e.g. `integration-tests-dlog-fabric-t17`) still
+run one spec on a network of its own.
+
+Co-locating `TestAll` with the small specs is a tradeoff: it cuts the dlog jobs for these specs
+from 9 to 3, but each grouped job runs `TestAll` plus every small spec back to back, so the
+`aries-replicas` job becomes the longest of them (estimated 22–28 minutes, well under Ginkgo's
+1h default suite timeout). If it becomes the critical path of the itest workflow, split the
+container into `TestAll` alone plus a shared container for the small specs.
+
+#### Sharing a network on Fabric-X
+
+The Fabric-X suite (`integration/token/fungible/dlogx`) shares networks too, with two
+differences from the dlog suite:
+
+- **No `TestAll`-first container for the small specs.** Its "Extras" container (T12, T13, T4,
+  T5, T3) has no `TestAll` in front: `TestAll` authorizes the issuer for redeem, which T13
+  needs not to have happened, and the fabricx `TestAll` jobs (T1, T6, T16) are already the
+  longest of the itest workflow, so adding specs behind them would lengthen the critical path.
+  The container follows the rules above: T12 and T13 issue 220 USD between them, within the
+  USD quota; T4, T5 and T3 each use their own token type; T3 runs after T4 and T5, and last.
+  "Extras" runs on the `Aries|WithEndorsers|WebEnabled` topology, so T12 and T13 now also get
+  the FSC web server, which they do not use.
+- **The spec that replaces the issuers must be the last public parameters update.** Fabric-X
+  installs the public parameters through the FSC-endorsement setup path, where every update must
+  be signed by a *current* issuer whose signer the `issuer` node holds
+  (`signPublicParamsWithCurrentIssuer` in
+  `token/services/network/fabric/endorsement/fsc/service.go`). T2 and T7 replace the issuers
+  with `newIssuer`, so nothing can update the public parameters after them. T2.1 appends
+  `newIssuer`, so T2 should be able to follow it, but that order has not been run on Fabric-X.
+
+T2.1, T2 and T7 failed locally on Fabric-X, each on its own network (a `GetPublicParams`
+timeout right after the update; see
+[#1945](https://github.com/LFDT-Panurus/panurus/issues/1945)). T2.1 and T2 therefore stay in a
+container with a network per spec ("Public params update"), and T6 and T7 do not share a
+network; all three are disabled in CI anyway. Once they pass, add T2.1 then T2 after T3 in
+"Extras", each with its own token type, and T7 after T6.
+
+CI runs the specs of "Extras" it enabled before, T13, T4, T5 and T3, with
+`make integration-tests-fabricx-dlog-extras`: all three infrastructure types in one job, one
+network each; `-extras-{websocket,libp2p,replicas}` run one type each. To enable T12, T2.1 or
+T2 in CI, widen `FABRICX_DLOG_EXTRAS_FILTER` in `fabricx.mk` rather than adding a job, and
+split the job per infrastructure type if it then gets close to the longest itest jobs.
 
 ### Enabling the Token Platform Without a TMS
 
