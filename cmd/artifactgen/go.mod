@@ -23,7 +23,7 @@ require (
 	filippo.io/bigmod v0.1.1-0.20260103110540-f8a47775ebe5 // indirect
 	filippo.io/keygen v1.0.0 // indirect
 	github.com/DATA-DOG/go-sqlmock v1.5.2 // indirect
-	github.com/IBM/idemix v0.3.2-0.20261104152042-7270381aae8e // indirect
+	github.com/IBM/idemix v0.3.2-0.20261105061952-713f5f696815 // indirect
 	github.com/IBM/mathlib v0.3.3-0.20261103131649-7162020950b3 // indirect
 	github.com/LFDT-Panurus/panurus/x/token/services/network/evm v0.0.0 // indirect
 	github.com/Masterminds/semver/v3 v3.5.0 // indirect
