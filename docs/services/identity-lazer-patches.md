@@ -30,6 +30,167 @@ a public attribute, which share one parameter set).
 
 ---
 
+## Background: the toolbox protocol in lazer
+
+The *toolbox* is the protocol of [LNP22] that combines everything a typical lattice statement needs into one proof:
+linear relations over $\mathcal{R}_q$, quadratic relations, and three kinds of norm constraints on blocks of the
+witness (binary coefficients, exact Euclidean norms, and an approximate range bound). All of them are reduced to a
+single quadratic relation over the committed values, which a quadratic proof (`lnp-quad`) then proves. This
+section explains the parts of the protocol that 0004 and 0006–0010 touch.
+
+### Where the code lives
+
+The scheme proves its three relations with lazer's linear-relation front end (`lin_prover_prove_ctx_bnd`,
+`lin_verifier_verify_ctx_bnd`). That front end does not call the toolbox of `src/lnp-tbox.c` (`lnp_tbox_prove`,
+`lnp_tbox_verify`): `src/lin-proofs.c` contains a private, `static` copy of the toolbox protocol
+(`_lnp_tbox_prove`, `_lnp_tbox_verify` and the `___schwartz_zippel_*` accumulators). Both copies share the lower
+layers: the quadratic proof (`src/lnp-quad.c`, `src/lnp-quad-many.c`), the ABDLOP commitment (`src/abdlop.c`) and
+rejection sampling (`src/rejection.c`). A fix applied to `src/lnp-tbox.c` alone, as the upstream issues propose,
+therefore does not reach the proofs of this module. Patches 0006–0008 and the sign fix of 0010 change
+`src/lin-proofs.c`; 0009 and the rejection fix of 0010 change the shared lower layers.
+
+The protocol commits to the witness and to auxiliary vectors with an ABDLOP commitment, proves a set of linear and
+quadratic equations about the committed values, and runs over $\mathcal{R}_q=\mathbb{Z}_q[X]/(X^{64}+1)$ with a
+proof modulus $q$ of 43, 51 and 38 bits for $P_1$, $P_2$ and popen
+([scheme description, §2.5](identity-lazer-anoncreds.md#25-zero-knowledge-proofs-from-lattices-lnp-and-lazer)).
+
+### Notation
+
+- $\sigma_i=1.55\cdot2^{\texttt{log2stdev}_i}$ is the standard deviation of the Gaussian mask of response $i$
+  (the `log2stdev` values of the generated headers). It is unrelated to the automorphism $\sigma_{-1}$ below.
+- $M_i$ is the repetition constant of the rejection test on response $i$: a test accepts with probability about
+  $1/M_i$ (about $1/(2M_2)$ for the one-time test on $\mathbf{z}_2$, see [Rejection sampling](#rejection-sampling)),
+  so the prover expects about $M_i$ attempts.
+- $\mathbf{B}$ (bold) is the Falcon public key as a matrix over $\mathcal{R}_p$, as on the
+  [scheme page](identity-lazer-anoncreds.md#41-nothing-up-my-sleeve-matrices); $B$ (not bold) is the BDLOP
+  commitment matrix of the proof system. Block bounds are written $b_i$.
+- $\tilde{\mathbf{s}}_1,\tilde{\mathbf{s}}_2$ are the committed message and the randomness of the ABDLOP
+  commitment of the proof system, written with a tilde so as not to clash with the Falcon preimage
+  $(\mathbf{s}_1,\mathbf{s}_2)$ of the scheme; $\mathbf{s}_3,\mathbf{s}_4$ are the vectors of the approximate range
+  proofs.
+- $\psi$ is the slack factor of the approximate range proof, not the ring isomorphism $\psi$ of the scheme
+  description.
+- $\sigma_{-1}$ is the automorphism $X\mapsto X^{-1}$ of $\mathcal{R}_q$. For $f,g\in\mathcal{R}_q$ the constant
+  coefficient of $f\cdot\sigma_{-1}(g)$ is the inner product of their coefficient vectors, so a norm
+  $\lVert\mathbf{x}\rVert^2$ is the constant coefficient of $\langle\mathbf{x},\sigma_{-1}(\mathbf{x})\rangle$, a
+  quadratic expression in the committed $\mathbf{x}$. This is how norm constraints become quadratic relations.
+- The automorphism also separates the coefficients $0$ and $d/2$ of one polynomial: since $X^{-d/2}=-X^{d/2}$ in
+  $\mathcal{R}_q$, for $a=a_0+a_1X^{d/2}$ one has $(a+\sigma_{-1}(a))/2=a_0$ and
+  $-X^{d/2}(a-\sigma_{-1}(a))/2=a_1$. lazer uses this to pack two scalars in one ring element: the signs $\beta_3$
+  and $\beta_4$ are the coefficients $0$ and $d/2$ of one committed polynomial, and each accumulator below carries two
+  independent combinations at the same two positions.
+
+### Fiat–Shamir: absorb every message before the challenges that bind it
+
+The protocol is an interactive public-coin proof made non-interactive with the Fiat–Shamir transform [FS86]: every
+verifier challenge is replaced by a hash of the statement and of all prover messages sent so far. lazer keeps a
+running 32-byte state and updates it as `hash ← SHAKE128(hash ‖ encoding of the next message)`; challenges are
+expanded from the current state and a domain separator.
+
+Soundness of the interactive proof rests on the order of messages: the prover commits to a message $a$, then
+receives a challenge $c$ it cannot predict. Fiat–Shamir preserves this only if $c$ is derived from a state that has
+absorbed $a$. If a message is not absorbed before a challenge that is meant to bind it, a cheating prover sees the
+challenge first and chooses the message as a function of it, which is exactly what the soundness proof excludes.
+The rule is therefore: every prover message must be absorbed before any challenge that follows it in the
+interactive protocol.
+
+### Compressing many equations: random linear combinations
+
+The proof reduces many scalar equations $e_1(\mathbf{s})=\dots=e_M(\mathbf{s})=0$ over $\mathbb{Z}_q$ to a few,
+by a random linear combination $\sum_j v_j e_j(\mathbf{s})=0$ with uniform challenges $v_j\in\mathbb{Z}_q$. If some
+$e_j\neq0$, the combination vanishes with probability $1/q$ (a Schwartz–Zippel argument for a non-zero linear form).
+Two consequences matter below:
+
+- **Each combination needs its own challenges.** Two groups of equations combined with the *same* challenges are
+  only checked through the sum of their combinations. Equations whose terms can have either sign can then trade
+  errors against each other.
+- **Repetition.** One combination has soundness error $1/q$. With $\lambda$ independent combinations the error is
+  about $q^{-\lambda}$. lazer packs the combinations two by two into $\lambda/2$ ring elements: accumulator pair
+  $i$ places two independent combinations into the coefficients $0$ and $d/2$ of a polynomial, masked by a
+  committed random $g_i$ (its BDLOP commitment is $\mathbf{t}_g$), and the prover sends $h_i=g_i+\text{(accumulated equations)}$; the verifier checks that
+  coefficients $0$ and $d/2$ of every $h_i$ vanish, and the quadratic proof then checks the relation between $h_i$
+  and the committed values. All three parameter sets of the scheme use $\lambda=4$ (the `lnp_quad_eval_params_t` in
+  `anoncreds_params.h`), so with independent challenges this step has error about $q^{-4}$: $2^{-172}$, $2^{-204}$
+  and $2^{-152}$ for $P_1$, $P_2$ and popen.
+
+### Exact Euclidean norms
+
+For each witness block $\mathbf{x}_i$ with an $\ell_2$ bound $b_i$, the prover commits to a binary vector
+$\upsilon_i$ encoding the slack $b_i^2-\lVert\mathbf{x}_i\rVert^2\ge0$ in binary, and proves
+$\lVert\mathbf{x}_i\rVert^2+\langle\mathbf{2}^{\star},\upsilon_i\rangle-b_i^2=0$ over $\mathbb{Z}_q$, where
+$\mathbf{2}^{\star}=(1,2,4,\dots)$ and $\upsilon_i$ is proven binary. Since the slack term is non-negative, the
+equation gives $\lVert\mathbf{x}_i\rVert\le b_i$, provided nothing wraps around mod $q$, which the approximate range
+proof below guarantees. There is one such equation per block ($Z=2$, $10$ and $2$ blocks for $P_1$, $P_2$ and popen),
+and each must be enforced separately: the terms $\lVert\mathbf{x}_i\rVert^2-b_i^2$ have either sign, so a sum of the
+equations only bounds the total $\sum_i\lVert\mathbf{x}_i\rVert^2\le\sum_ib_i^2$.
+
+### Approximate range proofs: z3, z4 and the matrices R and R'
+
+Exact norms are computed mod $q$, so the prover must also show that the vectors involved are far smaller than $q$.
+This is an approximate range proof based on the Johnson–Lindenstrauss lemma [GHL22, LNP22]: for a random matrix
+$R$ with small entries and 256 rows, $\lVert R\mathbf{s}\rVert$ is, with overwhelming probability, at least a fixed
+multiple of $\lVert\mathbf{s}\rVert$, so a short projection implies a short $\mathbf{s}$ up to a slack factor. The
+prover sends
+
+$$\mathbf{z}_3=\mathbf{y}_3+\beta_3R\,\mathbf{s}_3,\qquad \mathbf{z}_4=\mathbf{y}_4+\beta_4R'\mathbf{s}_4,$$
+
+where $\mathbf{s}_3$ collects the binary block (τ for $P_2$, 8 ring elements; none for $P_1$ and popen), the
+exact-norm blocks and the $\upsilon_i$, $\mathbf{s}_4$ is the quotient vector of the lifted relation $\mathbf{A}\mathbf{w}+\mathbf{u}=p\,\mathbf{s}_4$ (8, 14 and 2 rows for $P_1$, $P_2$, popen),
+$\mathbf{y}_3,\mathbf{y}_4$ are committed Gaussian masks and $\beta_3,\beta_4\in\{\pm1\}$ are committed random
+signs. $\mathbf{z}_3$ gives an $\ell_2$ bound on $\mathbf{s}_3$ (the verifier checks $\lVert\mathbf{z}_3\rVert^2$
+against `Bz3sqr`), $\mathbf{z}_4$ the approximate $\ell_\infty$ bound on $\mathbf{s}_4$ that the generated headers
+print as "approximate infinity" with slack $\psi$ (the verifier checks $\lVert\mathbf{z}_4\rVert_\infty$ against
+`Bz4`). $R$ and $R'$ are derived from the Fiat–Shamir state *before* $\mathbf{z}_3,\mathbf{z}_4$, because the prover
+computes $\mathbf{z}_3,\mathbf{z}_4$ from them. The verifier checks the norms of $\mathbf{z}_3,\mathbf{z}_4$, and the
+256 linear equations per projection that tie them to the committed values are compressed with challenges $V_3$,
+$V_4$; those must come *after* $\mathbf{z}_3,\mathbf{z}_4$ are absorbed, otherwise a prover who knows $V_3$ can
+publish a short $\mathbf{z}_3'\neq\mathbf{z}_3$ with $V_3\mathbf{z}_3'\equiv V_3\mathbf{z}_3$, an easy inhomogeneous
+SIS instance with $\lambda$ rows.
+
+### The ABDLOP opening: z1 and z2 = (z21, z22)
+
+The ABDLOP commitment [LNP22] has an Ajtai part $\mathbf{t}_A=A_1\tilde{\mathbf{s}}_1+A_2\tilde{\mathbf{s}}_2$, with
+fresh ternary randomness $\tilde{\mathbf{s}}_2$ ($m_2=57$, $64$, $53$ ring elements for $P_1$, $P_2$, popen) and the
+committed secret $\tilde{\mathbf{s}}_1$. Here $\tilde{\mathbf{s}}_1$ is the whole witness $\mathbf{w}$ of the relation
+([scheme description, §2.5](identity-lazer-anoncreds.md#25-zero-knowledge-proofs-from-lattices-lnp-and-lazer)) followed
+by the $Z$ slack vectors $\upsilon_i$, so $m_1=21+2=23$, $75+10=85$ and $11+2=13$; it is not the Falcon preimage
+$\mathbf{s}_1$ of the credential, which is one block of $\mathbf{w}$ in $P_2$. The commitment also has a BDLOP part $\mathbf{t}_B=B\tilde{\mathbf{s}}_2+\mathbf{m}$ that commits to the auxiliary messages ($\mathbf{y}_3$,
+$\mathbf{y}_4$, the signs, the $g_i$). The opening proof sends masked responses
+$\mathbf{z}_1=\mathbf{y}_1+c\,\tilde{\mathbf{s}}_1$ and $\mathbf{z}_2=\mathbf{y}_2+c\,\tilde{\mathbf{s}}_2$ for a short
+challenge $c$. The commitment and the opening are compressed as in Dilithium [DKL+18]: $\mathbf{t}_A$ is published without its $D$
+low-order bits, and $A_2=[A_2'\mid I]$, so $\mathbf{z}_2=(\mathbf{z}_{21},\mathbf{z}_{22})$ and only $\mathbf{z}_{21}$ is
+sent. The verifier computes $\mathbf{w}=A_1\mathbf{z}_1+A_2'\mathbf{z}_{21}-c\,2^D\mathbf{t}_A$; its high-order part
+$\mathbf{w}_1$ with respect to the decomposition parameter $\gamma$ (both $D$ and $\gamma$ are printed under
+"Compression" in the generated headers) is what the prover's first message commits to, and a short *hint* sent in
+the proof lets the verifier recover $\mathbf{w}_1$ despite the dropped bits. The second part of the response is then
+$\mathbf{z}_{22}=\mathbf{w}-\gamma\mathbf{w}_1$. Knowledge soundness extracts an M-SIS solution from the differences of two
+accepting responses, and the generated parameters size that M-SIS instance (for example MSIS(20, 139, $2^{40.6}$) for
+$P_2$) for a bound on the whole $\mathbf{z}_2$, as in [LNP22, Fig. 18]. The verifier must therefore bound
+$\lVert(\mathbf{z}_{21},\mathbf{z}_{22})\rVert$, not only $\mathbf{z}_{22}$.
+
+### Rejection sampling
+
+A response $\mathbf{z}=\mathbf{y}+\mathbf{v}$ with a secret-dependent shift $\mathbf{v}$ leaks the shift unless it is
+accepted only with a probability that cancels it (Fiat–Shamir with aborts [Lyu09, Lyu12]). The generated
+parameters choose one test per response, and its correctness is what zero-knowledge rests on:
+
+- $\mathbf{z}_1$: standard rejection, $\Pr[\text{accept}]=D_\sigma(\mathbf{z})/(M\,D_{\sigma,\mathbf{v}}(\mathbf{z}))$,
+  which makes $\mathbf{z}_1$ distributed as $D_{\sigma_1}$, independent of $\mathbf{v}=c\,\tilde{\mathbf{s}}_1$.
+- $\mathbf{z}_3,\mathbf{z}_4$: bimodal rejection [DDLL13], which applies to $\mathbf{z}=\mathbf{y}+\beta\mathbf{v}$
+  with a *uniform* secret sign $\beta$ and accepts with probability
+  $1/\big(M\exp(-\lVert\mathbf{v}\rVert^2/2\sigma^2)\cosh(\langle\mathbf{z},\mathbf{v}\rangle/\sigma^2)\big)$.
+  The output is $D_\sigma$ only if $\beta$ is uniform and the $\sigma$ in the test is that of the mask.
+- $\mathbf{z}_2$ (`rej2 = 2`): the one-time rejection Rej1 of Lyubashevsky, Nguyen and Seiler [LNS21], meant for a
+  secret used in a single proof, as the ABDLOP randomness $\tilde{\mathbf{s}}_2$ is. With
+  $\mathbf{v}=c\,\tilde{\mathbf{s}}_2$ it rejects if $\langle\mathbf{z},\mathbf{v}\rangle<0$ and otherwise accepts with probability
+  $\exp\big((\lVert\mathbf{v}\rVert^2-2\langle\mathbf{z},\mathbf{v}\rangle)/2\sigma_2^2\big)/M_2$, for
+  $M_2=\exp(1/(2\gamma_2^2))$ as computed by the code generator, where $\gamma_2=\sigma_2/(\eta\nu\sqrt{m_2d})$ is
+  the generator's ratio of $\sigma_2$ to a bound on $\lVert c\,\tilde{\mathbf{s}}_2\rVert$ (not the decomposition
+  parameter $\gamma$ above; for $P_2$, $6348.8/(140\cdot1\cdot\sqrt{64\cdot64})\approx0.709$ and $M_2\approx2.707$,
+  as printed in the header). It accepts about half as often as a standard test with the same $M_2$.
+
+---
+
 ## Portability
 
 ### 0000-lazer-pr33-arm64-int-mod
@@ -53,8 +214,9 @@ The two commits of [lazer-crypto/lazer#33](https://github.com/lazer-crypto/lazer
   picks architecture-dependent flags (no `FALCON_AVX2`/`FMA`, `-mcpu=native`), finds Homebrew's GMP and MPFR and
   passes `-DCMAKE_POLICY_VERSION_MINIMUM=3.5` to cmake.
 
-*Compatibility:* on x86-64 the compiler flags and code paths are unchanged (the HEXL `MSB()` change gives the same
-results); this is established by code review of the patch. CI builds and tests on Linux amd64 and arm64; macOS is
+*Compatibility:* on x86-64 the compiler flags are unchanged; the only code differences there are the `int_mod` fix
+and the HEXL `MSB()` change, both giving the same results as before, plus the cmake policy flag. This is established
+by code review of the patch. CI builds and tests on Linux amd64 and arm64; macOS is
 built and tested locally, not in CI. Proofs and formats are unchanged. When the pull request is merged upstream, the patch is dropped and
 `LAZER_COMMIT` moves to the merge commit; a source that already contains it does not accept the patch.
 
@@ -82,7 +244,13 @@ reads at most the given proof length, and `lin_prover_prove_ctx_bnd` fails inste
 not fit. The scheme uses only the bounded entry points for untrusted data (`cbdc_dec_vec`, `cbdc_dec_cred` and all
 proof verifications) and for its encoders.
 
-*Compatibility.* No format change. The unbounded entry points remain, as wrappers passing `SIZE_MAX`. lazer's own
+`TestOOBSokVerify`, `TestOOBPresVer`, `TestOOBCredential` and `TestOOBIssue` (`anoncreds/regression_test.go`) feed
+crafted inputs whose unary codes run to the end of a buffer followed by a guard page; the `Fuzz*` targets of
+`anoncreds/fuzz_test.go` exercise the bounded decoders.
+
+*Compatibility.* No format change. The unbounded entry points remain: `lin_prover_prove_ctx` and
+`lin_verifier_verify_ctx` are wrappers passing `SIZE_MAX`, and `coder_dec_begin`/`coder_enc_begin` keep their
+unbounded behaviour. lazer's own
 blind signature (`signer_sign`, `verifier_vrfy`, `user_sign` in `src/blindsig.c`), which this module does not use,
 still decodes with the unbounded coder.
 
@@ -94,39 +262,43 @@ still decodes with the unbounded coder.
 whole process (availability).
 
 *Fix.* `falcon_decode_pubkey_chk` returns an error if the header byte is not `0x09` or a coefficient is
-$\ge q$; `falcon_preimage_sample_chk` returns an error if the private key does not decode or sampling fails;
+$\ge q=12289$ (the Falcon modulus, $p$ in the scheme description); `falcon_preimage_sample_chk` returns an error if the private key does not decode or sampling fails;
 `falcon_check_keypair` checks that a private key is well formed and matches a public key. The secret temporaries
 ($f,g,F,G$, the scratch buffer and the PRNG state) are wiped before returning. The scheme uses the new functions in
 `cbdc_pubkey_ok`, `cbdc_user_init`, `cbdc_verifier_init`, `cbdc_issuer_init` and `cbdc_issuer_issue`.
 `TestBadPubKey` and `TestBadIssuerKey` check that malformed keys are refused with an error; the wiping of the
 temporaries is established by code review.
 
-*Compatibility.* The exiting functions keep their behaviour for existing callers and are implemented on top of the
-new ones.
+*Compatibility.* The exiting functions are implemented on top of the new ones and still exit on failure. They now
+also exit on a wrong header byte (`0x09` for the public key, `0x59` for the private key), which upstream did not
+check.
 
 ### 0003-zeroize-secrets
 
 *Upstream code:* `src/bytes.c`, `src/poly.c`, `src/polyvec.c`, `src/polymat.c`, `src/lin-proofs.c`.
 
-*Problem.* Secrets stay in freed memory: `bytes_clear` relies on `explicit_bzero`, which macOS defines as `bzero`, a
-call the compiler may remove before a `free`; polynomials have no wipe operation; the LNP prover keeps its witness,
+*Problem.* Secrets stay in freed memory: `bytes_clear` relies on `explicit_bzero`, which lazer's own
+`src/lazer-in2.h` defines as `bzero` on macOS (and iOS), a call the compiler may remove before a `free`; polynomials have no wipe operation; the LNP prover keeps its witness,
 the copies made by `lin_prover_set_witness` and its expanded randomness.
 
 *Fix.* `bytes_clear` writes through a volatile pointer. `poly_wipe`, `polyvec_wipe` and `polymat_wipe` zero the
-coefficients and the CRT representation of a secret. The prover wipes its witness ($s_1$, $s_2$, $m$) in
+coefficients and the CRT representation of a secret. The prover wipes its witness ($\tilde{\mathbf{s}}_1$, $\tilde{\mathbf{s}}_2$, $\mathbf{m}$) in
 `lin_prover_clear`, the temporary copies made by `lin_prover_set_witness`, and the expanded prover randomness and
 internally generated coins in the prove functions. The scheme wipes its own secrets with the same functions
 (`cbdc_vec_free_secret`).
 
 *Compatibility.* No functional change. The wiping is established by code review; no test observes freed memory.
 
+*Limitation.* The other clears of lazer (`int_clear`, `intvec_clear`, `intmat_clear` and the SHAKE128 and AES-256-CTR
+state clears) still call `explicit_bzero`, that is `bzero` on macOS.
+
 ### 0005-lin-prover-wipe-witness
 
 *Upstream code:* `src/lin-proofs.c`.
 
 A prover state reused for several proofs keeps the last witness until `lin_prover_clear`.
-`lin_prover_wipe_witness` wipes the witness ($s_1$, which also holds the appended $\upsilon$, and $m$) and the prover
-randomness $s_2$, marks the witness as unset and keeps the public part, so the state can prove again after a new
+`lin_prover_wipe_witness` wipes the witness ($\tilde{\mathbf{s}}_1$, which also holds the appended $\upsilon$, and
+$\mathbf{m}$) and the prover randomness $\tilde{\mathbf{s}}_2$, marks the witness as unset and keeps the public part, so the state can prove again after a new
 `lin_prover_set_witness`. The module itself does not reuse prover states: every prover lives for one call and is
 released with `lin_prover_clear`, which wipes it (0003).
 
@@ -179,163 +351,21 @@ upstream issue for it.
 ## Soundness and zero-knowledge of the proof system
 
 Patches 0006–0010 fix deviations of lazer's implementation of the LNP proof system [LNP22] from the protocol. The
-first subsection explains the parts of the protocol they touch.
+parts of the protocol they touch are explained in
+[Background: the toolbox protocol in lazer](#background-the-toolbox-protocol-in-lazer).
 
 !!! note "How these fixes are verified"
-    The soundness fixes 0006–0009 are verified by code review against the upstream issue threads and the reporters'
-    fixes, and by the honest-proof tests, which show that the patched prover and verifier agree. No test exercises
-    the rejection of a malicious proof. The consequences described for each defect are analysis of the code and of
+    The soundness fixes 0006–0009 (#28, #25, #24, #26) are checked by code review against the upstream issue threads
+    and the reporters' fixes. The honest-proof tests show that the patched prover and verifier agree, and
+    `TestKnownAnswerProofs` (`anoncreds/kat_test.go`) pins the transcript of the patched build. No test exercises the
+    rejection of a malicious proof. The consequences described for each defect are analysis of the code and of
     the protocol, not demonstrated attacks on this scheme, unless stated otherwise.
-
-### Background: the toolbox protocol in lazer
-
-The *toolbox* is the protocol of [LNP22] that combines everything a typical lattice statement needs into one proof:
-linear relations over $\mathcal{R}_q$, quadratic relations, and three kinds of norm constraints on blocks of the
-witness (binary coefficients, exact Euclidean norms, and an approximate range bound). All of them are reduced to a
-single quadratic relation over the committed values, which a quadratic proof (`lnp-quad`) then proves.
-
-#### Where the code lives
-
-The scheme proves its three relations with lazer's linear-relation front end (`lin_prover_prove_ctx_bnd`,
-`lin_verifier_verify_ctx_bnd`). That front end does not call the toolbox of `src/lnp-tbox.c` (`lnp_tbox_prove`,
-`lnp_tbox_verify`): `src/lin-proofs.c` contains a private, `static` copy of the toolbox protocol
-(`_lnp_tbox_prove`, `_lnp_tbox_verify` and the `___schwartz_zippel_*` accumulators). Both copies share the lower
-layers: the quadratic proof (`src/lnp-quad.c`, `src/lnp-quad-many.c`), the ABDLOP commitment (`src/abdlop.c`) and
-rejection sampling (`src/rejection.c`). A fix applied to `src/lnp-tbox.c` alone, as the upstream issues propose,
-therefore does not reach the proofs of this module. Patches 0006–0008 and the sign fix of 0010 change
-`src/lin-proofs.c`; 0009 and the rejection fix of 0010 change the shared lower layers.
-
-The protocol commits to the witness and to auxiliary vectors with an ABDLOP commitment, proves a set of linear and
-quadratic equations about the committed values, and runs over $\mathcal{R}_q=\mathbb{Z}_q[X]/(X^{64}+1)$ with a
-proof modulus $q$ of 43, 51 and 38 bits for $P_1$, $P_2$ and popen
-([scheme description, §2.5](identity-lazer-anoncreds.md#25-zero-knowledge-proofs-from-lattices-lnp-and-lazer)).
-
-#### Notation
-
-- $\sigma_i=1.55\cdot2^{\texttt{log2stdev}_i}$ is the standard deviation of the Gaussian mask of response $i$
-  (the `log2stdev` values of the generated headers).
-- $M_i$ is the repetition constant of the rejection test on response $i$: a test accepts with probability about
-  $1/M_i$, so the prover expects about $M_i$ attempts.
-- $\mathbf{B}$ (bold) is the Falcon public key as a matrix over $\mathcal{R}_p$, as on the
-  [scheme page](identity-lazer-anoncreds.md#41-nothing-up-my-sleeve-matrices); $B$ (not bold) is the BDLOP
-  commitment matrix of the proof system. Block bounds are written $b_i$.
-- $\sigma_{-1}$ is the automorphism $X\mapsto X^{-1}$ of $\mathcal{R}_q$. For $f,g\in\mathcal{R}_q$ the constant
-  coefficient of $f\cdot\sigma_{-1}(g)$ is the inner product of their coefficient vectors, so a norm
-  $\lVert\mathbf{x}\rVert^2$ is the constant coefficient of $\langle\mathbf{x},\sigma_{-1}(\mathbf{x})\rangle$, a
-  quadratic expression in the committed $\mathbf{x}$. This is how norm constraints become quadratic relations.
-- The automorphism also separates the coefficients $0$ and $d/2$ of one polynomial: since $X^{-d/2}=-X^{d/2}$ in
-  $\mathcal{R}_q$, for $a=a_0+a_1X^{d/2}$ one has $(a+\sigma_{-1}(a))/2=a_0$ and
-  $-X^{d/2}(a-\sigma_{-1}(a))/2=a_1$. lazer uses this to pack two scalars in one ring element: the signs $\beta_3$
-  and $\beta_4$ are the coefficients $0$ and $d/2$ of one committed polynomial, and each accumulator below carries two
-  independent combinations at the same two positions.
-
-#### Fiat–Shamir: absorb every message before the challenges that bind it
-
-The protocol is an interactive public-coin proof made non-interactive with the Fiat–Shamir transform [FS86]: every
-verifier challenge is replaced by a hash of the statement and of all prover messages sent so far. lazer keeps a
-running 32-byte state and updates it as `hash ← SHAKE128(hash ‖ encoding of the next message)`; challenges are
-expanded from the current state and a domain separator.
-
-Soundness of the interactive proof rests on the order of messages: the prover commits to a message $a$, then
-receives a challenge $c$ it cannot predict. Fiat–Shamir preserves this only if $c$ is derived from a state that has
-absorbed $a$. If a message is not absorbed before a challenge that is meant to bind it, a cheating prover sees the
-challenge first and chooses the message as a function of it, which is exactly what the soundness proof excludes.
-The rule is therefore: every prover message must be absorbed before every challenge that depends on it.
-
-#### Compressing many equations: random linear combinations
-
-The proof reduces many scalar equations $e_1(\mathbf{s})=\dots=e_M(\mathbf{s})=0$ over $\mathbb{Z}_q$ to a few,
-by a random linear combination $\sum_j v_j e_j(\mathbf{s})=0$ with uniform challenges $v_j\in\mathbb{Z}_q$. If some
-$e_j\neq0$, the combination vanishes with probability $1/q$ (a Schwartz–Zippel argument for a non-zero linear form).
-Two consequences matter below:
-
-- **Each combination needs its own challenges.** Two groups of equations combined with the *same* challenges are
-  only checked through the sum of their combinations. Equations whose terms can have either sign can then trade
-  errors against each other.
-- **Repetition.** One combination has soundness error $1/q$. With $\lambda$ independent combinations the error is
-  about $q^{-\lambda}$. lazer packs the combinations two by two into $\lambda/2$ ring elements: accumulator pair
-  $i$ places two independent combinations into the coefficients $0$ and $d/2$ of a polynomial, masked by a
-  committed random $g_i$ (its BDLOP commitment is $\mathbf{t}_g$), and the prover sends $h_i=g_i+\text{(accumulated equations)}$; the verifier checks that
-  coefficients $0$ and $d/2$ of every $h_i$ vanish, and the quadratic proof then checks the relation between $h_i$
-  and the committed values. All three parameter sets of the scheme use $\lambda=4$ (the `lnp_quad_eval_params_t` in
-  `anoncreds_params.h`), so with independent challenges this step has error about $q^{-4}$: $2^{-172}$, $2^{-204}$
-  and $2^{-152}$ for $P_1$, $P_2$ and popen.
-
-#### Exact Euclidean norms
-
-For each witness block $\mathbf{x}_i$ with an $\ell_2$ bound $b_i$, the prover commits to a binary vector
-$\upsilon_i$ encoding the slack $b_i^2-\lVert\mathbf{x}_i\rVert^2\ge0$ in binary, and proves
-$\lVert\mathbf{x}_i\rVert^2+\langle\mathbf{2}^{\star},\upsilon_i\rangle-b_i^2=0$ over $\mathbb{Z}_q$, where
-$\mathbf{2}^{\star}=(1,2,4,\dots)$ and $\upsilon_i$ is proven binary. Since the slack term is non-negative, the
-equation gives $\lVert\mathbf{x}_i\rVert\le b_i$, provided nothing wraps around mod $q$, which the approximate range
-proof below guarantees. There is one such equation per block ($Z=2$, $10$ and $2$ blocks for $P_1$, $P_2$ and popen),
-and each must be enforced separately: the terms $\lVert\mathbf{x}_i\rVert^2-b_i^2$ have either sign, so a sum of the
-equations only bounds the total $\sum_i\lVert\mathbf{x}_i\rVert^2\le\sum_ib_i^2$.
-
-#### Approximate range proofs: z3, z4 and the matrices R and R'
-
-Exact norms are computed mod $q$, so the prover must also show that the vectors involved are far smaller than $q$.
-This is an approximate range proof based on the Johnson–Lindenstrauss lemma [GHL22, LNP22]: for a random matrix
-$R$ with small entries and 256 rows, $\lVert R\mathbf{s}\rVert$ is close to a fixed multiple of
-$\lVert\mathbf{s}\rVert$ with overwhelming probability, so a short projection implies a short $\mathbf{s}$ up to a
-slack factor (ψ in the generated headers). The prover sends
-
-$$\mathbf{z}_3=\mathbf{y}_3+\beta_3R\,\mathbf{s}_3,\qquad \mathbf{z}_4=\mathbf{y}_4+\beta_4R'\mathbf{s}_4,$$
-
-where $\mathbf{s}_3$ collects the binary block (τ for $P_2$, 8 ring elements; none for $P_1$ and popen), the
-exact-norm blocks and the $\upsilon_i$, $\mathbf{s}_4$ is the quotient vector of the lifted relation $\mathbf{A}\mathbf{w}+\mathbf{u}=p\,\mathbf{s}_4$ (8, 14 and 2 rows for $P_1$, $P_2$, popen),
-$\mathbf{y}_3,\mathbf{y}_4$ are committed Gaussian masks and $\beta_3,\beta_4\in\{\pm1\}$ are committed random
-signs. $R$ and $R'$ are derived from the Fiat–Shamir state *before* $\mathbf{z}_3,\mathbf{z}_4$, because the prover
-computes $\mathbf{z}_3,\mathbf{z}_4$ from them. The verifier checks the norms of $\mathbf{z}_3,\mathbf{z}_4$, and the
-256 linear equations per projection that tie them to the committed values are compressed with challenges $V_3$,
-$V_4$; those must come *after* $\mathbf{z}_3,\mathbf{z}_4$ are absorbed, otherwise a prover who knows $V_3$ can
-publish a short $\mathbf{z}_3'\neq\mathbf{z}_3$ with $V_3\mathbf{z}_3'\equiv V_3\mathbf{z}_3$, an easy inhomogeneous
-SIS instance with $\lambda$ rows.
-
-#### The ABDLOP opening: z1 and z2 = (z21, z22)
-
-The ABDLOP commitment [LNP22] has an Ajtai part $\mathbf{t}_A=A_1\mathbf{s}_1+A_2\mathbf{s}_2$, with fresh ternary
-randomness $\mathbf{s}_2$ ($m_2=57$, $64$, $53$ ring elements for $P_1$, $P_2$, popen) and the committed secret
-$\mathbf{s}_1$. Here $\mathbf{s}_1$ is the whole witness $\mathbf{w}$ of the relation
-([scheme description, §2.5](identity-lazer-anoncreds.md#25-zero-knowledge-proofs-from-lattices-lnp-and-lazer)) followed
-by the $Z$ slack vectors $\upsilon_i$, so $m_1=21+2=23$, $75+10=85$ and $11+2=13$; it is not the Falcon preimage
-$\mathbf{s}_1$ of the credential, which is one block of $\mathbf{w}$ in $P_2$. The commitment also has a BDLOP part $\mathbf{t}_B=B\mathbf{s}_2+\mathbf{m}$ that commits to the auxiliary messages ($\mathbf{y}_3$,
-$\mathbf{y}_4$, the signs, the $g_i$). The opening proof sends masked responses
-$\mathbf{z}_1=\mathbf{y}_1+c\,\mathbf{s}_1$ and $\mathbf{z}_2=\mathbf{y}_2+c\,\mathbf{s}_2$ for a short challenge
-$c$. The commitment and the opening are compressed as in Dilithium: $\mathbf{t}_A$ is published without its $D$
-low-order bits, and $A_2=[A_2'\mid I]$, so $\mathbf{z}_2=(\mathbf{z}_{21},\mathbf{z}_{22})$ and only $\mathbf{z}_{21}$ is
-sent. The verifier computes $\mathbf{w}=A_1\mathbf{z}_1+A_2'\mathbf{z}_{21}-c\,2^D\mathbf{t}_A$; its high-order part
-$\mathbf{w}_1$ with respect to the decomposition parameter $\gamma$ (both $D$ and $\gamma$ are printed under
-"Compression" in the generated headers) is what the prover's first message commits to, and a short *hint* sent in
-the proof lets the verifier recover $\mathbf{w}_1$ despite the dropped bits. The second part of the response is then
-$\mathbf{z}_{22}=\mathbf{w}-\gamma\mathbf{w}_1$. Knowledge soundness extracts an M-SIS solution from the differences of two
-accepting responses, and the generated parameters size that M-SIS instance (for example MSIS(20, 139, $2^{40.6}$) for
-$P_2$) for a bound on the whole $\mathbf{z}_2$, as in [LNP22, Fig. 18]. The verifier must therefore bound
-$\lVert(\mathbf{z}_{21},\mathbf{z}_{22})\rVert$, not only $\mathbf{z}_{22}$.
-
-#### Rejection sampling
-
-A response $\mathbf{z}=\mathbf{y}+\mathbf{v}$ with a secret-dependent shift $\mathbf{v}$ leaks the shift unless it is
-accepted only with a probability that cancels it (Fiat–Shamir with aborts [Lyu09, Lyu12]). The generated
-parameters choose one test per response, and its correctness is what zero-knowledge rests on:
-
-- $\mathbf{z}_1$: standard rejection, $\Pr[\text{accept}]=D_\sigma(\mathbf{z})/(M\,D_{\sigma,\mathbf{v}}(\mathbf{z}))$,
-  which makes $\mathbf{z}_1$ distributed as $D_{\sigma_1}$, independent of $\mathbf{v}=c\,\mathbf{s}_1$.
-- $\mathbf{z}_3,\mathbf{z}_4$: bimodal rejection [DDLL13], which applies to $\mathbf{z}=\mathbf{y}+\beta\mathbf{v}$
-  with a *uniform* secret sign $\beta$ and accepts with probability
-  $1/\big(M\exp(-\lVert\mathbf{v}\rVert^2/2\sigma^2)\cosh(\langle\mathbf{z},\mathbf{v}\rangle/\sigma^2)\big)$.
-  The output is $D_\sigma$ only if $\beta$ is uniform and the $\sigma$ in the test is that of the mask.
-- $\mathbf{z}_2$ (`rej2 = 2`): the one-time rejection Rej1 of Lyubashevsky, Nguyen and Seiler [LNS21], meant for a
-  secret used in a single proof, as the ABDLOP randomness $\mathbf{s}_2$ is. With $\mathbf{v}=c\,\mathbf{s}_2$ it
-  rejects if $\langle\mathbf{z},\mathbf{v}\rangle<0$ and otherwise accepts with probability
-  $\exp\big((\lVert\mathbf{v}\rVert^2-2\langle\mathbf{z},\mathbf{v}\rangle)/2\sigma_2^2\big)/M_2$, for
-  $M_2=\exp(1/(2\gamma^2))$ as computed by the code generator. It accepts about half as often as a standard test with
-  the same $M_2$.
 
 ### 0006-tbox-fiat-shamir-h-z3-z4
 
 *Upstream reference:* [lazer-crypto/lazer#28](https://github.com/lazer-crypto/lazer/issues/28). *Upstream code:*
-`_lnp_tbox_prove` and `_lnp_tbox_verify` in `src/lin-proofs.c` (and the same functions of `src/lnp-tbox.c`).
+`_lnp_tbox_prove` and `_lnp_tbox_verify` in `src/lin-proofs.c` (the same defect is in `lnp_tbox_prove`/`lnp_tbox_verify`
+of `src/lnp-tbox.c`, which the patch does not change).
 
 *Problem.* Three prover messages are not bound by the challenges meant to bind them:
 
@@ -382,12 +412,13 @@ $\sqrt{109^2+34034726+5\cdot64^2+3\cdot39^2}=\sqrt{34071650}\approx5837$. An hon
 $\sigma\sqrt{1024}\approx5302$, which leaves a slack of about $\sqrt{5837^2-5302^2}\approx2440$ that a cheating prover
 can place in a single block (the honest norms of the other blocks change this by less than 1%). Placed in an opening $\boldsymbol\rho_j$, it turns the nym rows
 $\mathbf{a}_0m_{k_j}+\mathbf{A}'_{\mathrm{com}}\boldsymbol\rho_j=\mathsf{nym}_j$ into an inhomogeneous SIS problem for
-the $2\times10$ block $\mathbf{A}'_{\mathrm{com}}$ with norm bound about 2440 instead of about 75: given any target nym
-(for example someone else's `nymEID`) and the prover's own certified attribute, find such a $\boldsymbol\rho_j$. With
-the root-Hermite estimate used in the
-[scheme description, §6.2](identity-lazer-anoncreds.md#62-signature-of-knowledge-of-an-opening), norm 75 needs
-$\delta\approx1.0039$ (about 120 bits), while norm 2440 needs only $\delta\approx1.013$, which lattice reduction with
-a small block size reaches. These figures are estimates, but they mean that without the patch the binding of nyms to
+the $2\times10$ block $\mathbf{A}'_{\mathrm{com}}$ with norm bound about 2440 instead of the honest bound 39 on
+$\boldsymbol\rho_j$: given any target nym (for example someone else's `nymEID`) and the prover's own certified
+attribute, find such a $\boldsymbol\rho_j$. By the estimate
+$\delta=2^{\log_2^2\beta/(4kd\log_2q)}$ ($k=2$, $d=64$, $q=12289$) of the
+[scheme description, §2.6](identity-lazer-anoncreds.md#26-estimating-concrete-security), norm 39 needs
+$\delta\approx1.0028$, while norm 2440 needs only $\delta\approx1.0127$, which lattice reduction with a small block
+size reaches. These figures are estimates, but they mean that without the patch the binding of nyms to
 certified attributes, and with it audit soundness and the rule that only the owner of a pseudonym can sign for it,
 would not hold at any meaningful security level. The same pooling applies to $P_1$ (bounds 109 and 91, pooled
 $\approx142$) and to popen (64 and 39, pooled $\approx75$).
@@ -448,14 +479,14 @@ module's sets have not been re-estimated without the check.
 1. **$\mathbf{z}_2$ rejection.** For `rej2 == 2`, `lnp_quad_prove` calls the bimodal test with $\sigma_1^2$ instead of
    $\sigma_2^2$ and without a sign. With $\sigma_1\gg\sigma_2$ (for $P_2$, $\sigma_1/\sigma_2=2^{11}$) the acceptance
    probability is about $1/M_2$ whatever $\mathbf{z}_2$, so the step costs repetitions but does not shape
-   $\mathbf{z}_2$, which is published distributed roughly as $D_{\sigma_2}$ shifted by $c\,\mathbf{s}_2$. Even with
+   $\mathbf{z}_2$, which is published distributed roughly as $D_{\sigma_2}$ shifted by $c\,\tilde{\mathbf{s}}_2$. Even with
    $\sigma_2$, the bimodal test without a random sign does not output $D_{\sigma_2}$.
 2. **$\beta_4$ sign.** In the toolbox prover the sign of $\beta_4$ is read from bit $8-n+1$ of a byte of random bits
    with $n$ bits left: on every fourth attempt that is bit 8 of a `uint8_t`, always 0, so $\beta_4=+1$; $\beta_3$ of
    the next attempt reuses $\beta_4$'s bit, and half of the bits are never used.
 
 *Why it matters.* Zero-knowledge, and therefore the unlinkability of presentations and the secrecy of the witness:
-$\mathbf{s}_2$ is the randomness of the commitment that hides the witness and the auxiliary messages, and the
+$\tilde{\mathbf{s}}_2$ is the randomness of the commitment that hides the witness and the auxiliary messages, and the
 simulator assumes $\mathbf{z}_2$ independent of it and $\beta_3,\beta_4$ uniform. Both deviations are found by
 analysis of the code; the upstream estimate of the leakage is small per proof, but the zero-knowledge argument does
 not apply as implemented.
@@ -466,22 +497,24 @@ use of the random stream does not depend on the branch. The bimodal test stays f
 do have a sign. $\beta_4$ reads the next unused bit, refilling the byte when needed, and the sign bits are wiped after
 use.
 
-*Compatibility.* Prover only: proofs from either prover verify with either verifier. The expected number of
-$\mathbf{z}_2$ attempts roughly doubles (by analysis: Rej1 accepts with probability about $1/(2M_2)$; the issue
-thread reports a matching sampling measurement). The "repetition rate" printed in the generated headers is
-$M_1M_2M_3M_4$, which counts an acceptance probability of $1/M_2$ for $\mathbf{z}_2$, so it underestimates the
-number of runs by about a factor of two.
+*Compatibility.* Prover only: proofs from either prover verify with either verifier. The generated headers print
+$M_1M_2M_3M_4$ as the repetition rate and assume acceptance $1/M_2$ for $\mathbf{z}_2$; with Rej1 (acceptance about
+$1/(2M_2)$ by analysis, matching a sampling measurement reported in the issue thread) the $\mathbf{z}_1,\mathbf{z}_2$
+loop of `lnp_quad_prove` takes about $2M_1M_2$ attempts instead of $M_1M_2$. The $\mathbf{z}_3,\mathbf{z}_4$ loop
+(`__lnp_tbox_compute_z34`) is separate and unchanged.
 
 ### Scope and testing of 0006–0010
 
 - The patches fix the entry points this module uses. lazer's own toolbox in `src/lnp-tbox.c`
   (`lnp_tbox_prove`/`lnp_tbox_verify`) still has the defects of #24, #25, #28 and the $\beta_4$ sign, and
   `src/lnp-quad-eval.c` does not absorb $h$ before `lnp_quad_many_*` either. Nothing in this module calls them.
-- The domain overlap between the last $\beta_4$ equation and the $\upsilon$ equation, noted in #25 and #28 and
-  believed harmless there, is not changed.
-- The honest-proof tests show that the patched prover and verifier agree. The fixes for #28, #25 and #26 were checked
-  by code review against the issue threads and the reporters' fixes; there are no negative tests with a cheating
-  prover, and #24 has no dedicated test.
+- The domain overlap between the last $\beta_4$ equation and the $\upsilon$ equation, noted in #25 and #28, exists
+  only in `src/lnp-tbox.c`. The copy in `src/lin-proofs.c` draws the $\beta_3$ and $\beta_4$ challenges from the single
+  domains $0$ and $\lambda(d-1)$ and the $\upsilon$ challenges from $2\lambda(d-1)$, so they do not overlap there.
+- The fixes for #28, #25, #24 and #26 are checked by code review against the issue threads and the reporters' fixes.
+  The honest-proof tests show that the patched prover and verifier agree, and `TestKnownAnswerProofs`
+  (`anoncreds/kat_test.go`) pins the transcript of the patched build (0004, 0006–0008 and 0010 change it). There are no
+  tests with a cheating prover.
 
 ---
 
@@ -515,7 +548,7 @@ number of provers and verifiers borrowing one `lin_pp_t` may run concurrently. `
 $P_2$ and popen. Every prover and verifier of `anoncreds.c` borrows them, except a test-only path that sets up provers with private
 matrices, and every prover lives for one call:
 `cbdc_user_maskattrs` sets up and clears the $P_1$ prover, `cbdc_user_presgen` the $P_2$ prover, the SoK and
-equality-of-opening provers likewise. As approximate figures from a one-off count of the allocations of the lazer library (not reproduced by a test), the
+equality-of-opening provers likewise. As approximate figures from a one-off measurement of the allocations of the lazer library (not reproduced by a test), the
 shared matrices take about 20 MB per process ($P_2$ 11.39 MB, $P_1$ 4.89 MB, popen 3.99 MB), and a $P_2$ prover set up from them about 3.06 MB per call, a
 $P_2$ verifier about 2.72 MB.
 
@@ -554,6 +587,7 @@ other. Credentials, nyms, parameters and proof sizes are the same.
 ## References
 
 - [DDLL13] L. Ducas, A. Durmus, T. Lepoint, V. Lyubashevsky. *Lattice Signatures and Bimodal Gaussians.* CRYPTO 2013. [ePrint 2013/383](https://eprint.iacr.org/2013/383).
+- [DKL+18] L. Ducas, E. Kiltz, T. Lepoint, V. Lyubashevsky, P. Schwabe, G. Seiler, D. Stehlé. *CRYSTALS-Dilithium: A Lattice-Based Digital Signature Scheme.* TCHES 2018(1). [ePrint 2017/633](https://eprint.iacr.org/2017/633).
 - [FS86] A. Fiat, A. Shamir. *How to Prove Yourself: Practical Solutions to Identification and Signature Problems.* CRYPTO 1986.
 - [GHL22] C. Gentry, S. Halevi, V. Lyubashevsky. *Practical Non-interactive Publicly Verifiable Secret Sharing with Thousands of Parties.* EUROCRYPT 2022. [ePrint 2021/1397](https://eprint.iacr.org/2021/1397).
 - [LNP22] V. Lyubashevsky, N. K. Nguyen, M. Plançon. *Lattice-Based Zero-Knowledge Proofs and Applications: Shorter, Simpler, and More General.* CRYPTO 2022. [ePrint 2022/284](https://eprint.iacr.org/2022/284).

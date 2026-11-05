@@ -10,6 +10,13 @@ Idemix, but is built on a lattice-based anonymous credential
     credentials is argued but not proven, and the commitment parameters have not been through a
     lattice-estimator review (see [Open issues](#open-issues)). Do not use it in production.
 
+!!! note "Reading guide"
+    New to lattice credentials? Read [The Lazer Anonymous Credential Scheme](identity-lazer-anoncreds.md) §1–7
+    first, then [Scheme](#scheme) and [Security goals and threat model](#security-goals-and-threat-model) here,
+    then its [§10](identity-lazer-anoncreds.md#10-security-analysis-informal) and
+    [§11](identity-lazer-anoncreds.md#11-limitations-and-open-issues), and finally
+    [Local patches to lazer](identity-lazer-patches.md).
+
 Code: `x/token/services/identity/lazer` (a separate Go module, because it uses cgo).
 
 | Item | Value |
@@ -28,32 +35,52 @@ library are described in [Local patches to lazer](identity-lazer-patches.md).
 A credential is issued by the issuer (a Falcon-512 key pair, `lazergen ca-keygen`) on five
 32-byte attributes:
 
-| Index | Attribute | At issuance | In an identity |
+| Index | Attribute | At issuance | In a signature (presentation) |
 |---|---|---|---|
 | 0 | `usk`, random user secret | hidden | committed (`nymSK`) |
-| 1 | SHA-256 of the OU | revealed | hidden |
-| 2 | SHA-256 of the enrollment id (EID) | revealed | committed (`nymEID`) |
-| 3 | SHA-256 of the revocation handle (RH) | revealed | committed (`nymRH`) |
-| 4 | SHA-256 of the role | revealed | hidden |
+| 1 | hash of the OU | revealed | hidden |
+| 2 | hash of the enrollment id (EID) | revealed | committed (`nymEID`) |
+| 3 | hash of the revocation handle (RH) | revealed | committed (`nymRH`) |
+| 4 | hash of the role | revealed | hidden |
 
-Attributes are always hashed with a domain separator, see `schema.go`.
+The hash of the value `v` of attribute `i` is `H(v) = SHA-256("panurus/lazer/attr/v1" || byte(i) || v)`
+(`hashAttr` in `schema.go`).
+
+```mermaid
+sequenceDiagram
+    participant I as Issuer
+    participant W as Wallet
+    participant V as Verifier
+    participant A as Auditor
+    W->>I: masked attributes + P1 (usk hidden, H(OU), H(EID), H(RH), H(role) revealed)
+    I->>W: credential (blind Falcon signature)
+    Note over W: Identity(): nymEID, nymSK, nymRH, pres,<br/>eid_proof, enc_opening_eid
+    W->>V: owner field = nymEID
+    W->>V: Sign(m) = (nymSK, nymRH, pres, SoK_nymSK(m))
+    Note over V: SokVerify(nymSK, m), then<br/>PresVer(nymSK, nymEID, nymRH)
+    W->>A: AuditInfo
+    Note over A: Match: identity = nym_eid, eid_proof,<br/>opening_rh, PresVer(nym_sk, nym_eid, nym_rh)
+```
 
 ### Identity (pseudonym)
 
-The identity is what is stored in the token's owner field: the commitment to the enrollment id,
-`nymEID = Acom * (H(EID), r)`, and nothing else, as with `idemixnym`. It is 225 bytes (two
-polynomials of 64 coefficients, 14 bits each, plus the end marker) and is wrapped in a
-`TypedIdentity` of type 7. A fresh `r` makes two pseudonyms of the same wallet unrelated.
+The identity is what is stored in the token's owner field: the nym of the enrollment id,
+$\mathsf{nymEID}=\mathbf{a}_0\,\mathrm{enc}(H(\mathrm{EID}))+\mathbf{A}'_{\mathrm{com}}\boldsymbol\rho$, and nothing
+else, as with `idemixnym`. Here $\mathbf{A}_{\mathrm{com}}=[\mathbf{a}_0\mid\mathbf{A}'_{\mathrm{com}}]$ is the public
+$2\times11$ commitment key, $\mathrm{enc}$ maps 32 bytes to a short polynomial and $\boldsymbol\rho$ is a short
+random opening (see [§6.1](identity-lazer-anoncreds.md#61-nyms)). It is 225 bytes (two polynomials of 64
+coefficients, 14 bits each, plus the end marker) and is wrapped in a `TypedIdentity` of type 7. A fresh
+$\boldsymbol\rho$ makes two pseudonyms of the same wallet unrelated.
 Deserializing an identity only checks its length; every proof that uses it decodes it
 canonically (coefficients below 12289, exact end marker), so two byte strings never denote the
 same nym.
 
 ### Signatures
 
-A signature is the DER-encoded ASN.1 sequence `{nymSK, nymRH, pres, sok}`:
+A signature is the DER-encoded (binary) ASN.1 sequence `{nymSK, nymRH, pres, sok}`:
 
-- `nymSK = Acom * (usk, r1)` and `nymRH = Acom * (H(RH), r3)` are the other two commitments of the
-  pseudonym. They travel with every signature, as the `Creator` of an `idemixnym` signature does.
+- `nymSK` and `nymRH`, the nyms of `usk` and of `H(RH)`, each with its own fresh opening, are the other two
+  commitments of the pseudonym. They travel with every signature, as the `Creator` of an `idemixnym` signature does.
 - `pres` is a zero-knowledge presentation of the credential, with all attributes hidden. It proves
   that a credential of the issuer exists and that `nymSK`, the identity `nymEID` and `nymRH` commit
   to its attributes 0, 2 and 3. It is bound to the issuer public key. The verifier fixes the
@@ -63,7 +90,9 @@ A signature is the DER-encoded ASN.1 sequence `{nymSK, nymRH, pres, sok}`:
 
 Verification checks the SoK and then the presentation, on every call. The signature must
 re-encode to the same bytes (`encoding/asn1` alone accepts extra elements in a sequence), the nyms
-must have the length of a nym, and the proofs must be non-empty and bounded.
+must have the length of a nym, and the proofs must be non-empty and bounded (`pres` at most
+`anoncreds.MaxLenPres()` = 45,322 bytes, `sok` at most `anoncreds.MaxLenSok()` = 20,326 bytes, the whole signature
+at most their sum plus `2·225 + 64`).
 
 Who can sign under a `nymEID`: whoever has a credential of the issuer with that enrollment id
 **and** the opening of `nymEID` (the presentation proves knowledge of both), plus `usk` and the opening
@@ -93,7 +122,8 @@ the presentation generated with the pseudonym (the one its signatures carry) and
 its other nyms. `EnrollmentID()` and `RevocationHandle()` return the plaintext.
 
 - `eid_proof` proves that `nym_eid` commits to `H(eid)` without revealing the opening: a proof of
-  knowledge of a short `r` with `nymEID - Acom_0 * H(eid) = Acom_r * r` (`anoncreds.EqOpeningVerify`,
+  knowledge of a short $\boldsymbol\rho$ with
+  $\mathsf{nymEID}-\mathbf{a}_0\,\mathrm{enc}(H(\mathrm{eid}))=\mathbf{A}'_{\mathrm{com}}\boldsymbol\rho$ (`anoncreds.EqOpeningVerify`,
   see [the scheme description](identity-lazer-anoncreds.md#63-proof-that-a-nym-commits-to-a-public-attribute)).
   It is bound to the issuer public key, the nym and the attribute.
 - `opening_rh` opens `nym_rh` in the clear: `nymRH` is not a signing key.
@@ -115,7 +145,7 @@ bound to a `Deserializer`, which has the issuer public key:
   by `RegisterRecipient`);
 - `Deserializer.GetAuditInfoMatcher`, whose matcher is bound to the issuer public key;
 - `Deserializer.DeserializeAuditInfo`, which requires the identity and matches it;
-- `Deserializer.Info`.
+- `Deserializer.Info`, when an audit info is passed (without one it only prints the identity).
 
 `AuditInfo` itself has no `Match` method: without the issuer public key the presentation cannot be
 checked, and a credential-less pseudonym would match. `AuditInfoDeserializer` (no issuer public
@@ -124,7 +154,8 @@ audit info. It does not match anything and returns a value that is not a `driver
 Callers must have matched the identity through a `Deserializer` first, as the wallet and auditor
 flows of Panurus do.
 
-The decoder is canonical: the input must be exactly what `Bytes()` (`json.Marshal`) produces, so
+The decoder accepts at most 128 KiB and is canonical: the input must be exactly what `Bytes()` (`json.Marshal`,
+binary members in base64) produces, so
 unknown, duplicate or case-variant members and trailing data are rejected. Nyms, the opening and the
 ciphertext must have their fixed lengths, `eid_proof` at most `anoncreds.MaxLenSok()` and `pres` at
 most `anoncreds.MaxLenPres()` bytes.
@@ -137,8 +168,8 @@ identity bytes are the same, the identity store may keep the signer info and aud
 descriptors (depending on the backend, the first or the last written); every combination is valid: each
 audit info matches the identity and each signer info signs for it.
 
-An opening reveals the committed value: a nym is `Acom * (enc(attribute), r)`, linear in the
-attribute, and `Acom` is public, so given a nym and its opening anyone solves for the attribute
+An opening reveals the committed value: a nym is $\mathbf{a}_0\,\mathrm{enc}(m)+\mathbf{A}'_{\mathrm{com}}\boldsymbol\rho$,
+linear in the attribute $m$, and $\mathbf{A}_{\mathrm{com}}$ is public, so given a nym and its opening anyone solves for the attribute
 (`TestRegressionOpeningRevealsAttribute` does it). For `nymRH` in the audit info this is by design: whoever
 holds it learns the RH hash. The opening of `nymSK` is never part of the audit info, see below.
 
@@ -159,13 +190,51 @@ of the wallet. The opening is therefore encrypted at rest:
   signer info only decrypts for its identity, and a signer info whose `nym_rh` or `pres` was altered in the
   store is refused instead of producing signatures that do not verify.
 
-`DeserializeSigner` decodes the signer info strictly (canonical JSON, `version` 2, fixed lengths,
-presentation length), decrypts the opening and recomputes `nymSK` from `usk` and the opening. A signer
+`DeserializeSigner` decodes the signer info strictly (at most 128 KiB, canonical JSON with base64 members,
+`version` 2, fixed lengths, presentation length), decrypts the opening and recomputes `nymSK` from `usk` and the opening. A signer
 info that does not decrypt (another wallet, another identity, tampering) or has another version is
 refused. The plaintext opening only lives in memory, in the returned `Signer`.
 
 What ties a pseudonym to the wallet is the presentation, bound to the credential of the wallet.
 The decryption only establishes that this key manager can sign for it.
+
+### Design rationale
+
+- **The identity is `nymEID` alone.** It is small (225 B) and, like `idemixnym`, can be reused: a wallet derives
+  further pseudonyms with the same `nymEID` from an audit info (see [Audit info](#audit-info)).
+- **The presentation is message-independent.** `pres` is bound to `ctx = "panurus/lazer/id/v1" || SHA-256(ipk)`
+  (`identityContext`), not to the message, so it is made once per pseudonym, in `Identity`. The Idemix identity
+  cache precomputes it in the background, off the signing path.
+- **The SoK carries the message.** Signing is one cheap SoK under `nymSK`; the presentation ties `nymSK` to the
+  identity and to the credential.
+- **Consequence.** `nymSK` and `nymRH` travel with each signature, so the revocation handle is bound per signature,
+  not per identity (see [Signatures](#signatures)).
+
+### Security goals and threat model
+
+The adversaries are: other users, including coalitions holding credentials with the same enrollment id as the
+victim; a malicious issuer, which can issue itself a credential on any attributes; the auditor, which holds the
+audit infos; and the network, which sees and can alter identities and signatures. All arguments are informal and
+in the random oracle model (ROM). Estimates are classical / quantum core-SVP
+(see [§2.6 of the scheme description](identity-lazer-anoncreds.md#26-estimating-concrete-security)).
+
+| Goal | Adversary | Why it holds | Assumption (estimate) |
+|---|---|---|---|
+| Only the wallet that made a pseudonym signs under its `nymEID` | users, coalitions, issuer, auditor, network | A valid signature has a `pres` for $(\mathsf{nymSK},\mathsf{nymEID},\mathsf{nymRH})$ and a SoK under `nymSK`. `pres` binds all three nyms, so parts of different signatures cannot be mixed. (a) A fresh `pres`: knowledge soundness of $P_2$ extracts an opening of the victim's `nymEID`. To the victim's EID it is a $\boldsymbol\rho$ with $\lVert\boldsymbol\rho\rVert_2\le39$ and $\mathsf{nymEID}-\mathbf{a}_0\,\mathrm{enc}(H(\mathrm{EID}))=\mathbf{A}'_{\mathrm{com}}\boldsymbol\rho$, a planted search-M-LWE instance on the $2\times10$ $\mathbf{A}'_{\mathrm{com}}$, harder than (b); to another value, after replacing `nymEID` by a uniform target (M-LWE), it is an ISIS solution of norm $\le75$, as in (b). (b) A reused honest $(\mathsf{nymSK},\mathsf{nymRH},\mathsf{pres})$: the adversary must forge the SoK under an honest `nymSK` ([§6.2](identity-lazer-anoncreds.md#62-signature-of-knowledge-of-an-opening)). | ISIS on $\mathbf{A}_{\mathrm{com}}$, bound $\approx75$ (≈122 / ≈110 bit); ROM |
+| No signature without a credential | anyone but the issuer | $P_2$ soundness extracts a credential on the committed attributes; with the public target $\mathbf{c}_0$ that is a one-more forgery of the blind signature ([§10.1](identity-lazer-anoncreds.md#101-unforgeability-of-credentials), `TestForgeryWithoutCredential`) | NTRU / M-SIS (Falcon-512); argued, not proven |
+| Anonymity and unlinkability of fresh pseudonyms | everyone but the auditor, the issuer included | Nyms with fresh openings are hiding; $P_2$ and the SoK are zero-knowledge ([§10.3](identity-lazer-anoncreds.md#103-anonymity-and-unlinkability)). Zero-knowledge relies on patches [0004](identity-lazer-patches.md#0004-grandom-sampler-state) and [0010](identity-lazer-patches.md#0010-prover-zk-z2-rejection-beta-signs) | M-LWE on $\mathbf{A}'_{\mathrm{com}}$; ROM |
+| Audit soundness: the auditor learns the true EID and RH | a malicious user | Matching verifies `eid_proof` and `pres` for the same `nymEID`; their extractors give two openings of it, to the claimed EID and to the credential's. Different EIDs give a collision of the 2-row $\mathbf{A}_{\mathrm{com}}$ of norm $\le150$ ([§6.3](identity-lazer-anoncreds.md#63-proof-that-a-nym-commits-to-a-public-attribute)). The same holds for `opening_rh` and `nymRH` | M-SIS on $\mathbf{A}_{\mathrm{com}}$, bound 150 (≈78 / ≈71 bit): the weakest link |
+| The auditor cannot sign | the auditor, or anyone holding audit infos | An audit info contains neither the opening of `nymEID` (only encrypted, under an AES-256-GCM key derived from the wallet secret) nor that of `nymSK`; `eid_proof` is zero-knowledge. The auditor is then an adversary of the first row (`TestAuditorCannotSign`) | as in the first row; AES-GCM, HKDF |
+
+Not provided:
+
+- **EID-level framing by the issuer.** The issuer can mint a credential for any enrollment id and create pseudonyms
+  that the auditor attributes to the victim. This is the same trust in the issuer as with Idemix. Non-frameability
+  per pseudonym still holds: the issuer cannot sign under a pseudonym the victim made (first row).
+- **Revocation.** The RH is committed, but not checked against any list.
+- **Unlinkability of reused pseudonyms.** Pseudonyms re-derived from an audit info have the same `nymEID`, and
+  signatures under the same pseudonym share their nyms: both are linkable by design.
+- **Anonymity towards the auditor.** It learns the EID and the RH of every audited pseudonym.
 
 ### Wallet secret and configuration
 
@@ -178,26 +247,31 @@ On disk, a wallet is the same layout as Idemix (`lazergen` writes it):
 ```
 
 The key manager provider (`NewKeyManagerProvider`) loads the configuration, stores the secret
-(`usk` and the masking randomness) in the `idriver.Keystore` under a SKI, and removes it from
-`IdentityConfiguration.Raw`, which keeps only the SKI. It then wraps the key manager with the
-Idemix identity cache, so pseudonyms are pre-generated in the background. Call `Close()` on the
-key manager when done. With `ignoreVerifyOnlyWallet` unset, `SignerConfig` is used and the
+(`usk` and the user state, `32 + anoncreds.MaxLenUserState()` bytes) in the `idriver.Keystore` under the key
+`lazer.sk.<hex(SKI)>`, with `SKI = SHA-256("panurus/lazer/ski/v1" || ipk || usk)` (`secretKeyIdentifier`), and
+removes it from `IdentityConfiguration.Raw`, which keeps only the SKI. `NewKeyManager` stores the secret only after
+its length check, `Import` and `CredVerify` succeed (`TestNewKeyManagerStoresOnlyValidSecret`). Without a keystore,
+nothing is stored, and a configuration reloaded from the SKI alone gives a remote key manager. The provider then
+wraps the key manager with the Idemix identity cache, so pseudonyms are pre-generated in the background. Call
+`Close()` on the key manager when done. With `ignoreVerifyOnlyWallet` unset, `SignerConfig` is used and the
 key manager is remote: it verifies but cannot create identities.
 
 `NewConfigWithIPK(ipk, dir, ...)` reads the wallet from `<dir>/user`, or from `<dir>/msp/user` if
 `<dir>` has no `user` directory. It fails if neither exists, and if a signer configuration exists but
 cannot be read or decoded (it never falls back to the other location then). A `user` directory
 without signer configuration is the intended verify-only (remote) wallet. Signer configurations and
-`IdentityConfiguration.Raw` are decoded strictly: unknown, duplicate or case-variant members and
+`IdentityConfiguration.Raw` are decoded strictly (at most 1 MiB): unknown, duplicate or case-variant members and
 trailing data are rejected.
 
 `IssueSignerConfig` resamples `usk` until the encoded attributes satisfy the norm bound of the
-issuance proof. A random `usk` almost always does, so it gives up after 1000 attempts: then the
+issuance proof, and wipes every rejected `usk` (`TestSampleAttributesWipesRejectedSecrets`). A random `usk` almost
+always does, so it gives up after 1000 attempts: then the
 encodings of the OU, role, EID and RH alone exceed the bound, and one of them must change.
 
 `KeyManager.Close` (and `WrappedKeyManager.Close`) is idempotent and safe to call concurrently with
 the other methods. Afterwards `Identity` and the signer deserializers fail, as do verifications
-with the key manager's verifier. `IsRemote` does not change. The identity cache cannot wait for its
+with the key manager's verifier. Signers already returned keep working: they own no C state. `IsRemote` does
+not change. The identity cache cannot wait for its
 provisioning goroutine, so `WrappedKeyManager.Close` cancels it: a generation waiting for a prover
 fails with "key manager closed", one in progress completes, and the goroutine exits. Identities
 still in the cache are not served.
@@ -212,7 +286,7 @@ witness. The module therefore separates what the process shares, read-only, from
   shared by the SoK and the equality-of-opening proof) are expanded once, at the first use of the `anoncreds`
   package, and converted to the CRT domain (`lin_pp_init`, lazer patch 0011). Every prover and verifier borrows
   them (`lin_prover_init_pp`, `lin_verifier_init_pp`) and only uses them as the left operand of products, so
-  nothing writes them. They take about 20 MB per process.
+  nothing writes them. They take about 20 MB per process (all memory figures here are a one-off measurement).
 - **Provers, per call.** Each presentation sets up its own $P_2$ prover from the shared matrices (about 3 MB) and
   clears it at the end, which wipes the witness. The issuance prover ($P_1$) lives only inside `MaskAttrs`. A wallet
   holds no prover state between calls.
@@ -241,8 +315,9 @@ identical with shared and with private matrices.
 
 ## Benchmarks
 
-`make lazer-bench` prints the sizes of identities, signatures, audit infos and signer infos and benchmarks
-generating identities, signing and verifying. The `TestParallelBenchmarkLazer*` tests in `km_bench_test.go`
+`make lazer-bench` runs all the benchmarks of the module root with `-v`: `BenchmarkLazer` prints the sizes of
+identities, signatures, audit infos and signer infos and benchmarks generating identities, signing and verifying;
+`BenchmarkKmIdentity`, `BenchmarkMatchIdentity` and `BenchmarkKmIdentityParallel` run as well. The `TestParallelBenchmarkLazer*` tests in `km_bench_test.go`
 measure throughput with concurrent workers, and `BenchmarkKmIdentityParallel` generates identities with one key
 manager from parallel goroutines:
 
@@ -256,8 +331,9 @@ go test -run '^$' -bench '^BenchmarkMatchIdentity$' -benchtime=700x -count=3 .
 
 Verifiers do not cache presentation checks, so every verification and every audit match pays for a full
 presentation check; `BenchmarkMatchIdentity` measures audit matching. Run the benchmarks on an idle machine and
-compare runs of the same build only. Sizes: identity 225 B, signature about 53.4 KB, audit info about 75 KB, signer
-info about 51 KB (the last three base64 in JSON or DER, dominated by the presentation).
+compare runs of the same build only. Measured sizes: identity 225 B, signature 53,362 B (≈53.4 KB, binary DER),
+audit info 74,562 B (≈74.6 KB) and signer info 50,535 B (≈50.5 KB), both JSON with base64 members. The presentation
+(≈36.5 KB) dominates all three; a SoK is ≈16.4 KB. Sizes vary by some tens of bytes with the coins of the proofs.
 
 ## Building and testing
 
@@ -276,7 +352,7 @@ make lazer-install LAZER_SRC=~/lazer   # or copy, patch and build a local checko
 make lazer-test                        # go test -race in the module
 make lazer-test-short                  # without the race detector
 make lazer-bench                       # sizes and benchmarks
-make lazer-checks                      # make checks and make lint, on this module only
+make lazer-checks                      # Go checks of make checks + lint, on this module only
 make lazer-clean                       # remove ./.lazer
 ```
 
@@ -291,8 +367,9 @@ of `GO_MODULES` and not covered by `make unit-tests`.
 
 **CI.** `lazer-tests.yml` runs `make lazer-install` and `make lazer-test` on Linux amd64 (`ubuntu-latest`) and
 arm64 (`ubuntu-24.04-arm`), on every pull request and push to `main`: the module depends on many root packages, so
-it has no paths filter. On amd64 it also runs `make lazer-checks`: the module is not in `GO_MODULES`, so `make
-checks` and `make lint` skip it. The `fuzz-lazer` job of `nightly-fuzz.yml` runs the fuzz targets of the module. Neither
+it has no paths filter. On amd64 it also runs `make lazer-checks`, the Go checks of `make checks` and `make lint` on this module: it is
+not in `GO_MODULES`, so `make checks` and `make lint` skip it (only `tidy-check` covers it, through
+`TIDY_GO_MODULES`). The `fuzz-lazer` job of `nightly-fuzz.yml` runs the fuzz targets of the module. Neither
 caches `./.lazer`: lazer is built with `-march=native` (and HEXL picks AVX-512 when present), so a build from one
 runner may not run on another. CI builds Linux only; macOS (arm64, Homebrew) is built and tested locally, not in
 CI.
@@ -355,7 +432,7 @@ be used by mistake.
 **Changing a patch.** Apply the series to a pristine checkout of `LAZER_COMMIT`, edit, and regenerate the patch with
 `git diff` or `git format-patch --no-signature` (paths `a/...`, `b/...` relative to the lazer root; no signature, so
 that the sha256 of a patch does not depend on the git version). Patches must not touch the Falcon or Intel HEXL
-sources under `third_party/`: lazer's own Makefile extracts them and applies `src/falcon.patch` and `src/hexl.patch`
+sources under `third_party/`: lazer's own Makefile extracts them and applies `src/falcon.patch` (upstream) and `src/hexl.patch`
 (added by patch 0000) at build time, after `lazer-fetch`, so a change to them goes into those files. When moving to
 a new lazer revision, drop the patches that are merged upstream and refresh the others.
 
@@ -421,7 +498,7 @@ they differ, and `TestParamsMatchConstants`/`TestParamsCheck` fail. lazer's Pyth
 | `schema.go` | attribute layout, domain separators |
 | `config.go` | configuration and on-disk layout |
 | `identity.go` | identity and signature encodings, verifier pool |
-| `km.go`, `kmp.go` | `KeyManager`, `KeyManagerProvider`, identity cache wrapper |
+| `km.go`, `kmp.go` | `KeyManager`, `SignerInfo`, `Signer` (km.go); `KeyManagerProvider`, `WrappedKeyManager`, the identity cache wrapper (kmp.go) |
 | `prover.go` | `ProverLimiter`, see [Concurrency and memory](#concurrency-and-memory) |
 | `deserializer.go`, `audit.go` | verifier/matcher deserializers, `AuditInfo` |
 | `strictjson.go` | strict and canonical JSON decoding of audit infos, signer infos and configurations |
@@ -437,11 +514,14 @@ they differ, and `TestParamsMatchConstants`/`TestParamsCheck` fail. lazer's Pyth
    the issuer key, so that the all-zero witness does not satisfy it (see
    [the scheme description, §10.1](identity-lazer-anoncreds.md#101-unforgeability-of-credentials)). A formal
    reduction for the credential scheme with this target is still missing.
-2. **Commitment binding.** The commitment key is 2x11 over Z_12289[X]/(X^64+1). A rough estimate gives about 80-bit
-   core-SVP for finding two openings (collision norm up to 150) and about 120 bit for extracting an opening. A break
+2. **Commitment binding.** The commitment key is $2\times11$ over $\mathbb{Z}_{12289}[X]/(X^{64}+1)$. A rough
+   estimate gives about 78 bit classical (≈71 bit quantum) core-SVP for finding two openings (collision norm up to
+   150) and about 122 bit (≈110 bit) for extracting an opening, see
+   [§2.6 of the scheme description](identity-lazer-anoncreds.md#26-estimating-concrete-security). A break
    lets a user open `nymEID`/`nymRH` to a false enrollment id or revocation handle, or prove a false enrollment id
    with `eid_proof` (audit evasion); it does not allow linking. Since the identity is `nymEID` alone, extracting an
-   opening of a victim's `nymEID` would also let a holder of a credential with the same enrollment id sign for it.
+   opening of a victim's `nymEID` would also let a holder of a credential with the same enrollment id sign for it
+   (see [Security goals and threat model](#security-goals-and-threat-model)).
    Before any production use, run the lattice estimator and, if needed, increase `CBDC_COM_ROWS` in
    `anoncreds/anoncreds.h` and regenerate the `popen` and `p2` parameters.
 3. **Size.** A signature is about 53.4 KB (the identity is 225 B).
@@ -452,7 +532,7 @@ they differ, and `TestParamsMatchConstants`/`TestParamsCheck` fail. lazer's Pyth
 5. **Secrets in memory.** Secrets are wiped on `Clear` and after use, in C and in the Go wrapper, but copies made by
    the Go runtime (for example when growing slices, or by the garbage collector) cannot be wiped, and memory is not
    locked against swapping.
-6. **Build flags.** lazer's own `tests/abdlop-test` has a randomized check (`tests/abdlop-test.c:146`, marked
+6. **Build flags.** lazer's own `tests/abdlop-test` has a randomized check (`tests/abdlop-test.c:142–146`, marked
    "sometimes fails" upstream) that a perturbed commitment is rejected. In local runs (an observation, not a CI
    measurement), on amd64 it fails in a few percent of the
    runs with lazer's default `-O3`, but in about 90% with `-O2` (gcc). On arm64 with clang, `-O2` and `-O3` give the
@@ -464,4 +544,11 @@ they differ, and `TestParamsMatchConstants`/`TestParamsCheck` fail. lazer's Pyth
 Driver, public-parameter (`IdemixIssuerPublicKeys` equivalent) and integration (`nwo`) wiring, a SKI cleanup
 provider, revocation (the RH is committed but not checked against a list), a per-message presentation signature
 mode, and sending the presentation once per transaction (with one signature per pseudonym each signature carries
-its own presentation, about 36.9 KiB).
+its own presentation, about 36.5 KB).
+
+## References
+
+- RFC 5869, *HMAC-based Extract-and-Expand Key Derivation Function (HKDF)*, 2010.
+- NIST SP 800-38D, *Recommendation for Block Cipher Modes of Operation: Galois/Counter Mode (GCM) and GMAC*, 2007.
+- For the cryptographic references (lattices, proof systems, credentials, concrete security), see
+  [§14 of the scheme description](identity-lazer-anoncreds.md#14-references).
