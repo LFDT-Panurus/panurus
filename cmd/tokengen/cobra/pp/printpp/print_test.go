@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/cmd/tokengen/cobra/pp/zkatsnarkv1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -69,6 +70,34 @@ func TestPrint(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		err := Print(&Args{InputFile: testdataPath})
 		require.NoError(t, err)
+	})
+
+	t.Run("success_zkatsnark", func(t *testing.T) {
+		out := t.TempDir()
+		testdata := filepath.Join(wd, "..", "..", "..", "testdata")
+		_, err := zkatsnarkv1.Gen(&zkatsnarkv1.GeneratorArgs{
+			IdemixMSPDirs: []string{filepath.Join(testdata, "idemix")},
+			Issuers:       []string{filepath.Join(testdata, "issuers", "msp")},
+			OutputDir:     out,
+			ProofSystem:   "plonkfri",
+			Curve:         "bn254",
+			MaxBits:       8,
+		})
+		require.NoError(t, err)
+
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		require.NoError(t, err)
+		os.Stdout = w
+		err = Print(&Args{InputFile: filepath.Join(out, "zkatsnarkv1_pp.json")})
+		require.NoError(t, w.Close())
+		os.Stdout = oldStdout
+		require.NoError(t, err)
+		var buf bytes.Buffer
+		_, err = buf.ReadFrom(r)
+		require.NoError(t, err)
+		assert.Contains(t, buf.String(), "zkatsnark public params")
+		assert.Contains(t, buf.String(), "proofSystem=plonkfri")
 	})
 
 	t.Run("read_fail", func(t *testing.T) {

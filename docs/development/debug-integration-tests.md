@@ -89,6 +89,12 @@ reported are worth knowing when a suite goes red:
   wrapping the view error (`failed setting up the public params on
   [network:channel:namespace:driver]`). A process that dies with
   `panic: failed updating pps` is running an old build.
+- **Transient TMSs are not installed at bring-up.** An extra TMS marked `Transient` (the
+  upgrade target of the fabtoken -> ZKAT-SNARK suite, alias `zkatsnark-32bits`) shares the
+  namespace of the default TMS: `Backend.PrepareNamespace` and `Backend.InstallPublicParams`
+  skip it, as the Fabric chaincode backend does, so `WaitForPublicParams` reports
+  `no public params installation was started` for it. Its public parameters are installed by
+  the spec itself, through `UpdatePublicParams`.
 
 ## Chaincode Build Path: Go External Builder
 

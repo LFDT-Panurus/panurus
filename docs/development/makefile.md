@@ -26,6 +26,7 @@ These targets run various test suites.
 | `make unit-tests-race-core` | Race shard: the `token/core` packages (drivers and crypto). |
 | `make unit-tests-race-rest` | Race shard: every other root-module package, the `integration/nwo` harness tests and the `x/token/services/network/evm` module. |
 | `make unit-tests-regression` | Runs regression tests. |
+| `make unit-tests-zkatsnark` | Runs the unit tests of the `x/token/core/zkatsnark` module (a separate Go module that `unit-tests` and `unit-tests-race` do not cover) under the race detector, with coverage. `ZKATSNARK_SHARD=validator\|setup\|crypto\|prover\|rest` selects one shard (what CI runs in parallel); the default `all` runs every shard sequentially and takes a long time. Shards are defined in `ci/scripts/zkatsnark-packages.sh`. |
 | `make test-evm-contracts` | Runs the EVM driver's Solidity tests (`forge test`) and `forge fmt --check`. Skips without `forge` or the `forge-std` submodule; set `EVM_CONTRACTS_REQUIRED=1` to fail instead. |
 
 The `unit-tests-race-*` shards accept `COVERAGE=1`, which instruments every root-module package (`-coverpkg=./...`) and writes the profile to `COVERAGE_PROFILE` (default `profile.cov`). CI runs each shard as its own `utest` job and uploads that profile, so the suite is not run a second time without `-race` for coverage. A shard whose package filter matches nothing fails instead of silently testing the repository root.

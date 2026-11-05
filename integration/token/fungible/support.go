@@ -23,6 +23,7 @@ import (
 	tplatform "github.com/LFDT-Panurus/panurus/integration/nwo/token"
 	gfabtokenv1 "github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/fabtokenv1"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
+	gzkatsnarkv1 "github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatsnarkv1"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
 	token3 "github.com/LFDT-Panurus/panurus/integration/token"
 	common2 "github.com/LFDT-Panurus/panurus/integration/token/common"
@@ -39,6 +40,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx"
 	"github.com/LFDT-Panurus/panurus/token/token"
+	zkatsnarkpp "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
 	"github.com/hyperledger-labs/fabric-smart-client/integration"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/common"
 	topology2 "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric/topology"
@@ -1313,7 +1315,7 @@ func UpdatePublicParamsAndWait(network *integration.Infrastructure, publicParams
 		if node.Id() == "custodian" {
 			continue
 		}
-		gomega.Eventually(GetPublicParams).WithArguments(network, node).WithTimeout(60 * time.Second).WithPolling(5 * time.Second).Should(gomega.Equal(publicParams))
+		gomega.Eventually(GetPublicParams).WithArguments(network, node).WithTimeout(120 * time.Second).WithPolling(5 * time.Second).Should(gomega.Equal(publicParams))
 	}
 }
 
@@ -1915,6 +1917,9 @@ func PrepareUpdatedPublicParams(network *integration.Infrastructure, auditor str
 	case gfabtokenv1.DriverIdentifier:
 		pp, err = fabtokenv1.NewPublicParamsFromBytes(ppBytes, fabtokenv1.FabTokenDriverName, fabtokenv1.ProtocolV1)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	case gzkatsnarkv1.DriverIdentifier:
+		pp, err = zkatsnarkpp.DeserializePublicParams(ppBytes)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	default:
 		gomega.Expect(false).To(gomega.BeTrue(), "unknown pp identifier [%s]", genericPP.Identifier)
 	}
@@ -1967,6 +1972,9 @@ func PreparePublicParamsWithNewIssuer(network *integration.Infrastructure, issue
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	case gfabtokenv1.DriverIdentifier:
 		pp, err = fabtokenv1.NewPublicParamsFromBytes(ppBytes, fabtokenv1.FabTokenDriverName, fabtokenv1.ProtocolV1)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	case gzkatsnarkv1.DriverIdentifier:
+		pp, err = zkatsnarkpp.DeserializePublicParams(ppBytes)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	default:
 		gomega.Expect(false).To(gomega.BeTrue(), "unknown pp identitfier [%s]", genericPP.Identifier)

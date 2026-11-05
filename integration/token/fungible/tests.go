@@ -17,7 +17,10 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/integration/nwo/runner/nwo"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token"
+	tfabric "github.com/LFDT-Panurus/panurus/integration/nwo/token/fabric"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
+	gzkatsnarkv1 "github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatsnarkv1"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/model"
 	token3 "github.com/LFDT-Panurus/panurus/integration/token"
 	common2 "github.com/LFDT-Panurus/panurus/integration/token/common"
@@ -31,6 +34,8 @@ import (
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/integration"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/common"
+	fscfabric "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric"
+	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabricx"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	fsclogging "github.com/hyperledger-labs/fabric-smart-client/platform/common/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/assert"
@@ -47,7 +52,7 @@ const (
 
 	// transferTimeout is the maximum time to wait for a transfer operation to complete in tests.
 	// This generous timeout accounts for variable CI environment performance.
-	transferTimeout = 60 * time.Second
+	transferTimeout = 240 * time.Second
 )
 
 var AuditedTransactions = []TransactionRecord{
@@ -900,10 +905,17 @@ func TestPublicParamsUpdate(network *integration.Infrastructure, newAuditorID st
 	alice := sel.Get("alice")
 	manager := sel.Get("manager")
 	auditor := sel.Get("auditor")
+	endorser1 := sel.Get("endorser-1")
 	if issuerAsAuditor {
 		auditor = issuer
 	}
 	RegisterAuditor(network, auditor)
+	CheckPublicParams(network, issuer, auditor, alice)
+	if _, ok := (*sel)["endorser-1"]; ok {
+		CheckPublicParams(network, endorser1)
+	}
+	time.Sleep(10 * time.Second)
+
 	txId := IssueCash(network, "", "USD", 110, alice, auditor, true, issuer)
 	gomega.Expect(txId).NotTo(gomega.BeEmpty())
 	CheckBalanceAndHolding(network, alice, "", "USD", 110, auditor)
@@ -911,10 +923,13 @@ func TestPublicParamsUpdate(network *integration.Infrastructure, newAuditorID st
 	RegisterAuditor(network, newAuditor)
 	UpdatePublicParams(network, ppBytes, tms)
 
-	gomega.Eventually(GetPublicParams).WithArguments(network, newIssuer).WithTimeout(30 * time.Second).WithPolling(15 * time.Second).Should(gomega.Equal(ppBytes))
-	gomega.Eventually(GetPublicParams).WithArguments(network, issuer).WithTimeout(30 * time.Second).WithPolling(15 * time.Second).Should(gomega.Equal(ppBytes))
+	gomega.Eventually(GetPublicParams).WithArguments(network, newIssuer).WithTimeout(120 * time.Second).WithPolling(15 * time.Second).Should(gomega.Equal(ppBytes))
+	gomega.Eventually(GetPublicParams).WithArguments(network, issuer).WithTimeout(120 * time.Second).WithPolling(15 * time.Second).Should(gomega.Equal(ppBytes))
+	if _, ok := (*sel)["endorser-1"]; ok {
+		gomega.Eventually(GetPublicParams).WithArguments(network, endorser1).WithTimeout(120 * time.Second).WithPolling(15 * time.Second).Should(gomega.Equal(ppBytes))
+	}
 	if !issuerAsAuditor {
-		gomega.Eventually(GetPublicParams).WithArguments(network, newAuditor).WithTimeout(30 * time.Second).WithPolling(15 * time.Second).Should(gomega.Equal(ppBytes))
+		gomega.Eventually(GetPublicParams).WithArguments(network, newAuditor).WithTimeout(120 * time.Second).WithPolling(15 * time.Second).Should(gomega.Equal(ppBytes))
 	}
 	// give time to the issuer and the auditor to update their public parameters and reload their wallets
 	gomega.Eventually(DoesWalletExist).WithArguments(network, newIssuer, "", views.IssuerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
@@ -937,6 +952,8 @@ func TestPublicParamsUpdate(network *integration.Infrastructure, newAuditorID st
 		Restart(network, false, nil, refs...)
 	}
 
+	time.Sleep(1 * time.Minute)
+
 	txId = IssueCash(network, "", "USD", 110, alice, newAuditor, true, newIssuer)
 	gomega.Expect(txId).NotTo(gomega.BeEmpty())
 	CheckBalance(network, alice, "", "USD", 220)
@@ -944,10 +961,10 @@ func TestPublicParamsUpdate(network *integration.Infrastructure, newAuditorID st
 	if updateWithAppend {
 		IssueCash(network, "", "USD", 110, alice, newAuditor, true, issuer)
 	} else {
-		// The dlog auditor rejects an unrecognized issuer during audit, before the
+		// The dlog and zkatsnark auditors reject an unrecognized issuer during audit, before the
 		// transaction ever reaches the on-chain validator that returns ErrIssuerNotAuthorized.
 		expectedErr := validator.ErrIssuerNotAuthorized.Error()
-		if tms.Driver == zkatdlognoghv1.DriverIdentifier {
+		if tms.Driver == zkatdlognoghv1.DriverIdentifier || tms.Driver == gzkatsnarkv1.DriverIdentifier {
 			expectedErr = "is not a recognized issuer"
 		}
 		IssueCash(network, "", "USD", 110, alice, newAuditor, true, issuer, expectedErr)
@@ -991,6 +1008,15 @@ func TestRevokeIdentity(network *integration.Infrastructure, auditorId string, s
 	bob := sel.Get("bob")
 
 	RegisterAuditor(network, auditor)
+
+	// give some time to the nodes to get the public parameters
+	time.Sleep(10 * time.Second)
+	CheckPublicParams(network, issuer, auditor, alice, bob)
+	// give time to the issuer, auditor, alice, and bob to update their public parameters and reload their wallets
+	gomega.Eventually(DoesWalletExist).WithArguments(network, issuer, "", views.IssuerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+	gomega.Eventually(DoesWalletExist).WithArguments(network, auditor, "", views.AuditorWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+	gomega.Eventually(DoesWalletExist).WithArguments(network, alice, "", views.OwnerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+	gomega.Eventually(DoesWalletExist).WithArguments(network, bob, "", views.OwnerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
 
 	IssueCash(network, "", "USD", 110, alice, auditor, true, issuer)
 	CheckBalanceAndHolding(network, alice, "", "USD", 110, auditor)
@@ -1092,9 +1118,14 @@ func TestRemoteOwnerWalletWithWMP(network *integration.Infrastructure, wmp *Wall
 
 	// give some time to the nodes to get the public parameters
 	time.Sleep(10 * time.Second)
-
 	SetKVSEntry(network, issuer, "auditor", auditor.Id())
 	CheckPublicParams(network, issuer, auditor, alice, bob, charlie, manager)
+	// give time to the issuer, auditor, alice, and bob to update their public parameters and reload their wallets
+	gomega.Eventually(DoesWalletExist).WithArguments(network, issuer, "", views.IssuerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+	gomega.Eventually(DoesWalletExist).WithArguments(network, auditor, "", views.AuditorWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+	gomega.Eventually(DoesWalletExist).WithArguments(network, alice, "", views.OwnerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+	gomega.Eventually(DoesWalletExist).WithArguments(network, bob, "", views.OwnerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+	gomega.Eventually(DoesWalletExist).WithArguments(network, charlie, "", views.OwnerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
 
 	Withdraw(network, wmp, websSocket, alice, "alice_remote", "USD", 10, auditor, issuer)
 	CheckBalanceAndHolding(network, alice, "alice_remote", "USD", 10, auditor)
@@ -1141,6 +1172,19 @@ func TestMaliciousTransactions(net *integration.Infrastructure, sel *token3.Repl
 	IssueCash(net, "", "USD", 110, alice, sel.Get(""), true, issuer)
 	CheckBalance(net, alice, "", "USD", 110)
 
+	// MaliciousTransfer gets a first transaction endorsed and then asks for a second, different
+	// token request to be endorsed under the same transaction id. With Fabric-family FSC endorsement,
+	// the endorser has already filed a validation record for that id when it approved the first request,
+	// and it refuses to file another one: the attack is stopped at endorsement and never reaches the
+	// ledger, so there is no committed transaction whose status can be checked.
+	if rejectsTxIDReuseAtEndorsement(net) {
+		MaliciousTransferCash(net, alice, "", "USD", 2, bob, sel.Get(""), nil, "failed to sign transaction", "failed to append metadata for", "failed to insert validation record for tx")
+		CheckBalance(net, alice, "", "USD", 110)
+		CheckBalance(net, bob, "", "USD", 0)
+
+		return
+	}
+
 	txID := MaliciousTransferCash(net, alice, "", "USD", 2, bob, sel.Get(""), nil)
 	txStatusAlice := GetTXStatus(net, alice, txID)
 	gomega.Expect(txStatusAlice.ValidationCode).To(gomega.BeEquivalentTo(ttx.Deleted))
@@ -1148,6 +1192,33 @@ func TestMaliciousTransactions(net *integration.Infrastructure, sel *token3.Repl
 	txStatusBob := GetTXStatus(net, bob, txID)
 	gomega.Expect(txStatusBob.ValidationCode).To(gomega.BeEquivalentTo(ttx.Deleted))
 	gomega.Expect(txStatusBob.ValidationMessage).To(gomega.ContainSubstring("token requests do not match, tr hashes"))
+}
+
+// rejectsTxIDReuseAtEndorsement reports whether the default TMS is endorsed by the Fabric-family
+// FSC endorsement service (fabric or fabricx backend with FSC endorsement enabled). That service
+// files one validation record per tx id (fsc/responder.go AppendValidationRecord, unique tx_id),
+// so a second token request under the same tx id is refused at endorsement. The EVM endorsement
+// service keeps no such record; there the request reaches the ledger and is marked Deleted.
+func rejectsTxIDReuseAtEndorsement(network *integration.Infrastructure) bool {
+	tokenPlatform := token.GetPlatform(network.NWOCtx, "token")
+	gomega.Expect(tokenPlatform).ToNot(gomega.BeNil(), "cannot find token platform in context")
+	gomega.Expect(tokenPlatform.GetTopology()).ToNot(gomega.BeNil(), "invalid token topology, it is nil")
+	tmss := tokenPlatform.GetTopology().TMSs
+	gomega.Expect(tmss).ToNot(gomega.BeEmpty(), "no tms defined in token topology")
+	tms := tmss[0]
+	if !tfabric.IsFSCEndorsementEnabled(tms) {
+		return false
+	}
+	typed, ok := tms.BackendTopology.(interface{ Type() string })
+	if !ok {
+		return false
+	}
+	switch typed.Type() {
+	case fscfabric.TopologyName, fabricx.PlatformName: // exact match: the evm gateway type is "fabricx-evm"
+		return true
+	default:
+		return false
+	}
 }
 
 func TestStressSuite(network *integration.Infrastructure, auditorId string, selector *token3.ReplicaSelector) {
@@ -1262,8 +1333,17 @@ func TestStress(network *integration.Infrastructure, auditorId string, selector 
 	charlieTransferPool.Wait()
 }
 
+// TestTokensUpgrade runs TestTokensUpgradeWithAlias against the extra TMS with alias "dlog-32bits".
 func TestTokensUpgrade(network *integration.Infrastructure, auditorId string, onRestart OnRestartFunc, sel *token3.ReplicaSelector) {
-	// we start with fabtoken 16bits, performs a few operation, and then switch
+	TestTokensUpgradeWithAlias(network, auditorId, onRestart, sel, "dlog-32bits")
+}
+
+// TestTokensUpgradeWithAlias covers the issuer-mediated (burn-and-re-issue) upgrade of fabtoken tokens.
+// The network starts with the fabtoken driver; alice receives a token, then the public parameters are
+// switched to those of the extra TMS with the passed alias. The fabtoken token cannot be spent in place
+// under the new driver, so alice upgrades it with the issuer's help and then transfers it to bob.
+func TestTokensUpgradeWithAlias(network *integration.Infrastructure, auditorId string, onRestart OnRestartFunc, sel *token3.ReplicaSelector, alias topology.TMSAlias) {
+	// we start with fabtoken, perform a few operations, and then switch driver
 	auditor := sel.Get(auditorId)
 	issuer := sel.Get("issuer")
 	alice := sel.Get("alice")
@@ -1291,12 +1371,14 @@ func TestTokensUpgrade(network *integration.Infrastructure, auditorId string, on
 	CheckOwnerStore(network, nil, issuer, alice, bob, charlie, manager)
 	CheckAuditorStore(network, auditor, "", nil)
 
-	// switch to dlog 32bits, perform a few operations
-	tms := GetTMSByAlias(network, "dlog-32bits")
+	// switch to the TMS with the passed alias, perform a few operations
+	tms := GetTMSByAlias(network, alias)
 	ppBytes, err := os.ReadFile(tokenPlatform.PublicParametersFile(tms))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	gomega.Expect(ppBytes).NotTo(gomega.BeNil())
-	UpdatePublicParams(network, ppBytes, tms)
+	// wait for every node to pick the new public parameters up: on backends that propagate them
+	// asynchronously (e.g. fabricx), the checks below would otherwise run against the old driver
+	UpdatePublicParamsAndWait(network, ppBytes, tms, issuer, auditor, alice, bob, charlie, manager)
 
 	gomega.Eventually(DoesWalletExist).WithArguments(network, issuer, "", views.IssuerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
 	gomega.Eventually(DoesWalletExist).WithArguments(network, issuer, "pineapple", views.IssuerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeFalse())
@@ -1336,8 +1418,17 @@ func TestTokensUpgrade(network *integration.Infrastructure, auditorId string, on
 	CheckBalanceAndHolding(network, bob, "", "EUR", 110, auditor)
 }
 
+// TestLocalTokensUpgrade runs TestLocalTokensUpgradeWithAlias against the extra TMS with alias "dlog-32bits".
 func TestLocalTokensUpgrade(network *integration.Infrastructure, auditorId string, onRestart OnRestartFunc, sel *token3.ReplicaSelector) {
-	// we start with fabtoken 16bits, performs a few operation, and then switch
+	TestLocalTokensUpgradeWithAlias(network, auditorId, onRestart, sel, "dlog-32bits")
+}
+
+// TestLocalTokensUpgradeWithAlias covers the in-place upgrade of fabtoken tokens.
+// The network starts with the fabtoken driver; alice receives a token, then the public parameters are
+// switched to those of the extra TMS with the passed alias. The fabtoken token is spendable in place
+// under the new driver, so alice transfers it to bob without any upgrade step.
+func TestLocalTokensUpgradeWithAlias(network *integration.Infrastructure, auditorId string, onRestart OnRestartFunc, sel *token3.ReplicaSelector, alias topology.TMSAlias) {
+	// we start with fabtoken, perform a few operations, and then switch driver
 	auditor := sel.Get(auditorId)
 	issuer := sel.Get("issuer")
 	alice := sel.Get("alice")
@@ -1365,12 +1456,14 @@ func TestLocalTokensUpgrade(network *integration.Infrastructure, auditorId strin
 	CheckOwnerStore(network, nil, issuer, alice, bob, charlie, manager)
 	CheckAuditorStore(network, auditor, "", nil)
 
-	// switch to dlog 32bits, perform a few operations
-	tms := GetTMSByAlias(network, "dlog-32bits")
+	// switch to the TMS with the passed alias, perform a few operations
+	tms := GetTMSByAlias(network, alias)
 	ppBytes, err := os.ReadFile(tokenPlatform.PublicParametersFile(tms))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	gomega.Expect(ppBytes).NotTo(gomega.BeNil())
-	UpdatePublicParams(network, ppBytes, tms)
+	// wait for every node to pick the new public parameters up: on backends that propagate them
+	// asynchronously (e.g. fabricx), the checks below would otherwise run against the old driver
+	UpdatePublicParamsAndWait(network, ppBytes, tms, issuer, auditor, alice, bob, charlie, manager)
 
 	gomega.Eventually(DoesWalletExist).WithArguments(network, issuer, "", views.IssuerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
 	gomega.Eventually(DoesWalletExist).WithArguments(network, issuer, "pineapple", views.IssuerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeFalse())

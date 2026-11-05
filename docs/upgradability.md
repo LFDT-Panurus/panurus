@@ -113,6 +113,19 @@ Panurus records the public parameters in two places, and both matter for this fl
 > publishing new public parameters, compare `SupportedTokenFormats()` before and after: if the set
 > changes, every existing token needs this upgrade path, and owners must be online to run it.
 
+### Upgrading tokens to ZKAT-SNARK
+
+The ZKAT-SNARK driver upgrades cleartext fabtoken outputs with both mechanisms above: in place,
+inside an ordinary transfer, or by burn-and-re-issue through an issuer. Fabtoken formats are split
+between the two exactly as for ZKAT-DLOG, and the issuer path keeps the ZKAT-DLOG trust model: the
+issuer signature alone authorizes the burn on the ledger. ZKAT-DLOG outputs of a BLS12-381
+deployment are upgraded through the issuer only: the ZKAT-SNARK public parameters embed the
+ZKAT-DLOG public parameters, and every redeemed output carries a migration proof that its ledger
+commitment opens to the issued type and to a hidden value conserved by the binding signature (see
+[Upgrading ZKAT-DLOG tokens](drivers/zkatsnark.md#upgrading-zkat-dlog-tokens)). See
+[ZKAT-SNARK: Token Upgrades](drivers/zkatsnark.md#token-upgrades) for the protocols, the on-chain
+checks, and the follow-ups.
+
 ### Code Example: Identifying Unsupported Tokens
 
 Developers can use the `tokens` service to find tokens that require an upgrade.

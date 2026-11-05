@@ -1,0 +1,646 @@
+/*
+Copyright IBM Corp. All Rights Reserved.
+
+SPDX-License-Identifier: Apache-2.0
+*/
+
+// Package regression provides end-to-end regression tests for the zkatsnark
+// token driver. It constructs token requests (issue, transfer) using the real
+// prover and validates them using the real validator, ensuring the full
+// pipeline works correctly.
+//
+// These tests deliberately exercise the validator pipeline as the common
+// framework would invoke it, including signature verification and consumption.
+package regression
+
+import (
+	"context"
+	"sync"
+	"testing"
+
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+	"github.com/stretchr/testify/require"
+
+	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/actions"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
+	"github.com/LFDT-Panurus/panurus/token/services/identity"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prepared"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prover"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/setup"
+	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/token"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/validator"
+)
+
+// ── Shared expensive setup ────────────────────────────────────────────────
+
+var (
+	setupOnce            sync.Once
+	sharedPP             *pp.PublicParams
+	sharedVerifierParams *prepared.Verifier
+	orch                 *prover.Orchestrator
+	sharedSetErr         error
+)
+
+func setupShared(t *testing.T) {
+	t.Helper()
+	setupOnce.Do(func() {
+		p := pp.DefaultPublicParams()
+		var err error
+		p, err = setup.SetupAll(p)
+		if err != nil {
+			sharedSetErr = errors.Wrap(err, "setup.SetupAll")
+
+			return
+		}
+		sharedPP = p
+
+		base, err := prepared.NewParams(p)
+		if err != nil {
+			sharedSetErr = errors.Wrap(err, "prepared.NewParams")
+
+			return
+		}
+
+		proverParams, err := prepared.NewProverFrom(base)
+		if err != nil {
+			sharedSetErr = errors.Wrap(err, "prepared.NewProverFrom")
+
+			return
+		}
+
+		sharedVerifierParams, err = prepared.NewVerifierFrom(base)
+		if err != nil {
+			sharedSetErr = errors.Wrap(err, "prepared.NewVerifierFrom")
+
+			return
+		}
+
+		orch = prover.NewOrchestrator(
+			prover.NewSpendProver(proverParams),
+			prover.NewOutputProver(proverParams),
+		)
+	})
+
+	if sharedSetErr != nil {
+		t.Fatalf("shared setup failed: %v", sharedSetErr)
+	}
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+// buildIssueAction creates an IssueAction via the real prover.
+func buildIssueAction(
+	t *testing.T,
+	issuer []byte,
+	tokenType string,
+	values []uint64,
+	recipients [][]byte,
+) (*snarktoken.IssueAction, []*snarktoken.Note) {
+	t.Helper()
+	setupShared(t)
+
+	outputs := make([]prover.OutputRequest, len(values))
+	for i, v := range values {
+		outputs[i] = prover.OutputRequest{
+			Value:     v,
+			TokenType: tokenType,
+			Recipient: recipients[i],
+		}
+	}
+
+	action, notes, err := orch.BuildIssueAction(
+		context.Background(),
+		issuer,
+		outputs,
+		tokenType,
+		sharedPP,
+		nil,
+	)
+	require.NoError(t, err, "BuildIssueAction")
+
+	return action, notes
+}
+
+// buildTransferAction creates a TransferAction via the real prover.
+func buildTransferAction(
+	t *testing.T,
+	inputNotes []*snarktoken.Note,
+	tokenType string,
+	outputValues []uint64,
+	outputRecipients [][]byte,
+) (*snarktoken.TransferAction, []*snarktoken.Note) {
+	t.Helper()
+	setupShared(t)
+
+	inputs := make([]prover.SpendRequest, len(inputNotes))
+	for i, note := range inputNotes {
+		inputs[i] = prover.SpendRequest{Note: note}
+	}
+
+	outputs := make([]prover.OutputRequest, len(outputValues))
+	for i, v := range outputValues {
+		outputs[i] = prover.OutputRequest{
+			Value:     v,
+			TokenType: tokenType,
+			Recipient: outputRecipients[i],
+		}
+	}
+
+	action, notes, err := orch.BuildTransferAction(
+		context.Background(),
+		inputs,
+		outputs,
+		tokenType,
+		sharedPP,
+		nil,
+	)
+	require.NoError(t, err, "BuildTransferAction")
+
+	return action, notes
+}
+
+// testLedger is an in-memory ledger that stores serialized OutputDescriptions
+// keyed by token ID.
+type testLedger struct {
+	tokens map[string][]byte
+}
+
+// GetState returns the stored token bytes for a given token ID.
+func (l *testLedger) GetState(id token2.ID) ([]byte, error) {
+	key := id.String()
+	raw, ok := l.tokens[key]
+	if !ok {
+		return nil, errors.Errorf("token not found: %s", key)
+	}
+
+	return raw, nil
+}
+
+// storeLedgerToken stores a serialized OutputDescription in the test ledger.
+func storeLedgerToken(t *testing.T, ledger *testLedger, txID string, index uint64, desc snarktoken.OutputDescription) *token2.ID {
+	t.Helper()
+	raw, err := desc.Serialize()
+	require.NoError(t, err)
+
+	id := &token2.ID{TxId: txID, Index: index}
+	ledger.tokens[id.String()] = raw
+
+	return id
+}
+
+// testDeserializer is a stub deserializer for testing. It accepts any
+// identity bytes and returns a no-op verifier.
+type testDeserializer struct{}
+
+// GetOwnerVerifier returns a stub verifier that always succeeds.
+func (d *testDeserializer) GetOwnerVerifier(ctx context.Context, id driver.Identity) (driver.Verifier, error) {
+	return &alwaysValidVerifier{}, nil
+}
+
+// GetIssuerVerifier returns a stub verifier that always succeeds.
+func (d *testDeserializer) GetIssuerVerifier(ctx context.Context, id driver.Identity) (driver.Verifier, error) {
+	return &alwaysValidVerifier{}, nil
+}
+
+// GetAuditorVerifier returns a stub verifier that always succeeds.
+func (d *testDeserializer) GetAuditorVerifier(ctx context.Context, id driver.Identity) (driver.Verifier, error) {
+	return &alwaysValidVerifier{}, nil
+}
+
+// Recipients returns the identity itself as the sole recipient.
+func (d *testDeserializer) Recipients(raw driver.Identity) ([]driver.Identity, error) {
+	return []driver.Identity{raw}, nil
+}
+
+// GetAuditInfoMatcher returns a stub matcher that always succeeds.
+func (d *testDeserializer) GetAuditInfoMatcher(ctx context.Context, owner driver.Identity, auditInfo []byte) (driver.Matcher, error) {
+	return &alwaysValidMatcher{}, nil
+}
+
+// MatchIdentity always returns nil (match succeeds).
+func (d *testDeserializer) MatchIdentity(ctx context.Context, id driver.Identity, ai []byte) error {
+	return nil
+}
+
+// GetAuditInfo returns empty audit info.
+func (d *testDeserializer) GetAuditInfo(ctx context.Context, id driver.Identity, p driver.AuditInfoProvider) ([]byte, error) {
+	return []byte("test-audit-info"), nil
+}
+
+// alwaysValidVerifier is a verifier that always returns nil (valid).
+type alwaysValidVerifier struct{}
+
+// Verify always returns nil.
+func (v *alwaysValidVerifier) Verify(message, sigma []byte) error {
+	return nil
+}
+
+// alwaysValidMatcher is a matcher that always returns nil (match succeeds).
+type alwaysValidMatcher struct{}
+
+// Match always returns nil.
+func (m *alwaysValidMatcher) Match(ctx context.Context, identity []byte) error {
+	return nil
+}
+
+// ── Tests ──────────────────────────────────────────────────────────────────
+
+// TestIssueAction_ValidatesSuccessfully builds a real issue action via
+// the prover and validates it using the standalone Validator.ValidateIssue.
+func TestIssueAction_ValidatesSuccessfully(t *testing.T) {
+	setupShared(t)
+
+	issuer := []byte("test-issuer")
+	owner := typedID(t, "test-owner")
+
+	action, _ := buildIssueAction(t, issuer, "USD", []uint64{100}, [][]byte{owner})
+
+	val, err := validator.NewValidator(sharedVerifierParams, &testDeserializer{}, driver.ResourceLimits{})
+	require.NoError(t, err)
+
+	err = val.ValidateIssue(action)
+	require.NoError(t, err, "ValidateIssue should succeed for a properly constructed action")
+}
+
+// TestIssueAction_TwoOutputs_ValidatesSuccessfully tests issue with
+// multiple outputs.
+func TestIssueAction_TwoOutputs_ValidatesSuccessfully(t *testing.T) {
+	setupShared(t)
+
+	issuer := []byte("test-issuer")
+	action, _ := buildIssueAction(
+		t, issuer, "EUR",
+		[]uint64{50, 75},
+		[][]byte{typedID(t, "alice"), typedID(t, "bob")},
+	)
+
+	val, err := validator.NewValidator(sharedVerifierParams, &testDeserializer{}, driver.ResourceLimits{})
+	require.NoError(t, err)
+
+	err = val.ValidateIssue(action)
+	require.NoError(t, err, "ValidateIssue should succeed for 2-output issue")
+}
+
+// TestTransferAction_ValidatesSuccessfully builds a real transfer action
+// and validates it using the standalone Validator.ValidateTransfer.
+func TestTransferAction_ValidatesSuccessfully(t *testing.T) {
+	setupShared(t)
+
+	issuer := []byte("test-issuer")
+	owner := typedID(t, "test-owner")
+
+	// Issue 100 tokens to owner
+	_, issuedNotes := buildIssueAction(t, issuer, "USD", []uint64{100}, [][]byte{owner})
+
+	// Transfer: spend the 100, produce 60 + 40
+	action, _ := buildTransferAction(
+		t,
+		issuedNotes,
+		"USD",
+		[]uint64{60, 40},
+		[][]byte{typedID(t, "bob"), owner},
+	)
+
+	val, err := validator.NewValidator(sharedVerifierParams, &testDeserializer{}, driver.ResourceLimits{})
+	require.NoError(t, err)
+
+	err = val.ValidateTransfer(action)
+	require.NoError(t, err, "ValidateTransfer should succeed for a properly constructed action")
+}
+
+// TestTransferAction_MultipleInputs_ValidatesSuccessfully tests a transfer
+// with multiple inputs being merged into fewer outputs.
+func TestTransferAction_MultipleInputs_ValidatesSuccessfully(t *testing.T) {
+	setupShared(t)
+
+	issuer := []byte("test-issuer")
+	owner := typedID(t, "test-owner")
+
+	// Issue two separate tokens
+	_, notes1 := buildIssueAction(t, issuer, "USD", []uint64{50}, [][]byte{owner})
+	_, notes2 := buildIssueAction(t, issuer, "USD", []uint64{30}, [][]byte{owner})
+
+	// Transfer: spend both (50+30=80), produce single output of 80
+	action, _ := buildTransferAction(
+		t,
+		[]*snarktoken.Note{notes1[0], notes2[0]},
+		"USD",
+		[]uint64{80},
+		[][]byte{typedID(t, "bob")},
+	)
+
+	val, err := validator.NewValidator(sharedVerifierParams, &testDeserializer{}, driver.ResourceLimits{})
+	require.NoError(t, err)
+
+	err = val.ValidateTransfer(action)
+	require.NoError(t, err, "ValidateTransfer should succeed for multi-input transfer")
+}
+
+// TestTransferAction_CommonValidator_SignaturesConsumed verifies that a
+// transfer action going through the common.Validator pipeline correctly
+// consumes all owner signatures. This is the specific regression test for
+// the "unconsumed signatures" bug.
+//
+// It exercises the full VerifyTokenRequestFromRaw path, which parses
+// TokenRequest.Signatures into per-action Backends, calls VerifyTransfer
+// with the scoped Backend, and invokes EnsureExhausted, the same sequence
+// a Fabric peer runs during endorsement.
+func TestTransferAction_CommonValidator_SignaturesConsumed(t *testing.T) {
+	setupShared(t)
+
+	issuer := []byte("test-issuer")
+	owner := typedID(t, "test-owner")
+
+	// Issue 100 tokens to owner
+	issueAction, issuedNotes := buildIssueAction(t, issuer, "USD", []uint64{100}, [][]byte{owner})
+
+	// Transfer: spend the 100, produce 60 + 40
+	transferAction, _ := buildTransferAction(
+		t,
+		issuedNotes,
+		"USD",
+		[]uint64{60, 40},
+		[][]byte{typedID(t, "bob"), owner},
+	)
+
+	// Set InputIDs and InputTokens on the transfer action (as TransferService would)
+	inputTokenID := &token2.ID{TxId: "issue-tx-0", Index: 0}
+	transferAction.InputIDs = []*token2.ID{inputTokenID}
+	outputDescRaw, err := issueAction.Outputs[0].Serialize()
+	require.NoError(t, err)
+	transferAction.InputTokens = [][]byte{outputDescRaw}
+
+	// Store the issued token on the test ledger so the validator can look up owner
+	ledger := &testLedger{tokens: make(map[string][]byte)}
+	storeLedgerToken(t, ledger, "issue-tx-0", 0, issueAction.Outputs[0])
+
+	// Build token request with proper action-scoped signatures
+	transferRaw, err := transferAction.Serialize()
+	require.NoError(t, err)
+
+	anchor := driver.TokenRequestAnchor("test-tx")
+	tr := &driver.TokenRequest{
+		Version: driver.ProtocolV1,
+		Actions: []*driver.TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: transferRaw},
+		},
+		Signatures: []*driver.RequestSignature{
+			{
+				Action: &driver.ActionSignature{
+					ActionID:  0,
+					Signature: []byte("owner-sig-for-input-0"),
+				},
+			},
+		},
+	}
+
+	raw, err := tr.Bytes()
+	require.NoError(t, err)
+
+	// Create validator via the common framework
+	val, err := validator.NewValidator(sharedVerifierParams, &testDeserializer{}, driver.ResourceLimits{}.WithDefaults())
+	require.NoError(t, err)
+
+	// VerifyTokenRequestFromRaw exercises the full framework path:
+	// parse signatures → scope to per-action Backends → VerifyTransfer → EnsureExhausted
+	_, _, err = val.VerifyTokenRequestFromRaw(
+		context.Background(),
+		ledger.GetState,
+		anchor,
+		raw,
+	)
+	require.NoError(t, err, "VerifyTokenRequestFromRaw should succeed and consume all signatures")
+}
+
+// TestTransferAction_CommonValidator_TwoInputs_SignaturesConsumed verifies
+// that a multi-input transfer correctly consumes all owner signatures
+// through the full framework pipeline.
+func TestTransferAction_CommonValidator_TwoInputs_SignaturesConsumed(t *testing.T) {
+	setupShared(t)
+
+	issuer := []byte("test-issuer")
+	owner := typedID(t, "test-owner")
+
+	// Issue two tokens
+	issueAction1, notes1 := buildIssueAction(t, issuer, "USD", []uint64{50}, [][]byte{owner})
+	issueAction2, notes2 := buildIssueAction(t, issuer, "USD", []uint64{30}, [][]byte{owner})
+
+	// Transfer: spend both (50+30=80), produce 80
+	transferAction, _ := buildTransferAction(
+		t,
+		[]*snarktoken.Note{notes1[0], notes2[0]},
+		"USD",
+		[]uint64{80},
+		[][]byte{typedID(t, "bob")},
+	)
+
+	// Set InputIDs and InputTokens
+	inputID0 := &token2.ID{TxId: "issue-tx-0", Index: 0}
+	inputID1 := &token2.ID{TxId: "issue-tx-1", Index: 0}
+	transferAction.InputIDs = []*token2.ID{inputID0, inputID1}
+	outputDescRaw0, err := issueAction1.Outputs[0].Serialize()
+	require.NoError(t, err)
+	outputDescRaw1, err := issueAction2.Outputs[0].Serialize()
+	require.NoError(t, err)
+	transferAction.InputTokens = [][]byte{outputDescRaw0, outputDescRaw1}
+
+	// Store tokens on ledger
+	ledger := &testLedger{tokens: make(map[string][]byte)}
+	storeLedgerToken(t, ledger, "issue-tx-0", 0, issueAction1.Outputs[0])
+	storeLedgerToken(t, ledger, "issue-tx-1", 0, issueAction2.Outputs[0])
+
+	// Build token request with two action-scoped signatures
+	transferRaw, err := transferAction.Serialize()
+	require.NoError(t, err)
+
+	anchor := driver.TokenRequestAnchor("test-tx")
+	tr := &driver.TokenRequest{
+		Version: driver.ProtocolV1,
+		Actions: []*driver.TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: transferRaw},
+		},
+		Signatures: []*driver.RequestSignature{
+			{
+				Action: &driver.ActionSignature{
+					ActionID:  0,
+					Signature: []byte("sig-for-input-0"),
+				},
+			},
+			{
+				Action: &driver.ActionSignature{
+					ActionID:  0,
+					Signature: []byte("sig-for-input-1"),
+				},
+			},
+		},
+	}
+
+	raw, err := tr.Bytes()
+	require.NoError(t, err)
+
+	val, err := validator.NewValidator(sharedVerifierParams, &testDeserializer{}, driver.ResourceLimits{}.WithDefaults())
+	require.NoError(t, err)
+
+	_, _, err = val.VerifyTokenRequestFromRaw(
+		context.Background(),
+		ledger.GetState,
+		anchor,
+		raw,
+	)
+	require.NoError(t, err, "VerifyTokenRequestFromRaw should succeed and consume all 2 owner signatures")
+}
+
+// TestTransferAction_MissingInputIDs_Fails verifies that a transfer action
+// without InputIDs fails validation with a clear error.
+func TestTransferAction_MissingInputIDs_Fails(t *testing.T) {
+	setupShared(t)
+
+	issuer := []byte("test-issuer")
+	owner := typedID(t, "test-owner")
+
+	_, issuedNotes := buildIssueAction(t, issuer, "USD", []uint64{100}, [][]byte{owner})
+
+	transferAction, _ := buildTransferAction(
+		t,
+		issuedNotes,
+		"USD",
+		[]uint64{60, 40},
+		[][]byte{typedID(t, "bob"), owner},
+	)
+
+	// Deliberately do NOT set InputIDs
+	transferAction.InputIDs = nil
+
+	ledger := &testLedger{tokens: make(map[string][]byte)}
+
+	transferRaw, err := transferAction.Serialize()
+	require.NoError(t, err)
+
+	anchor := driver.TokenRequestAnchor("test-tx")
+	tr := &driver.TokenRequest{
+		Version: driver.ProtocolV1,
+		Actions: []*driver.TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: transferRaw},
+		},
+		Signatures: []*driver.RequestSignature{
+			{
+				Action: &driver.ActionSignature{
+					ActionID:  0,
+					Signature: []byte("sig"),
+				},
+			},
+		},
+	}
+
+	raw, err := tr.Bytes()
+	require.NoError(t, err)
+
+	val, err := validator.NewValidator(sharedVerifierParams, &testDeserializer{}, driver.ResourceLimits{}.WithDefaults())
+	require.NoError(t, err)
+
+	_, _, err = val.VerifyTokenRequestFromRaw(
+		context.Background(),
+		ledger.GetState,
+		anchor,
+		raw,
+	)
+	require.Error(t, err, "VerifyTokenRequestFromRaw should fail when InputIDs are missing")
+	require.ErrorIs(t, err, validator.ErrMissingInputIDs)
+}
+
+// typedID returns a typed identity wrapping the given name, as owners are on a real ledger.
+func typedID(t *testing.T, name string) []byte {
+	t.Helper()
+	id, err := identity.WrapWithType(1, []byte(name))
+	require.NoError(t, err)
+
+	return id
+}
+
+// TestFabtokenInPlaceUpgrade_Lifecycle covers the in-place upgrade of a legacy
+// fabtoken output inside a transfer, end to end through the wire format and
+// VerifyTokenRequestFromRaw, and then spends the resulting zkatsnark note in an
+// ordinary transfer.
+func TestFabtokenInPlaceUpgrade_Lifecycle(t *testing.T) {
+	setupShared(t)
+	ledger := &testLedger{tokens: map[string][]byte{}}
+	val, err := validator.NewValidator(sharedVerifierParams, &testDeserializer{}, driver.ResourceLimits{}.WithDefaults())
+	require.NoError(t, err)
+	alice, bob := typedID(t, "alice"), typedID(t, "bob")
+
+	// 1. A cleartext fabtoken output is on the ledger.
+	fabRaw, err := (&actions.Output{Owner: alice, Type: "USD", Quantity: "0x2a"}).Serialize()
+	require.NoError(t, err)
+	fabID := &token2.ID{TxId: "fabtoken-tx", Index: 0}
+	ledger.tokens[fabID.String()] = fabRaw
+
+	// 2. Alice spends it as the note {42, USD, r} and pays bob.
+	inNote, err := snarktoken.NewRandomNote(42, "USD", sharedPP.Curve)
+	require.NoError(t, err)
+	upgrade, outNotes, err := orch.BuildTransferAction(
+		context.Background(),
+		[]prover.SpendRequest{{Note: inNote, Upgraded: true}},
+		[]prover.OutputRequest{{Value: 42, TokenType: "USD", Recipient: bob}},
+		"USD",
+		sharedPP,
+		nil,
+	)
+	require.NoError(t, err)
+	upgrade.InputIDs = []*token2.ID{fabID}
+	upgrade.InputTokens = [][]byte{fabRaw}
+	require.NoError(t, verifyTransfer(t, val, ledger, "upgrade-tx", upgrade))
+
+	// 3. Bob spends the upgraded note like any other zkatsnark note.
+	bobID := storeLedgerToken(t, ledger, "upgrade-tx", 0, upgrade.Outputs[0])
+	spend, _, err := orch.BuildTransferAction(
+		context.Background(),
+		[]prover.SpendRequest{{Note: outNotes[0]}},
+		[]prover.OutputRequest{{Value: 40, TokenType: "USD", Recipient: alice}, {Value: 2, TokenType: "USD", Recipient: bob}},
+		"USD",
+		sharedPP,
+		nil,
+	)
+	require.NoError(t, err)
+	spend.InputIDs = []*token2.ID{bobID}
+	ser, err := upgrade.Outputs[0].Serialize()
+	require.NoError(t, err)
+	spend.InputTokens = [][]byte{ser}
+	require.NoError(t, verifyTransfer(t, val, ledger, "spend-tx", spend))
+
+	// 4. The fabtoken cannot be spent as a different value.
+	forged, _, err := orch.BuildTransferAction(
+		context.Background(),
+		[]prover.SpendRequest{{Note: &snarktoken.Note{Value: 1000, TokenType: "USD", Randomness: inNote.Randomness}, Upgraded: true}},
+		[]prover.OutputRequest{{Value: 1000, TokenType: "USD", Recipient: bob}},
+		"USD",
+		sharedPP,
+		nil,
+	)
+	require.NoError(t, err)
+	forged.InputIDs = []*token2.ID{fabID}
+	forged.InputTokens = [][]byte{fabRaw}
+	require.ErrorIs(t, verifyTransfer(t, val, ledger, "forged-tx", forged), validator.ErrCommitmentMismatch)
+}
+
+// verifyTransfer wraps a transfer in a token request signed by a stub owner
+// signature and runs the full validator pipeline on it.
+func verifyTransfer(t *testing.T, val *validator.Validator, ledger *testLedger, txID string, action *snarktoken.TransferAction) error {
+	t.Helper()
+	raw, err := action.Serialize()
+	require.NoError(t, err)
+	tr := &driver.TokenRequest{
+		Version: driver.ProtocolV1,
+		Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}},
+	}
+	for range action.Inputs {
+		tr.Signatures = append(tr.Signatures, &driver.RequestSignature{Action: &driver.ActionSignature{ActionID: 0, Signature: []byte("sig")}})
+	}
+	trRaw, err := tr.Bytes()
+	require.NoError(t, err)
+	_, _, err = val.VerifyTokenRequestFromRaw(context.Background(), ledger.GetState, driver.TokenRequestAnchor(txID), trRaw)
+
+	return err
+}
