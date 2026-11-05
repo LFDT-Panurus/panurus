@@ -70,6 +70,8 @@ static uint8_t cbdc_blindsigpp[32];
 static uint8_t cbdc_p1pp[32];
 static uint8_t cbdc_p2pp[32];
 static uint8_t cbdc_popenpp[32];
+/* own seed: A_com must not share (seed, domain) with the popen ABDLOP keys */
+static uint8_t cbdc_compp[32];
 static polymat_t cbdc_AR;   /* 8x16 */
 static polymat_t cbdc_AM;   /* 8x5 */
 static polymat_t cbdc_ATAU; /* 8x8 */
@@ -233,11 +235,12 @@ cbdc_pp_do_init (void)
   cbdc_seed (cbdc_p1pp, 1);
   cbdc_seed (cbdc_p2pp, 2);
   cbdc_seed (cbdc_popenpp, 3);
+  cbdc_seed (cbdc_compp, 4);
 
   cbdc_urandom_mat (cbdc_AR, 8, 16, cbdc_blindsigpp, 1);
   cbdc_urandom_mat (cbdc_AM, 8, CBDC_NATTRS, cbdc_blindsigpp, 2);
   cbdc_urandom_mat (cbdc_ATAU, 8, 8, cbdc_blindsigpp, 3);
-  cbdc_urandom_mat (cbdc_Acom, CBDC_COM_ROWS, 11, cbdc_popenpp, 1);
+  cbdc_urandom_mat (cbdc_Acom, CBDC_COM_ROWS, 11, cbdc_compp, 1);
 
   lin_pp_init (cbdc_p1lpp, cbdc_p1pp, p1_param);
   lin_pp_init (cbdc_p2lpp, cbdc_p2pp, p2_param);

@@ -23,9 +23,9 @@ import (
 // these digests: a build with different digests makes incompatible proofs.
 const (
 	// katPresDigest is the SHA-256 of the P2 presentation of katFixture with katCoins.
-	katPresDigest = "cd76edc9dc8ccc84bc123225195384b417b9cff3e65232445f5598368cd811a8"
+	katPresDigest = "f5f238882b9815034e7461845bbbf3813286146093a88cabe002a99ec6187b71"
 	// katSokDigest is the SHA-256 of the signature of knowledge of katFixture with katCoins.
-	katSokDigest = "bce545bdbe052afc1f81cbb360c2dcf615cb2855e9f6897a0aa2f8f2f31b995d"
+	katSokDigest = "805f2cbdb687d47639736d54eacb75d0f37365f28d153b33beeffedd60315e82"
 )
 
 // katCoins are the prover coins of the known-answer test.
