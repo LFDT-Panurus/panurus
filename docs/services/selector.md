@@ -153,9 +153,10 @@ mechanisms":
   `token.SelectorInsufficientFunds`. Sherdlock's backoff loop only ever ends in the latter two.
 - **The retry sleep is skipped on the attempt that gives up for good** — `simple` sleeps
   between attempts but not after the final one, so its worst case is `numRetry - 1` sleeps
-  uniform in `[0, retryInterval)`. The sleep is cancellable by the
-  caller's context, like sherdlock's: a cancelled context ends the wait and `Select` returns an
-  error wrapping `ctx.Err()`. A non-positive retry timeout on the manager means no wait at all.
+  uniform in `[0, retryInterval)`. A context cancellation during the sleep ends it, and `Select`
+  returns an error wrapping `ctx.Err()`. A non-positive retry timeout on the manager means no wait
+  at all. The context is not checked between attempts otherwise, so with no wait a cancelled
+  caller keeps retrying until `numRetry` is exhausted.
   Each wait is recorded in `selection_backoff_duration_seconds` (see
   [metrics](../development/metrics.md)).
 

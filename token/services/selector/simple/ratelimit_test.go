@@ -25,7 +25,7 @@ func TestRateLimitedManager(t *testing.T) {
 	qs := &mockQueryService{tokens: makeTokens(2, "USD", -1)}
 	ctx := context.Background()
 
-	mgr := NewManager(locker, func() QueryService { return qs }, 1, 0, false, precision, nil)
+	mgr := NewManager(locker, func() QueryService { return qs }, 1, 0, false, precision)
 	// A burst of one request, and a rate slow enough that nothing refills during the test.
 	limited := ratelimit.Decorate(mgr, ratelimit.New(ratelimit.Config{Rate: 0.001, Burst: 1}), "n1,c1,ns1")
 

@@ -147,7 +147,7 @@ func (s *loader) newManager(locker Locker, qs QueryService, precision uint64, sc
 		s.retryInterval,
 		s.requestCertification,
 		precision,
-		s.metrics,
+		WithMetrics(s.metrics),
 	)
 
 	// Decorate returns mgr unchanged when no limiter is configured, which is the default.

@@ -75,3 +75,28 @@ func TestBackoffNilMetricsDoesNotPanic(t *testing.T) {
 func TestNewMetricsNilProvider(t *testing.T) {
 	assert.NotPanics(t, func() { NewMetrics(nil).BackoffDuration.Observe(1) })
 }
+
+func TestNewManagerMetricsOption(t *testing.T) {
+	qs := func() QueryService { return &mockQueryService{tokens: makeTokens(1, "USD", -1)} }
+	locker := &recordingLocker{lockFailAfter: 100}
+
+	h := &recHist{}
+	m := NewManager(locker, qs, 2, time.Millisecond, false, precision, WithMetrics(NewMetrics(&recProvider{hist: h})))
+	sel, err := m.NewSelector("tx")
+	require.NoError(t, err)
+	_, _, err = sel.Select(context.Background(), &ownerFilter{id: "w"}, "0x2", "USD")
+	require.ErrorIs(t, err, token.SelectorInsufficientFunds)
+	assert.Len(t, h.obs, 1)
+
+	// no option and a nil option both fall back to discarding metrics
+	for _, m := range []*Manager{
+		NewManager(locker, qs, 2, time.Millisecond, false, precision),
+		NewManager(locker, qs, 2, time.Millisecond, false, precision, WithMetrics(nil)),
+	} {
+		require.NotNil(t, m.metrics)
+		sel, err := m.NewSelector("tx")
+		require.NoError(t, err)
+		_, _, err = sel.Select(context.Background(), &ownerFilter{id: "w"}, "0x2", "USD")
+		require.ErrorIs(t, err, token.SelectorInsufficientFunds)
+	}
+}

@@ -16,6 +16,20 @@ import (
 
 type NewQueryEngineFunc func() QueryService
 
+// ManagerOption configures a Manager.
+type ManagerOption func(*Manager)
+
+// WithMetrics sets the metrics the manager's selectors record to. A nil value keeps the default,
+// which discards every observation.
+func WithMetrics(metrics *Metrics) ManagerOption {
+	return func(m *Manager) {
+		if metrics != nil {
+			m.metrics = metrics
+		}
+	}
+}
+
+// Manager creates simple selectors that share the same locker, query engine and retry settings.
 type Manager struct {
 	locker               Locker
 	newQueryEngine       NewQueryEngineFunc
@@ -26,6 +40,7 @@ type Manager struct {
 	metrics              *Metrics
 }
 
+// NewManager returns a new Manager. Without WithMetrics, the selectors record no metrics.
 func NewManager(
 	locker Locker,
 	newQueryEngine NewQueryEngineFunc,
@@ -33,7 +48,7 @@ func NewManager(
 	timeout time.Duration,
 	requestCertification bool,
 	precision uint64,
-	metrics *Metrics,
+	opts ...ManagerOption,
 ) *Manager {
 	m := &Manager{
 		locker:               locker,
@@ -41,13 +56,12 @@ func NewManager(
 		numRetry:             numRetry,
 		timeout:              timeout,
 		requestCertification: requestCertification,
+		metrics:              NewMetrics(nil),
 	}
 	m.precision.Store(precision)
-	// Nil metrics are tolerated: observations are then discarded.
-	if metrics == nil {
-		metrics = NewMetrics(nil)
+	for _, opt := range opts {
+		opt(m)
 	}
-	m.metrics = metrics
 
 	return m
 }
