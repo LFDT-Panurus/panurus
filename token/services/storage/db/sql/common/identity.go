@@ -429,11 +429,18 @@ func (db *IdentityStore) GetTokenInfo(ctx context.Context, id []byte) ([]byte, [
 // Verification: an empty id is refused, for the reason given on
 // StoreIdentityData — the empty identity does not hash, it maps to the shared
 // "<empty>" row key.
+// A row the signer info cache knows exists is not written again.
 func (db *IdentityStore) StoreSignerInfo(ctx context.Context, id tdriver.Identity, info []byte) error {
 	if err := integrity.CheckIdentity(id); err != nil {
 		return errors.WithMessage(err, "refusing to store signer info")
 	}
-	_, err := db.storeSignerInfo(ctx, db.writeDB, id.UniqueID(), id, info, true)
+	h := id.UniqueID()
+	if exists, ok := db.signerInfoCache.Get(h); ok && exists {
+		logger.DebugfContext(ctx, "signer info [%s] already stored, skip", h)
+
+		return nil
+	}
+	_, err := db.storeSignerInfo(ctx, db.writeDB, h, id, info, true)
 
 	return err
 }

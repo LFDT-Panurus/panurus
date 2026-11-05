@@ -10,7 +10,10 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
@@ -304,25 +307,18 @@ func TestProvider_GetAuditInfo(t *testing.T) {
 	require.Equal(t, 1, storage.GetAuditInfoCallCount())
 }
 
-// tombstoneSigner reproduces the state FSC's secondcache.Delete leaves behind: the signers-cache
-// key for id survives, but its stored *SignerEntry is zeroed to nil, so a later Get returns
-// (nil, true). The signers cache is an unexported field of Provider with no public invalidation
-// API, so from this black-box test package the only way to create the tombstone is to reach the
-// field via reflection and invoke its exported Delete. The reflect.NewAt+UnsafeAddr dance strips
-// the read-only flag that reflection puts on values read from unexported fields, making the
-// interface value callable.
-func tombstoneSigner(t *testing.T, p *identity.Provider, id driver.Identity) {
+// storeNilSignerEntry plants a nil entry for id in the unexported signer cache via reflection.
+func storeNilSignerEntry(t *testing.T, p *identity.Provider, id driver.Identity) {
 	t.Helper()
 	field := reflect.ValueOf(p).Elem().FieldByName("signers")
 	field = reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem()
-	field.MethodByName("Delete").Call([]reflect.Value{reflect.ValueOf(id.UniqueID())})
+	field.MethodByName("Add").Call([]reflect.Value{
+		reflect.ValueOf(id.UniqueID()),
+		reflect.ValueOf((*identity.SignerEntry)(nil)),
+	})
 }
 
-// TestProvider_GetSigner_TombstonedCacheEntryIsMiss reproduces the latent nil-pointer footgun
-// behind issue #2065: FSC's secondcache.Delete does not remove the key, it zeroes the stored value
-// in place, so a later Get returns (nil, true). getSignerAndCache must treat that nil entry as a
-// cache miss and re-resolve, rather than dereferencing entry.Signer on a nil *SignerEntry (which
-// panicked before the fix).
+// TestProvider_GetSigner_TombstonedCacheEntryIsMiss checks a nil cache entry is a miss (#2065).
 func TestProvider_GetSigner_TombstonedCacheEntryIsMiss(t *testing.T) {
 	storage := &idmock.Storage{}
 	des := &idmock.Deserializer{}
@@ -341,9 +337,7 @@ func TestProvider_GetSigner_TombstonedCacheEntryIsMiss(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, expected, s)
 
-	// simulate FSC secondcache.Delete: the key survives with a nil value, so the next Get is a
-	// (nil, true) tombstone
-	tombstoneSigner(t, p, id)
+	storeNilSignerEntry(t, p, id)
 
 	// must not panic; the tombstone is treated as a miss and the signer is re-resolved
 	s, err = p.GetSigner(t.Context(), id)
@@ -461,4 +455,200 @@ func TestProvider_GetSigner_Metrics(t *testing.T) {
 		assert.Equal(t, 1, provider.counterAddCount("identity_signer_resolutions_total", "outcome", "routed"))
 		assert.Equal(t, 1, provider.histogramObserveCount("identity_get_signer_duration_seconds", "path", "routed"))
 	})
+}
+
+// TestProvider_AreMe_OrderAndDedup checks input order and dedup across cache and storage hits.
+func TestProvider_AreMe_OrderAndDedup(t *testing.T) {
+	storage := &idmock.Storage{}
+	p := identity.NewProvider(logging.MustGetLogger(), storage,
+		&idmock.Deserializer{}, &idmock.NetworkBinderService{}, &idmock.EnrollmentIDUnmarshaler{}, nil)
+
+	a, b, c, d := driver.Identity("a"), driver.Identity("b"), driver.Identity("c"), driver.Identity("d")
+	// a, c cached; b, d in storage, answered out of order
+	require.NoError(t, p.RegisterSigner(t.Context(), a, &drvmock.Signer{}, nil, nil, true))
+	require.NoError(t, p.RegisterSigner(t.Context(), c, &drvmock.Signer{}, nil, nil, true))
+	storage.GetExistingSignerInfoReturns([]string{d.UniqueID(), b.UniqueID()}, nil)
+
+	me, err := p.AreMe(t.Context(), d, a, b, a, c, d, driver.Identity("unknown"))
+	require.NoError(t, err)
+	assert.Equal(t, []string{d.UniqueID(), a.UniqueID(), b.UniqueID(), c.UniqueID()}, me)
+
+	require.Equal(t, 1, storage.GetExistingSignerInfoCallCount())
+	_, asked := storage.GetExistingSignerInfoArgsForCall(0)
+	assert.Equal(t, []driver.Identity{d, b, driver.Identity("unknown")}, asked)
+}
+
+// TestProvider_AreMe_IsMe_CacheHitSkipsStorage checks cache hits make no storage calls.
+func TestProvider_AreMe_IsMe_CacheHitSkipsStorage(t *testing.T) {
+	storage := &idmock.Storage{}
+	p := identity.NewProvider(logging.MustGetLogger(), storage,
+		&idmock.Deserializer{}, &idmock.NetworkBinderService{}, &idmock.EnrollmentIDUnmarshaler{}, nil)
+
+	a, b := driver.Identity("a"), driver.Identity("b")
+	require.NoError(t, p.RegisterSigner(t.Context(), a, &drvmock.Signer{}, nil, nil, true))
+	require.NoError(t, p.RegisterSigner(t.Context(), b, &drvmock.Signer{}, nil, nil, true))
+
+	me, err := p.AreMe(t.Context(), b, a)
+	require.NoError(t, err)
+	assert.Equal(t, []string{b.UniqueID(), a.UniqueID()}, me)
+
+	isMe, err := p.IsMe(t.Context(), a)
+	require.NoError(t, err)
+	assert.True(t, isMe)
+
+	assert.Equal(t, 0, storage.GetExistingSignerInfoCallCount())
+	assert.Equal(t, 0, storage.SignerInfoExistsCallCount())
+
+	me, err = p.AreMe(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, me)
+}
+
+// TestProvider_IsMe_StorageAnswers checks IsMe on a cache miss, including error semantics.
+func TestProvider_IsMe_StorageAnswers(t *testing.T) {
+	newProvider := func() (*identity.Provider, *idmock.Storage) {
+		storage := &idmock.Storage{}
+
+		return identity.NewProvider(logging.MustGetLogger(), storage,
+			&idmock.Deserializer{}, &idmock.NetworkBinderService{}, &idmock.EnrollmentIDUnmarshaler{}, nil), storage
+	}
+	id := driver.Identity("uncached")
+
+	t.Run("found", func(t *testing.T) {
+		p, storage := newProvider()
+		storage.GetExistingSignerInfoReturns([]string{id.UniqueID()}, nil)
+		isMe, err := p.IsMe(t.Context(), id)
+		require.NoError(t, err)
+		assert.True(t, isMe)
+		require.Equal(t, 1, storage.GetExistingSignerInfoCallCount())
+		_, asked := storage.GetExistingSignerInfoArgsForCall(0)
+		assert.Equal(t, []driver.Identity{id}, asked)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		p, storage := newProvider()
+		storage.GetExistingSignerInfoReturns([]string{}, nil)
+		isMe, err := p.IsMe(t.Context(), id)
+		require.NoError(t, err)
+		assert.False(t, isMe)
+	})
+
+	t.Run("context cancellation is 'we gave up'", func(t *testing.T) {
+		p, storage := newProvider()
+		storage.GetExistingSignerInfoReturns(nil, context.Canceled)
+		isMe, err := p.IsMe(t.Context(), id)
+		require.ErrorIs(t, err, context.Canceled)
+		assert.Contains(t, err.Error(), "gave up")
+		assert.False(t, isMe)
+	})
+
+	t.Run("storage failure is 'storage is broken'", func(t *testing.T) {
+		p, storage := newProvider()
+		storage.GetExistingSignerInfoReturns(nil, errors.New("connection reset"))
+		isMe, err := p.IsMe(t.Context(), id)
+		require.Error(t, err)
+		require.NotErrorIs(t, err, context.Canceled)
+		assert.Contains(t, err.Error(), "storage")
+		assert.False(t, isMe)
+	})
+}
+
+// TestProvider_GetSigner_ConcurrentColdMissResolvesOnce checks concurrent misses share one resolution.
+func TestProvider_GetSigner_ConcurrentColdMissResolvesOnce(t *testing.T) {
+	const callers = 32
+
+	storage := &idmock.Storage{}
+	des := &idmock.Deserializer{}
+	provider := newFakeMetricsProvider()
+	p := identity.NewProvider(logging.MustGetLogger(), storage, des,
+		&idmock.NetworkBinderService{}, &idmock.EnrollmentIDUnmarshaler{}, identity.NewMetrics(provider))
+
+	inner := driver.Identity("inner")
+	outer, err := identity.WrapWithType(identity.Type(5), inner)
+	require.NoError(t, err)
+
+	expected := &drvmock.Signer{}
+	release := make(chan struct{})
+	des.DeserializeSignerCalls(func(_ context.Context, raw []byte) (driver.Signer, error) {
+		if !inner.Equal(raw) {
+			return nil, errors.New("not deserializable")
+		}
+		// hold the flight open
+		<-release
+
+		return expected, nil
+	})
+	storage.StoreSignerInfoReturns(nil)
+
+	var wg sync.WaitGroup
+	signers := make([]driver.Signer, callers)
+	errs := make([]error, callers)
+	for i := range callers {
+		wg.Go(func() {
+			signers[i], errs[i] = p.GetSigner(t.Context(), outer)
+		})
+	}
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	wg.Wait()
+
+	for i := range callers {
+		require.NoError(t, errs[i])
+		assert.Equal(t, expected, signers[i])
+	}
+	// once per level (outer, inner)
+	assert.Equal(t, 2, des.DeserializeSignerCallCount())
+	assert.Equal(t, 2, storage.StoreSignerInfoCallCount())
+	// metrics are per caller
+	total := provider.counterAddCount("identity_signer_resolutions_total", "outcome", "fallback") +
+		provider.counterAddCount("identity_signer_resolutions_total", "outcome", "cache")
+	assert.Equal(t, callers, total)
+}
+
+// TestProvider_GetSigner_JoinedCallerSurvivesWinnersCancellation checks a joined caller retries
+// after the winner's cancellation.
+func TestProvider_GetSigner_JoinedCallerSurvivesWinnersCancellation(t *testing.T) {
+	storage := &idmock.Storage{}
+	des := &idmock.Deserializer{}
+	p := identity.NewProvider(logging.MustGetLogger(), storage, des,
+		&idmock.NetworkBinderService{}, &idmock.EnrollmentIDUnmarshaler{}, nil)
+	id := driver.Identity("an_identity")
+	expected := &drvmock.Signer{}
+	storage.StoreSignerInfoReturns(nil)
+
+	winnerEntered := make(chan struct{})
+	var calls atomic.Int32
+	des.DeserializeSignerCalls(func(ctx context.Context, _ []byte) (driver.Signer, error) {
+		if calls.Add(1) == 1 {
+			close(winnerEntered)
+			<-ctx.Done()
+
+			return nil, ctx.Err()
+		}
+
+		return expected, nil
+	})
+
+	winnerCtx, cancelWinner := context.WithCancel(t.Context())
+	winnerErr := make(chan error, 1)
+	go func() {
+		_, err := p.GetSigner(winnerCtx, id)
+		winnerErr <- err
+	}()
+	<-winnerEntered
+
+	joinedDone := make(chan struct{})
+	var joinedSigner driver.Signer
+	var joinedErr error
+	go func() {
+		defer close(joinedDone)
+		joinedSigner, joinedErr = p.GetSigner(t.Context(), id)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	cancelWinner()
+
+	require.ErrorIs(t, <-winnerErr, context.Canceled)
+	<-joinedDone
+	require.NoError(t, joinedErr)
+	assert.Equal(t, expected, joinedSigner)
 }

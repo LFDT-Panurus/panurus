@@ -8,6 +8,7 @@ package identity_test
 
 import (
 	"slices"
+	"sync"
 
 	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
 )
@@ -21,8 +22,9 @@ type labelRecord struct {
 
 // fakeMetricsProvider is a minimal metrics.Provider that records every counter/histogram
 // observation, keyed by metric name, so tests can assert on the new identity metrics without a
-// real Prometheus registry.
+// real Prometheus registry. Safe for concurrent use.
 type fakeMetricsProvider struct {
+	mu               sync.Mutex
 	counterRecords   map[string][]labelRecord
 	histogramRecords map[string][]labelRecord
 }
@@ -49,6 +51,8 @@ func (p *fakeMetricsProvider) NewHistogram(opts metrics.HistogramOpts) metrics.H
 // counterAddCount returns how many times the named counter was Add-ed with exactly the given
 // label values (in order). An empty labelValues matches unlabeled counters.
 func (p *fakeMetricsProvider) counterAddCount(name string, labelValues ...string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	count := 0
 	for _, r := range p.counterRecords[name] {
 		if slices.Equal(r.labels, labelValues) {
@@ -62,6 +66,8 @@ func (p *fakeMetricsProvider) counterAddCount(name string, labelValues ...string
 // histogramObserveCount returns how many times the named histogram was Observe-d with exactly
 // the given label values (in order).
 func (p *fakeMetricsProvider) histogramObserveCount(name string, labelValues ...string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	count := 0
 	for _, r := range p.histogramRecords[name] {
 		if slices.Equal(r.labels, labelValues) {
@@ -83,6 +89,8 @@ func (c *fakeCounter) With(labelValues ...string) metrics.Counter {
 }
 
 func (c *fakeCounter) Add(delta float64) {
+	c.provider.mu.Lock()
+	defer c.provider.mu.Unlock()
 	c.provider.counterRecords[c.name] = append(c.provider.counterRecords[c.name], labelRecord{labels: c.labels, value: delta})
 }
 
@@ -97,6 +105,8 @@ func (h *fakeHistogram) With(labelValues ...string) metrics.Histogram {
 }
 
 func (h *fakeHistogram) Observe(value float64) {
+	h.provider.mu.Lock()
+	defer h.provider.mu.Unlock()
 	h.provider.histogramRecords[h.name] = append(h.provider.histogramRecords[h.name], labelRecord{labels: h.labels, value: value})
 }
 

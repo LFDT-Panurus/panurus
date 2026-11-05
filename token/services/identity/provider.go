@@ -8,7 +8,7 @@ package identity
 
 import (
 	"context"
-	"runtime/debug"
+	"sync/atomic"
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
@@ -17,8 +17,8 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/storage/integrity"
 	cache2 "github.com/LFDT-Panurus/panurus/token/services/utils/cache"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/sync/singleflight"
 )
 
 var (
@@ -73,9 +73,9 @@ type NetworkBinderService interface {
 	Bind(ctx context.Context, longTerm driver.Identity, ephemeral ...driver.Identity) error
 }
 
+// SignerEntry is the value stored in the Provider's signer cache.
 type SignerEntry struct {
-	Signer     driver.Signer
-	DebugStack []byte
+	Signer driver.Signer
 }
 
 // Provider implements the driver.IdentityProvider interface.
@@ -90,6 +90,8 @@ type Provider struct {
 	metrics                 *Metrics
 
 	signers cache[*SignerEntry]
+	// signerResolutions coalesces concurrent misses per identity hash.
+	signerResolutions singleflight.Group
 }
 
 // NewProvider returns a new instance of Provider. m may be nil, in which case the provider's
@@ -160,6 +162,7 @@ func (p *Provider) RegisterSigner(ctx context.Context, identity driver.Identity,
 
 // AreMe returns the hashes of the passed identities that have a signer registered before.
 // Each identity is resolved via the signer cache and configured storage.
+// The result follows the input order and lists each hash once.
 // There is no secondary "is me" cache: a real cache would need careful handling for
 // single-use identities (for example Idemix nyms) and is intentionally omitted here.
 // A non-nil error means ownership could not be determined for at least one identity; in that
@@ -178,12 +181,17 @@ func (p *Provider) AreMe(ctx context.Context, identities ...driver.Identity) ([]
 // A non-nil error means ownership could not be determined; the boolean must be ignored in
 // that case rather than treated as an authoritative "not mine".
 func (p *Provider) IsMe(ctx context.Context, identity driver.Identity) (bool, error) {
-	me, err := p.AreMe(ctx, identity)
+	p.Logger.DebugfContext(ctx, "identity [%s] is me?", identity)
+
+	if entry, ok := p.signers.Get(identity.UniqueID()); ok && entry != nil {
+		return true, nil
+	}
+	found, err := p.storage.GetExistingSignerInfo(ctx, identity)
 	if err != nil {
-		return false, err
+		return false, signerExistenceError(err, 1)
 	}
 
-	return len(me) > 0, nil
+	return len(found) > 0, nil
 }
 
 // GetAuditInfo returns the audit information associated to the passed identity, nil otherwise.
@@ -206,8 +214,7 @@ func (p *Provider) GetSigner(ctx context.Context, identity driver.Identity) (dri
 	if signer == nil {
 		// Defense in depth: no resolution path may report success with a nil signer. Returning
 		// (nil, nil) here would defer the failure to the caller's first Sign() call, panicking far
-		// from the actual cause. See getSignerAndCache for the cache-tombstone case that makes a
-		// nil signer reachable.
+		// from the actual cause.
 		return nil, errors.Errorf("no signer available for identity [%s]", identity.String())
 	}
 
@@ -292,51 +299,95 @@ func (p *Provider) RegisterIdentityDescriptor(ctx context.Context, identityDescr
 }
 
 func (p *Provider) areMe(ctx context.Context, identities ...driver.Identity) ([]string, error) {
-	p.Logger.DebugfContext(ctx, "is me [%s]?", identities)
+	if len(identities) == 0 {
+		return []string{}, nil
+	}
+	debug := p.Logger.IsEnabledFor(zapcore.DebugLevel)
 
-	result := collections.NewSet[string]()
-	notFound := make([]driver.Identity, 0)
+	// mine[i]: identities[i] has a signer; skip[i]: identities[i] repeats an earlier one.
+	hashes := make([]string, len(identities))
+	mine := make([]bool, len(identities))
+	var skip []bool
+	var index map[string]int
+	if len(identities) > 1 {
+		skip = make([]bool, len(identities))
+		index = make(map[string]int, len(identities))
+	}
+	var notFound []driver.Identity
 
 	// check local cache
-	for _, id := range identities {
-		if _, ok := p.signers.Get(id.UniqueID()); ok {
-			p.Logger.DebugfContext(ctx, "is me [%s]? yes, from cache", id)
-			result.Add(id.UniqueID())
+	for i, id := range identities {
+		h := id.UniqueID()
+		hashes[i] = h
+		if index != nil {
+			if _, dup := index[h]; dup {
+				skip[i] = true
+
+				continue
+			}
+			index[h] = i
+		}
+		if entry, ok := p.signers.Get(h); ok && entry != nil {
+			if debug {
+				p.Logger.DebugfContext(ctx, "is me [%s]? yes, from cache", id)
+			}
+			mine[i] = true
 		} else {
 			notFound = append(notFound, id)
 		}
-	}
-
-	if len(notFound) == 0 {
-		return result.ToSlice(), nil
 	}
 
 	// check Storage. A failure here must not be flattened into a negative answer: the
 	// identities we could not check are exactly the ones in notFound, and silently dropping
 	// them would report an owned identity as not-owned. Return (nil, err) so callers key off
 	// the error and cannot mistake the cache-only partial for a "confirmed not mine".
-	found, err := p.storage.GetExistingSignerInfo(ctx, notFound...)
-	if err != nil {
-		// Distinguish "we gave up" from "storage is broken". A context cancellation or
-		// deadline is the caller's own doing (it tore the request down mid-check) and says
-		// nothing about storage health, so it must not read as a backend failure in logs or
-		// to a circuit breaker; a genuine lookup failure is the infrastructure problem worth
-		// surfacing and retrying. Both are non-authoritative — the slice is nil either way —
-		// and the underlying context error stays errors.Is-checkable through the wrap.
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, errors.Wrapf(err, "gave up checking if a signer exists for [%d] identities", len(notFound))
+	var extra []string
+	if len(notFound) != 0 {
+		found, err := p.storage.GetExistingSignerInfo(ctx, notFound...)
+		if err != nil {
+			return nil, signerExistenceError(err, len(notFound))
 		}
+		for _, h := range found {
+			switch {
+			case index != nil:
+				if i, ok := index[h]; ok {
+					mine[i] = true
 
-		return nil, errors.Wrapf(err, "storage failed checking if a signer exists")
+					continue
+				}
+			case h == hashes[0]:
+				mine[0] = true
+
+				continue
+			}
+			// not an input hash (KVS backend, #1892): keep it, as before
+			extra = append(extra, h)
+		}
 	}
-	result.Add(found...)
 
-	return result.ToSlice(), nil
+	result := make([]string, 0, len(identities)+len(extra))
+	for i, h := range hashes {
+		if mine[i] && (skip == nil || !skip[i]) {
+			result = append(result, h)
+		}
+	}
+
+	return append(result, extra...), nil
+}
+
+// signerExistenceError tells a cancelled lookup ("gave up") apart from a storage failure.
+func signerExistenceError(err error, n int) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return errors.Wrapf(err, "gave up checking if a signer exists for [%d] identities", n)
+	}
+
+	return errors.Wrapf(err, "storage failed checking if a signer exists")
 }
 
 func (p *Provider) getSigner(ctx context.Context, identity driver.Identity, idHash string) (driver.Signer, error) {
 	start := time.Now()
-	signer, _, path, err := p.getSignerAndCache(ctx, identity, idHash, true)
+	signer, path, err := p.resolveSigner(ctx, identity, idHash)
+	// metrics are per caller
 	p.metrics.GetSignerDuration.With("path", path).Observe(time.Since(start).Seconds())
 	if err == nil {
 		p.metrics.SignerResolutions.With("outcome", path).Add(1)
@@ -345,20 +396,65 @@ func (p *Provider) getSigner(ctx context.Context, identity driver.Identity, idHa
 	return signer, err
 }
 
+// signerResolutionJoinRetries bounds retries after another caller's cancellation.
+const signerResolutionJoinRetries = 3
+
+// resolvedSigner is the result shared by a signer resolution flight.
+type resolvedSigner struct {
+	signer driver.Signer
+	path   string
+	// cancelled: failed while the runner's ctx was done (the error may not wrap ctx.Err()).
+	cancelled bool
+}
+
+// resolveSigner coalesces concurrent misses for idHash into one resolution. See
+// docs/services/identity.md for the cancellation semantics (as in role.Registry.createWallet).
+func (p *Provider) resolveSigner(ctx context.Context, identity driver.Identity, idHash string) (driver.Signer, string, error) {
+	if entry, ok := p.signers.Get(idHash); ok && entry != nil {
+		return entry.Signer, "cache", nil
+	}
+
+	for attempt := 0; ; attempt++ {
+		// ranResolution: this caller ran the flight; read only after receiving from ch.
+		var ranResolution atomic.Bool
+		ch := p.signerResolutions.DoChan(idHash, func() (any, error) {
+			ranResolution.Store(true)
+			signer, path, err := p.getSignerAndCache(ctx, identity, idHash)
+
+			return resolvedSigner{signer: signer, path: path, cancelled: err != nil && ctx.Err() != nil}, err
+		})
+
+		select {
+		case <-ctx.Done():
+			return nil, "fallback", errors.Wrapf(ctx.Err(), "gave up resolving signer for [%s]", idHash)
+		case res := <-ch:
+			resolved, _ := res.Val.(resolvedSigner)
+			if res.Err == nil {
+				return resolved.signer, resolved.path, nil
+			}
+
+			// retry a failure caused by another caller's cancellation
+			inherited := !ranResolution.Load() && ctx.Err() == nil &&
+				(resolved.cancelled || errors.Is(res.Err, context.Canceled) || errors.Is(res.Err, context.DeadlineExceeded))
+			if !inherited || attempt >= signerResolutionJoinRetries {
+				return nil, resolved.path, res.Err
+			}
+			p.Logger.DebugfContext(ctx, "signer resolution for [%s] failed with another caller's cancellation, retrying", idHash)
+		}
+	}
+}
+
 // getSignerAndCache resolves the signer for identity. The returned path reports how the signer
 // was ultimately obtained ("cache", "routed", or "fallback"), for the caller's metrics; on the
 // recursive call for a TypedIdentity's inner identity, the inner call's path is propagated
 // unchanged rather than overwritten, since that recursion is an implementation detail of the
 // fallback resolution, not a resolution of its own.
-func (p *Provider) getSignerAndCache(ctx context.Context, identity driver.Identity, idHash string, shouldCache bool) (driver.Signer, bool, string, error) {
-	// check cache. A cache hit carrying a nil entry is a tombstone left by secondcache.Delete,
-	// which zeroes the stored value in place rather than removing the key, so a later Get returns
-	// (nil, true). Treat that as a miss and re-resolve, instead of dereferencing entry.Signer on a
-	// nil *SignerEntry and panicking.
+func (p *Provider) getSignerAndCache(ctx context.Context, identity driver.Identity, idHash string) (driver.Signer, string, error) {
+	// check cache; a nil entry is a miss (defense in depth)
 	if entry, ok := p.signers.Get(idHash); ok && entry != nil {
 		p.Logger.DebugfContext(ctx, "signer for [%s] found", idHash)
 
-		return entry.Signer, false, "cache", nil
+		return entry.Signer, "cache", nil
 	}
 
 	p.Logger.DebugfContext(ctx, "signer for [%s] not found, attempting to deserialize", idHash)
@@ -368,15 +464,15 @@ func (p *Provider) getSignerAndCache(ctx context.Context, identity driver.Identi
 	// bytes, KeyManager error) falls straight through to the fallback below, unchanged.
 	if p.signerRouter != nil {
 		if signer, ok := p.signerRouter.Resolve(ctx, identity); ok {
-			signer, shouldCache, err := p.cacheAndPersistSigner(ctx, identity, idHash, signer, shouldCache)
+			signer, err := p.cacheAndPersistSigner(ctx, identity, idHash, signer)
 
-			return signer, shouldCache, "routed", err
+			return signer, "routed", err
 		}
 	}
 
 	// check that we have a deserializer
 	if p.deserializer == nil {
-		return nil, false, "fallback", errors.Errorf("cannot find signer for [%s], no deserializer set", identity)
+		return nil, "fallback", errors.Errorf("cannot find signer for [%s], no deserializer set", identity)
 	}
 
 	// try direct deserialization
@@ -387,49 +483,39 @@ func (p *Provider) getSignerAndCache(ctx context.Context, identity driver.Identi
 		typed, err2 := UnmarshalTypedIdentity(identity)
 		if err2 != nil {
 			// neither deserializable nor a typed wrapper
-			return nil, false, "fallback", errors.Wrapf(
+			return nil, "fallback", errors.Wrapf(
 				err2,
 				"failed to unmarshal typed identity for [%s] and failed deserialization [%s]",
 				identity.String(), err,
 			)
 		}
 
-		if typed.Type != driver.X509IdentityType {
-			shouldCache = true
-		}
-
 		// recursively resolve the inner identity
-		signer, shouldCache, path, err = p.getSignerAndCache(ctx, typed.Identity, typed.Identity.UniqueID(), shouldCache)
+		signer, path, err = p.getSignerAndCache(ctx, typed.Identity, typed.Identity.UniqueID())
 		if err != nil {
-			return nil, false, path, errors.Wrapf(err, "failed getting signer for identity [%s]", typed.Identity)
+			return nil, path, errors.Wrapf(err, "failed getting signer for identity [%s]", typed.Identity)
 		}
 	}
 
-	signer, shouldCache, err = p.cacheAndPersistSigner(ctx, identity, idHash, signer, shouldCache)
+	signer, err = p.cacheAndPersistSigner(ctx, identity, idHash, signer)
 
-	return signer, shouldCache, path, err
+	return signer, path, err
 }
 
-// cacheAndPersistSigner caches signer under idHash when shouldCache is set and records that a
+// cacheAndPersistSigner caches signer under idHash and records that a
 // signer now exists for identity in storage. The stored blob is nil: it's a presence marker for
 // AreMe/IsMe, not the reconstruction material itself (that lives in the KeyManager's own
 // SignerInfo, gated separately - see idemixnym.KeyManager.signerInfo). StoreSignerInfo
 // implementations MUST NOT overwrite an existing row, so an earlier RegisterIdentityDescriptor
 // call with real signer info is never clobbered by this presence-only write.
-func (p *Provider) cacheAndPersistSigner(ctx context.Context, identity driver.Identity, idHash string, signer driver.Signer, shouldCache bool) (driver.Signer, bool, error) {
-	if shouldCache {
-		entry := &SignerEntry{Signer: signer}
-		if p.Logger.IsEnabledFor(zapcore.DebugLevel) {
-			entry.DebugStack = debug.Stack()
-		}
-		p.signers.Add(idHash, entry)
-	}
+func (p *Provider) cacheAndPersistSigner(ctx context.Context, identity driver.Identity, idHash string, signer driver.Signer) (driver.Signer, error) {
+	p.signers.Add(idHash, &SignerEntry{Signer: signer})
 
 	if err := p.storage.StoreSignerInfo(ctx, identity, nil); err != nil {
-		return nil, false, errors.Wrap(err, "failed to store entry in Storage for the passed signer")
+		return nil, errors.Wrap(err, "failed to store entry in Storage for the passed signer")
 	}
 
-	return signer, shouldCache, nil
+	return signer, nil
 }
 
 func (p *Provider) updateCaches(descriptor *idriver.IdentityDescriptor, alias driver.Identity) {
@@ -440,9 +526,6 @@ func (p *Provider) updateCaches(descriptor *idriver.IdentityDescriptor, alias dr
 	// signers
 	if descriptor.Signer != nil {
 		entry := &SignerEntry{Signer: descriptor.Signer}
-		if p.Logger.IsEnabledFor(zapcore.DebugLevel) {
-			entry.DebugStack = debug.Stack()
-		}
 		p.signers.Add(id, entry)
 		if setAlias {
 			p.signers.Add(aliasID, entry)
