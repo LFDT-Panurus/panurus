@@ -89,6 +89,7 @@ benchmark-selector-postgres:
 unit-tests:
 	@go test $(GO_TEST_PARAMS) $(GO_PACKAGES)
 	cd token/services/storage/db/kvs/hashicorp/; go test -cover ./...
+	cd integration; go test -cover ./token/
 	cd x/token/services/network/evm; go test -coverpkg=./... -coverprofile=profile.cov ./...
 	@tail -n +2 x/token/services/network/evm/profile.cov >> profile.cov
 	@rm -f x/token/services/network/evm/profile.cov
@@ -140,10 +141,11 @@ unit-tests-race-core:
 	$(call race_shard,-E '$(UNIT_RACE_CORE_RE)')
 
 .PHONY: unit-tests-race-rest
-# run the remaining unit tests, the nwo harness tests and the evm module tests with race detection
+# run the remaining unit tests, the nwo harness and integration/token tests and the evm module tests with race detection
 unit-tests-race-rest:
 	$(call race_shard,-vE '$(UNIT_RACE_DB_RE)|$(UNIT_RACE_CORE_RE)')
 	cd integration/nwo/; go test -cover ./...
+	@export GORACE=history_size=7; cd integration; go test -race -cover ./token/
 	@export GORACE=history_size=7; cd x/token/services/network/evm; go test -race $(EVM_RACE_COVER_FLAGS) ./...
 ifdef COVERAGE
 	@tail -n +2 x/token/services/network/evm/profile.cov >> $(COVERAGE_PROFILE)
