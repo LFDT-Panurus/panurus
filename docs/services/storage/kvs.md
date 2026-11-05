@@ -51,37 +51,24 @@ configuration id.
 
 #### Existence checks
 
-Every `IdentityStore` read tells **confirmed absent** apart from **could not determine**, on every
-KVS backend (the FSC in-tree memory and SQL KVS, and the Vault backend). An error from any of them
-— `GetConfiguration`, `GetConfigurationID`, `ConfigurationExists`, `GetAuditInfo`, `GetTokenInfo`,
-`SignerInfoExists`, `GetExistingSignerInfo`, `GetSignerInfo` — means the lookup itself failed (or
-the stored record cannot be decoded) and the answer is unknown; it must not be read as "not
-stored". A cancelled or expired context stays reachable through `errors.Is`.
+Every `IdentityStore` read tells **absent** apart from **lookup failed**, on every KVS backend. An
+error means the answer is unknown, never "not stored"; a cancelled or expired context stays
+reachable through `errors.Is`.
 
-Presence is classified from `KVS.Get`, as `WalletStore` does (see below), never from
-`KVS.Exists` or `KVS.GetExisting`. Those two have no error return and report a failed read as
-"does not exist", so they are **best-effort** and are not used for correctness anywhere in this
-package. An entry counts as absent only for the two authoritative miss shapes: the in-tree KVS'
-anchored `does not exist` error, or a `nil` error with the destination untouched (Vault). A stored
-`nil` value (a JSON `null`) counts as present. The typed getters make one round trip instead of the
-previous `Exists`-then-`Get` pair.
+Presence is decided from `KVS.Get`, never from `KVS.Exists` or `KVS.GetExisting`, which have no
+error return and report a failed read as absent. A miss is either the in-tree KVS' anchored
+`does not exist` error or a `nil` error with the destination untouched (Vault). A stored JSON
+`null` counts as present.
 
-* `GetExistingSignerInfo` returns the `Identity.UniqueID()` of each passed identity that has signer
-  info — the kind of value the SQL backend returns and `Provider.AreMe` matches on (earlier
-  releases returned the composite storage keys, so `AreMe` never matched on this backend;
-  [#1892](https://github.com/LFDT-Panurus/panurus/issues/1892)). Each unique id is reported once,
-  in the order of its first occurrence; callers must not rely on either property across backends.
-  Each distinct identity is one `Get`, and the first failed lookup fails the whole call rather
-  than dropping that identity from the answer. This costs one round trip per identity, where
-  `KVS.GetExisting` batches them on the FSC in-tree KVS but drops store errors; batching can
-  return once FSC exposes an error-returning batched lookup (the same gap as the #2063 TODO in
-  `walletdb.go`).
-* `GetSignerInfo` returns `(nil, nil)` for an identity with no signer info on every backend, as the
-  SQL backend does; the in-tree KVS used to surface its "does not exist" error instead.
-* `StoreSignerInfo` is insert-once: it reads the entry first and keeps an existing one. A failed
-  lookup is returned as an error and **nothing is written**, and an existing entry that does not
-  decode as signer info is reported as an error rather than silently kept. `AddConfiguration`
-  likewise refuses to write when its collision check cannot read the row key.
+* `GetExistingSignerInfo` returns the `Identity.UniqueID()` of each passed identity with signer
+  info, as the SQL backend does, so `Provider.AreMe` matches
+  ([#1892](https://github.com/LFDT-Panurus/panurus/issues/1892)). It costs one `Get` per
+  identity, and the first failure fails the call. Ids come back deduplicated, in first-occurrence
+  order; don't rely on that across backends.
+* `GetSignerInfo` returns `(nil, nil)` when there is none, as the SQL backend does.
+* `StoreSignerInfo` is insert-once. If the lookup fails, or the existing entry doesn't decode, it
+  returns an error and writes nothing. `AddConfiguration` likewise refuses to write when its
+  collision check fails.
 
 ## Write Atomicity
 
@@ -138,16 +125,11 @@ The Vault backend maps a composite key onto a Vault path under the configured mo
 path component per key component. All Vault I/O goes through the client's `*WithContext` calls
 (`ReadWithContext`, `WriteWithContext`, `DeleteWithContext`, `ListWithContext`), so a cancelled
 or expired caller context aborts the request in flight.
-`TestVaultKVSHonoursContextDeadline` and `TestVaultIteratorHonoursContextDeadline` guard this
-against a stand-in Vault server that never answers, the iterator's per-key reads included.
+`Exists` and `GetExisting` are best-effort (see [Existence checks](#existence-checks)).
 
-`Exists` and `GetExisting` still answer a failed read with "does not exist" — the `KVS` interface
-gives them no error return — so they are best-effort only; the identity and wallet stores read the
-entry with `Get` instead (see [Existence checks](#existence-checks)).
-
-The `Keystore` adapter (`kvs.Keystore`) is the one exception to context propagation: the keystore
-interface it implements has no context parameter, so its `Put`, `Get` and `Delete` run with
-`context.Background()` and are bounded only by the Vault client's own timeout.
+The `Keystore` adapter (`kvs.Keystore`) is the one exception to context propagation: its
+interface has no context parameter, so it runs with `context.Background()`, bounded only by the
+Vault client's timeout.
 
 ### Path Encoding
 
@@ -205,12 +187,11 @@ endpoint, so this is one round trip per key. Four properties matter to callers:
 * A path that holds **no value of this backend's** is skipped on the same footing. Every shape
   Vault has for "nothing of ours is here" is one answer — no secret at the path, a secret with no
   data, and a secret whose `data` field is missing, empty or not a map — and `Get` reports all
-  three as a miss (`nil` error, destination untouched), `Exists` as absent (it shares `Get`'s
-  "is this entry ours" predicate, so the two agree), and a scan by skipping them. KV v1 has a
-  single mount per writer-set, so an entry written under it by an operator or another application
-  is reachable by any scan over that mount; answering one of those shapes with an error instead
-  aborted the iteration, and a single foreign entry under the prefix hid every real entry below it
-  from `GetConfID` and `GetWalletIDs`. A secret that *does* carry a `data` map is this backend's
+  three as a miss (`nil` error, destination untouched), `Exists` as absent, and a scan by
+  skipping them. KV v1 has a single mount per writer-set, so an entry written under it by an
+  operator or another application is reachable by any scan over that mount; answering one of
+  those shapes with an error instead aborted the iteration, and a single foreign entry under the
+  prefix hid every real entry below it from `GetConfID` and `GetWalletIDs`. A secret that *does* carry a `data` map is this backend's
   own, so a `value` inside it that is missing, not a string or not decodable stays an error — that
   entry is corrupt, not absent.
 * A prefix with nothing under it yields an **empty iterator**, never `nil`, so callers can

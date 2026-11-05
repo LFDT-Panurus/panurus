@@ -61,10 +61,9 @@ evaluate would cost write throughput and catch nothing.
    `GetExistingSignerInfo` and `SignerInfoExists` exclude an empty identity from the lookup and
    report it as not existing, so that the shared `<empty>` key is still never consulted while a
    batch containing one empty entry still answers for the caller's other identities. On every
-   backend `GetExistingSignerInfo` reports the `Identity.UniqueID()` of each non-empty identity that
-   has signer info — the KVS identity store used to return its composite storage keys instead, so
-   `Provider.AreMe` could never match there — and a failed lookup is an error, never an omission.
-   See the next section for why this is a correctness requirement and not a tidiness one, and
+   backend `GetExistingSignerInfo` returns the `Identity.UniqueID()` of each identity that has
+   signer info, and a failed lookup is an error, never an omission. See the next section for why
+   this is a correctness requirement and not a tidiness one, and
    [What is deliberately not checked](#what-is-deliberately-not-checked-and-why) for a second,
    backend-specific empty-identity limit on the KVS identity store.
 4. **The checks MUST remain unconditional.** No functional option, no setter, no configuration key,

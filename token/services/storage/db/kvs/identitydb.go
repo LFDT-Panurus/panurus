@@ -92,11 +92,10 @@ func (s *IdentityStore) AddConfiguration(ctx context.Context, wp storage.Identit
 }
 
 // GetConfiguration returns the configuration stored for the given id, type, and url, or
-// (nil, nil) if none is stored. An error means the lookup itself failed (or the stored record
-// cannot be decoded) and the answer is unknown; it must not be read as "not stored".
+// (nil, nil) if none is stored. An error means the lookup failed: the answer is unknown.
 //
-// The record found may belong to a different (id, url) pair that shares its row key; see
-// GetConfigurationID and AddConfiguration for how callers tell the two apart.
+// The record may belong to a different (id, url) pair sharing its row key; see
+// GetConfigurationID.
 func (s *IdentityStore) GetConfiguration(ctx context.Context, id, typ, url string) (*storage.IdentityConfiguration, error) {
 	k, err := kvs.CreateCompositeKey(
 		IdentityDBPrefix,
@@ -203,8 +202,7 @@ func (s *IdentityStore) ConfigurationsByID(ctx context.Context, id, configuratio
 }
 
 // ConfigurationExists reports whether a configuration is stored under the row key of the given
-// id, type, and url. An error means the lookup itself failed and the answer is unknown; it must
-// not be read as "does not exist".
+// id, type, and url. An error means the lookup failed: the answer is unknown.
 func (s *IdentityStore) ConfigurationExists(ctx context.Context, id, configurationType, url string) (bool, error) {
 	k, err := kvs.CreateCompositeKey(
 		IdentityDBPrefix,
@@ -263,9 +261,8 @@ func (s *IdentityStore) StoreIdentityData(ctx context.Context, id []byte, identi
 	return nil
 }
 
-// GetAuditInfo returns the audit info stored for identity, or nil if none is
-// stored. An error means the lookup itself failed (or the stored record cannot be decoded) and
-// the answer is unknown; it must not be read as "not stored".
+// GetAuditInfo returns the audit info stored for identity, or nil if none is stored.
+// An error means the lookup failed: the answer is unknown.
 //
 // Verification: the row is addressed by identity hash, so the identity stored
 // in the record is compared against the requested one before the audit info is
@@ -300,8 +297,7 @@ func (s *IdentityStore) GetAuditInfo(ctx context.Context, identity []byte) ([]by
 }
 
 // GetTokenInfo returns the token metadata and its audit info stored for
-// identity, or nil if none is stored. As for GetAuditInfo, an error means the lookup itself
-// failed and must not be read as "not stored".
+// identity, or nil if none is stored. Errors are as for GetAuditInfo.
 //
 // Verification: as for GetAuditInfo, the identity stored in the record is
 // compared against the requested one.
@@ -330,10 +326,8 @@ func (s *IdentityStore) GetTokenInfo(ctx context.Context, identity []byte) ([]by
 	return res.TokenMetadata, res.TokenMetadataAuditInfo, nil
 }
 
-// getRecipientData reads the RecipientData stored under k, the row key of identity, reporting
-// found=false for an authoritative miss and an error for anything else, an undecodable record
-// included. Errors name the identity by its tdriver.Identity.String form, not by k, whose
-// composite-key delimiters are NUL bytes.
+// getRecipientData reads the RecipientData stored under k. found=false is an authoritative miss;
+// any other failure, an undecodable record included, is an error.
 func (s *IdentityStore) getRecipientData(ctx context.Context, k string, identity []byte) (*RecipientData, bool, error) {
 	raw, found, err := getRaw(ctx, s.kvs, k)
 	if err != nil {
@@ -359,11 +353,8 @@ func (s *IdentityStore) getRecipientData(ctx context.Context, k string, identity
 // signer info under the identity hash, so GetSignerInfo cannot verify the
 // identity a record belongs to; see docs/security/store_integrity_verification.md.
 //
-// Signer info is written once: if an entry is already stored under id, it is kept and info is
-// discarded. Presence is decided by reading the entry, so a failed lookup is returned as an
-// error and nothing is written - writing anyway could replace a real blob registered by
-// RegisterIdentityDescriptor with a later, possibly nil, one. An existing entry that cannot be
-// decoded is likewise reported as an error rather than silently kept or overwritten.
+// Signer info is written once: an existing entry is kept. If the lookup fails, or the existing
+// entry cannot be decoded, an error is returned and nothing is written.
 func (s *IdentityStore) StoreSignerInfo(ctx context.Context, id tdriver.Identity, info []byte) error {
 	if err := integrity.CheckIdentity(id); err != nil {
 		return errors.WithMessage(err, "refusing to store signer info")
@@ -385,10 +376,7 @@ func (s *IdentityStore) StoreSignerInfo(ctx context.Context, id tdriver.Identity
 		return errors.Wrapf(err, "failed to check for existing signer info for [%s]", idHash)
 	}
 	if found {
-		// Already stored, possibly with a real (non-nil) blob written by
-		// RegisterIdentityDescriptor. Do not clobber it with a later, possibly nil, write -
-		// mirrors the SQL backend's insert-once/ignore-conflict semantics. The entry must
-		// still decode as signer info: a corrupt one is reported, not silently kept.
+		// Insert-once, as in the SQL backend: don't clobber a real blob with a later nil one.
 		var existing []byte
 		if err := decodeRecord(raw, &existing); err != nil {
 			return errors.WithMessagef(err, "existing signer info for [%s]", idHash)
@@ -405,17 +393,10 @@ func (s *IdentityStore) StoreSignerInfo(ctx context.Context, id tdriver.Identity
 }
 
 // GetExistingSignerInfo returns the unique ids (tdriver.Identity.UniqueID) of the passed
-// identities for which signer info is stored. Each unique id is reported once, in the order of
-// its first occurrence among the passed identities; an identity passed more than once is looked
-// up once.
+// identities that have signer info, each once, in order of first occurrence.
 //
-// Each identity is looked up with its own read, so that a failed lookup is reported: the first
-// one aborts the call with an error wrapping its cause (errors.Is still matches a cancelled or
-// expired context). An error means the answer is unknown and must not be read as "none of
-// these identities has signer info". The price is one KVS round trip per identity, where
-// KVS.GetExisting would batch them on the FSC in-tree KVS but drops store errors; batching can
-// come back once FSC exposes an error-returning batched lookup (see the #2063 TODO in
-// walletdb.go).
+// Each identity costs one read so that a failed lookup is reported: the first failure aborts the
+// call with an error. Batching needs an error-returning FSC lookup (see the #2063 TODO).
 //
 // Verification: an empty identity is excluded from the lookup rather than looked
 // up, for the reason given on StoreSignerInfo — its unique id is the shared
@@ -476,9 +457,8 @@ func (s *IdentityStore) SignerInfoExists(ctx context.Context, id []byte) (bool, 
 	return len(existing) > 0, nil
 }
 
-// GetSignerInfo returns the signer info stored for identity, or (nil, nil) if none is
-// stored, on every KVS backend. An error means the lookup itself failed (or the stored entry
-// cannot be decoded) and must not be read as "not stored".
+// GetSignerInfo returns the signer info stored for identity, or (nil, nil) if none is stored.
+// An error means the lookup failed: the answer is unknown.
 //
 // Verification: an empty identity is refused. This store does not keep the
 // identity alongside the signer info, so — unlike the SQL backend — it cannot
