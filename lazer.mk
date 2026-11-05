@@ -140,7 +140,7 @@ lazer-test-short: lazer-check
 .PHONY: lazer-bench
 # print sizes and timings of the lazer identities
 lazer-bench: lazer-check
-	cd $(LAZER_MODULE) && go test -run XXX -bench . -benchtime 3x ./
+	cd $(LAZER_MODULE) && go test -run XXX -bench . -benchtime 3x -v ./
 
 .PHONY: lazer-clean
 # remove the installed lazer
