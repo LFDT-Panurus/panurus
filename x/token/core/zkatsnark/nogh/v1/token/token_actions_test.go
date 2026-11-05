@@ -35,7 +35,91 @@ func makeSpendDescription() snarktoken.SpendDescription {
 	}
 }
 
+func makeValidIssueAction() *snarktoken.IssueAction {
+	tc := make([]byte, 32)
+	out := makeOutputDescription([]byte("alice"))
+	out.TypeCommitment = tc
+
+	return &snarktoken.IssueAction{
+		Issuer:           []byte("issuer"),
+		TokenType:        "USD",
+		TypeCommitment:   tc,
+		Outputs:          []snarktoken.OutputDescription{out},
+		BindingSignature: make([]byte, 96),
+		TotalValue:       make([]byte, 32),
+	}
+}
+
+func makeValidTransferAction() *snarktoken.TransferAction {
+	tc := make([]byte, 32)
+	in := makeSpendDescription()
+	in.TypeCommitment = tc
+	out := makeOutputDescription([]byte("alice"))
+	out.TypeCommitment = tc
+
+	return &snarktoken.TransferAction{
+		TypeCommitment:   tc,
+		Inputs:           []snarktoken.SpendDescription{in},
+		Outputs:          []snarktoken.OutputDescription{out},
+		BindingSignature: make([]byte, 96),
+	}
+}
+
 // ── OutputDescription ─────────────────────────────────────────────────────────
+
+func TestOutputDescription_Validate(t *testing.T) {
+	o := makeOutputDescription([]byte("alice"))
+	require.NoError(t, o.Validate())
+
+	// Empty recipient is valid (redeem)
+	oRedeem := makeOutputDescription(nil)
+	require.NoError(t, oRedeem.Validate())
+
+	badCm := makeOutputDescription([]byte("alice"))
+	badCm.CommitmentOut = make([]byte, 31)
+	require.Error(t, badCm.Validate())
+
+	badVx := makeOutputDescription([]byte("alice"))
+	badVx.ValueCommitOutX = make([]byte, 33)
+	require.Error(t, badVx.Validate())
+
+	badVy := makeOutputDescription([]byte("alice"))
+	badVy.ValueCommitOutY = nil
+	require.Error(t, badVy.Validate())
+
+	badTc := makeOutputDescription([]byte("alice"))
+	badTc.TypeCommitment = make([]byte, 16)
+	require.Error(t, badTc.Validate())
+
+	badProof := makeOutputDescription([]byte("alice"))
+	badProof.OutputProof = nil
+	require.Error(t, badProof.Validate())
+}
+
+func TestSpendDescription_Validate(t *testing.T) {
+	s := makeSpendDescription()
+	require.NoError(t, s.Validate())
+
+	badCm := makeSpendDescription()
+	badCm.CommitmentIn = make([]byte, 31)
+	require.Error(t, badCm.Validate())
+
+	badVx := makeSpendDescription()
+	badVx.ValueCommitInX = nil
+	require.Error(t, badVx.Validate())
+
+	badVy := makeSpendDescription()
+	badVy.ValueCommitInY = make([]byte, 64)
+	require.Error(t, badVy.Validate())
+
+	badTc := makeSpendDescription()
+	badTc.TypeCommitment = make([]byte, 30)
+	require.Error(t, badTc.Validate())
+
+	badProof := makeSpendDescription()
+	badProof.SpendProof = nil
+	require.Error(t, badProof.Validate())
+}
 
 func TestOutputDescription_IsRedeem_EmptyRecipient(t *testing.T) {
 	o := makeOutputDescription(nil)
@@ -64,16 +148,60 @@ func TestOutputDescription_Serialize(t *testing.T) {
 
 // ── IssueAction ───────────────────────────────────────────────────────────────
 
-func TestIssueAction_Validate_NoOutputs(t *testing.T) {
-	a := &snarktoken.IssueAction{}
-	require.Error(t, a.Validate())
+func TestIssueAction_Validate_Valid(t *testing.T) {
+	a := makeValidIssueAction()
+	require.NoError(t, a.Validate())
 }
 
-func TestIssueAction_Validate_WithOutputs(t *testing.T) {
-	a := &snarktoken.IssueAction{
-		Outputs: []snarktoken.OutputDescription{makeOutputDescription([]byte("alice"))},
-	}
-	require.NoError(t, a.Validate())
+func TestIssueAction_Validate_FieldErrors(t *testing.T) {
+	t.Run("no outputs", func(t *testing.T) {
+		a := makeValidIssueAction()
+		a.Outputs = nil
+		require.Error(t, a.Validate())
+	})
+
+	t.Run("missing issuer", func(t *testing.T) {
+		a := makeValidIssueAction()
+		a.Issuer = nil
+		require.Error(t, a.Validate())
+	})
+
+	t.Run("empty token type", func(t *testing.T) {
+		a := makeValidIssueAction()
+		a.TokenType = ""
+		require.Error(t, a.Validate())
+	})
+
+	t.Run("invalid type commitment", func(t *testing.T) {
+		a := makeValidIssueAction()
+		a.TypeCommitment = make([]byte, 31)
+		require.Error(t, a.Validate())
+	})
+
+	t.Run("invalid total value", func(t *testing.T) {
+		a := makeValidIssueAction()
+		a.TotalValue = make([]byte, 33)
+		require.Error(t, a.Validate())
+	})
+
+	t.Run("invalid binding signature", func(t *testing.T) {
+		a := makeValidIssueAction()
+		a.BindingSignature = make([]byte, 95)
+		require.Error(t, a.Validate())
+	})
+
+	t.Run("invalid output", func(t *testing.T) {
+		a := makeValidIssueAction()
+		a.Outputs[0].CommitmentOut = make([]byte, 31)
+		require.Error(t, a.Validate())
+	})
+
+	t.Run("type commitment mismatch", func(t *testing.T) {
+		a := makeValidIssueAction()
+		a.Outputs[0].TypeCommitment = make([]byte, 32)
+		a.Outputs[0].TypeCommitment[0] = 0xFF
+		require.Error(t, a.Validate())
+	})
 }
 
 func TestIssueAction_NumInputs_IsZero(t *testing.T) {
@@ -175,23 +303,66 @@ func TestIssueAction_Serialize_Deserialize_RoundTrip(t *testing.T) {
 
 // ── TransferAction ────────────────────────────────────────────────────────────
 
-func TestTransferAction_Validate_BothEmpty(t *testing.T) {
-	a := &snarktoken.TransferAction{}
-	require.Error(t, a.Validate())
+func TestTransferAction_Validate_Valid(t *testing.T) {
+	a := makeValidTransferAction()
+	require.NoError(t, a.Validate())
 }
 
 func TestTransferAction_Validate_WithInputOnly(t *testing.T) {
-	a := &snarktoken.TransferAction{
-		Inputs: []snarktoken.SpendDescription{makeSpendDescription()},
-	}
+	a := makeValidTransferAction()
+	a.Outputs = nil
 	require.NoError(t, a.Validate())
 }
 
 func TestTransferAction_Validate_WithOutputOnly(t *testing.T) {
-	a := &snarktoken.TransferAction{
-		Outputs: []snarktoken.OutputDescription{makeOutputDescription([]byte("alice"))},
-	}
+	a := makeValidTransferAction()
+	a.Inputs = nil
 	require.NoError(t, a.Validate())
+}
+
+func TestTransferAction_Validate_FieldErrors(t *testing.T) {
+	t.Run("both empty", func(t *testing.T) {
+		a := &snarktoken.TransferAction{}
+		require.Error(t, a.Validate())
+	})
+
+	t.Run("invalid type commitment", func(t *testing.T) {
+		a := makeValidTransferAction()
+		a.TypeCommitment = make([]byte, 31)
+		require.Error(t, a.Validate())
+	})
+
+	t.Run("invalid binding signature", func(t *testing.T) {
+		a := makeValidTransferAction()
+		a.BindingSignature = make([]byte, 95)
+		require.Error(t, a.Validate())
+	})
+
+	t.Run("invalid input", func(t *testing.T) {
+		a := makeValidTransferAction()
+		a.Inputs[0].CommitmentIn = make([]byte, 31)
+		require.Error(t, a.Validate())
+	})
+
+	t.Run("input type commitment mismatch", func(t *testing.T) {
+		a := makeValidTransferAction()
+		a.Inputs[0].TypeCommitment = make([]byte, 32)
+		a.Inputs[0].TypeCommitment[0] = 0xAA
+		require.Error(t, a.Validate())
+	})
+
+	t.Run("invalid output", func(t *testing.T) {
+		a := makeValidTransferAction()
+		a.Outputs[0].CommitmentOut = make([]byte, 31)
+		require.Error(t, a.Validate())
+	})
+
+	t.Run("output type commitment mismatch", func(t *testing.T) {
+		a := makeValidTransferAction()
+		a.Outputs[0].TypeCommitment = make([]byte, 32)
+		a.Outputs[0].TypeCommitment[0] = 0xBB
+		require.Error(t, a.Validate())
+	})
 }
 
 func TestTransferAction_NumInputs(t *testing.T) {

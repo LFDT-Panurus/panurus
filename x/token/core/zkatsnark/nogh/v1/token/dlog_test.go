@@ -240,8 +240,26 @@ func TestIssueAction_DLogInputs(t *testing.T) {
 	mig := &snarktoken.MigrationDescription{ValueCommitInX: make([]byte, 32), ValueCommitInY: make([]byte, 32), MigrationProof: []byte("p")}
 	fab := fabtokenOutput(t, owner.ID, "USD", "0x7")
 	id0, id1 := token2.ID{TxId: "tx", Index: 0}, token2.ID{TxId: "tx", Index: 1}
+	validTC := make([]byte, 32)
+	validProof := make([]byte, 292)
 	action := func(inputs ...*snarktoken.IssueActionInput) *snarktoken.IssueAction {
-		return &snarktoken.IssueAction{Outputs: []snarktoken.OutputDescription{{}}, Inputs: inputs, TypeRandomness: make([]byte, 32)}
+		return &snarktoken.IssueAction{
+			Issuer:           []byte("issuer"),
+			TokenType:        "USD",
+			TypeCommitment:   validTC,
+			TotalValue:       make([]byte, 32),
+			BindingSignature: make([]byte, 96),
+			Outputs: []snarktoken.OutputDescription{{
+				CommitmentOut:   make([]byte, 32),
+				ValueCommitOutX: make([]byte, 32),
+				ValueCommitOutY: make([]byte, 32),
+				TypeCommitment:  validTC,
+				OutputProof:     validProof,
+				Recipient:       owner.ID,
+			}},
+			Inputs:         inputs,
+			TypeRandomness: make([]byte, 32),
+		}
 	}
 
 	require.NoError(t, action(&snarktoken.IssueActionInput{ID: id0, Token: tok.Raw, Migration: mig}).Validate())
