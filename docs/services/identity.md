@@ -619,6 +619,12 @@ explicit bounds check instead — see `curveAt` in
 
 The architecture supports specialized identity types for complex use cases:
 
+#### Lazer (experimental, post-quantum)
+Located in `x/token/services/identity/lazer`, identity type `lazer` (7). An anonymous, auditable owner identity
+built on a lattice-based credential, as an alternative to Idemix. It is a separate cgo module and is not wired into
+the drivers yet. See [Lazer identities](identity-lazer.md), [the credential scheme](identity-lazer-anoncreds.md)
+and [the local patches to lazer](identity-lazer-patches.md).
+
 #### Multisig
 Located in `token/services/identity/multisig`.
 *   **Concept**: An identity that wraps multiple sub-identities.

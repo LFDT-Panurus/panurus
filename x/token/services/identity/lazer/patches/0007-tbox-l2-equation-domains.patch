@@ -1,0 +1,37 @@
+From: Panurus maintainers
+Subject: [PATCH 7/10] toolbox: one challenge domain per exact-l2 equation
+
+___schwartz_zippel_accumulate_l2 combined the Z exact-l2 equations with the
+same Schwartz-Zippel domain, so the verifier only checked their sum,
+sum_i (||x_i||^2 + <pow2, upsilon_i> - B_i^2) = 0, and a prover could move
+norm from one block to another through the upsilon slack
+(lazer-crypto/lazer#25). Equation i now uses dom + i. With lambda >= 2 the
+Z domains stay below the z4 domain lambda * (2 * (d - 1) + 2 + Z).
+
+Applied to the toolbox copy in src/lin-proofs.c, which the lin_* proofs
+run. It changes the transcript; proof sizes do not change.
+
+Panurus-local patch, applied by `make lazer-install` (lazer.mk).
+
+diff --git a/src/lin-proofs.c b/src/lin-proofs.c
+index 4bdddbf..636b1e8 100644
+--- a/src/lin-proofs.c
++++ b/src/lin-proofs.c
+@@ -2895,9 +2895,16 @@ ___schwartz_zippel_accumulate_l2 (
+       r1tptr[0] = r1t;
+       r0tptr[0] = r0t;
+ 
++      /*
++       * one challenge domain per equation: with the same domain for all,
++       * only the sum of the Z exact-l2 equations was checked, and norm could
++       * be moved from one block to another (panurus patch,
++       * lazer-crypto/lazer#25). dom + i, i < Z, stays below the z4 domain
++       * lambda * (2 * (d - 1) + 2 + Z) since lambda >= 2.
++       */
+       ___schwartz_zippel_accumulate2 (
+           R2i, r1i, r0i, R2i2, r1i2, r0i2, R2tptr, r1tptr, r0tptr, 1, seed,
+-          dom, params->quad_eval, u0, u1, u2, t0, t1, t2);
++          dom + i, params->quad_eval, u0, u1, u2, t0, t1, t2);
+     }
+ 
+   polyvec_free (tmp_polyvec);

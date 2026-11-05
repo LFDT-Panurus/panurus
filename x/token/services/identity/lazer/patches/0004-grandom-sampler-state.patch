@@ -1,0 +1,213 @@
+From: Panurus maintainers
+Subject: [PATCH 4/5] discrete gaussian sampler: no global state, one stream per vector
+
+Two defects in the discrete gaussian sampler used by the provers to sample
+their masking vectors:
+
+- gaussian155 kept its sign-bit buffer in function-level static variables.
+  The buffer was shared by every thread (a data race when two proofs run
+  concurrently), it carried bits of one rng stream into the next call, so a
+  sample depended on earlier, unrelated samples, and it was never wiped.
+  The buffer is now owned by the caller, refilled from the caller's rng
+  stream and wiped when the caller is done.
+- for log2o >= 24, _intvec_grandom called _grandom_sample for every element
+  with the same seed and dom, and _grandom_sample reinitialized the rng
+  stream each time: every element got the same uniform part and the same
+  coins, and only the global sign bit differed. A vector of 64 elements
+  with log2o = 30 took about 2 distinct values. The vector is now sampled
+  from a single rng stream (_grandom_sample_state), as the log2o < 24 path
+  already does; _grandom_sample (used by int_grandom) keeps its signature.
+
+The temporaries of a large sample are wiped. The distribution of each
+sample is unchanged; verifiers are not affected.
+
+Panurus-local patch, applied by `make lazer-install` (lazer.mk).
+
+diff --git a/src/grandom.c b/src/grandom.c
+index 756b9dd..c0bbf1f 100644
+--- a/src/grandom.c
++++ b/src/grandom.c
+@@ -103,25 +103,30 @@ BerExp (rng_state_t state, double x)
+   return b;
+ }
+ 
++/*
++ * The sign bits are drawn 64 at a time from state into *bits; *pos is the
++ * number already used. The buffer belongs to the caller, which initializes
++ * *pos to 64 and wipes *bits when done: a process-global buffer would be
++ * shared by concurrent samplers and carry bits from one rng stream to the
++ * next (panurus patch).
++ */
+ static inline int
+-gaussian155 (rng_state_t state, double c)
++gaussian155 (rng_state_t state, double c, uint64_t *bits, int *pos)
+ {
+-  static int pos = 64;
+-  static uint64_t bits;
+   int k, b;
+   double x;
+   const double dss = 1 / (2 * 1.55 * 1.55);
+ 
+   do
+     {
+-      if (pos >= 64)
++      if (*pos >= 64)
+         {
+-          rng_urandom (state, (unsigned char *)&bits, 8);
+-          pos = 0;
++          rng_urandom (state, (unsigned char *)bits, 8);
++          *pos = 0;
+         }
+-      b = bits & 1;
+-      bits >>= 1;
+-      pos += 1;
++      b = *bits & 1;
++      *bits >>= 1;
++      *pos += 1;
+       k = cdfsampler (state, CDF155);
+       k = (-b & (2 * k)) - k + b; // bimodal Gaussian
+       x = ((k - c) * (k - c) - (k - b) * (k - b)) * dss;
+@@ -154,7 +159,12 @@ _grandom_sample_i64 (unsigned int log2o, const uint8_t seed[32],
+   urandom = le64toh (urandom);
+ 
+   c = (double)urandom / (1 << log2o);
+-  k = gaussian155 (state, c);
++  {
++    uint64_t bits = 0;
++    int pos = 64;
++
++    k = gaussian155 (state, c, &bits, &pos);
++  }
+ 
+   _rng_clear (state);
+ 
+@@ -177,6 +187,8 @@ _grandom_sample_i32 (int32_t *ret, unsigned int nelems, unsigned int log2o,
+   uint32_t urand;
+   int32_t k;
+   double c;
++  uint64_t bits = 0;
++  int pos = 64;
+ 
+   _rng_init (state, seed, dom);
+   _rng_urandom (state, out, outlen);
+@@ -193,23 +205,29 @@ _grandom_sample_i32 (int32_t *ret, unsigned int nelems, unsigned int log2o,
+         }
+ 
+       c = (double)urand / (1 << log2o);
+-      k = gaussian155 (state, c);
++      k = gaussian155 (state, c, &bits, &pos);
+ 
+       ret[i] = ((int32_t)k << log2o) - urand;
+     }
+ 
++  bytes_clear ((uint8_t *)&bits, sizeof (bits));
++  bytes_clear (out, outlen);
+   _rng_clear (state);
+ }
+ 
+ /*
+- * sample centered discrete gaussian with sigma = 1.55 * 2^log2o
++ * sample centered discrete gaussian with sigma = 1.55 * 2^log2o from the
++ * rng stream state; *bits and *pos are the sign bit buffer of gaussian155.
++ * Successive calls on the same state give independent samples, so a vector
++ * is sampled from one stream (panurus patch: the previous code
++ * reinitialized the rng with the same seed and dom for every element of a
++ * vector, so all elements got the same uniform part and the same coins).
+  */
+ static void
+-_grandom_sample (int_t z, unsigned int log2o, const uint8_t seed[32],
+-                uint64_t dom)
++_grandom_sample_state (int_t z, unsigned int log2o, rng_state_t state,
++                       uint64_t *bits, int *pos)
+ {
+   INT_T (z1, z->nlimbs);
+-  rng_state_t state;
+   double c;
+   unsigned int i, m;
+   int k;
+@@ -222,8 +240,6 @@ _grandom_sample (int_t z, unsigned int log2o, const uint8_t seed[32],
+ 
+   int_set_i64 (z, 0);
+ 
+-  _rng_init (state, seed, dom);
+-
+   _rng_urandom (state, urandom_ptr, nbytes);
+   urandom_ptr[nbytes - 1] &= mask;
+ 
+@@ -234,13 +250,34 @@ _grandom_sample (int_t z, unsigned int log2o, const uint8_t seed[32],
+     urandom |= ((uint64_t)(urandom_ptr[nbytes - i]) << (8 * (m - i)));
+ 
+   c = (double)urandom / ((uint64_t)1 << (log2o - (nbytes - m) * 8));
+-  k = gaussian155 (state, c);
+-
+-  _rng_clear (state);
++  k = gaussian155 (state, c, bits, pos);
+ 
+   z->neg = 1; /* substract */
+ 
+   int_set_i64 (z1, k);
+   int_lshift (z1, z1, log2o);
+   int_add (z, z, z1);
++
++  /* the sample is secret */
++  int_set_i64 (z1, 0);
++  urandom = 0;
++  k = 0;
++  bytes_clear ((uint8_t *)&urandom, sizeof (urandom));
++}
++
++/*
++ * sample centered discrete gaussian with sigma = 1.55 * 2^log2o
++ */
++static void
++_grandom_sample (int_t z, unsigned int log2o, const uint8_t seed[32],
++                uint64_t dom)
++{
++  rng_state_t state;
++  uint64_t bits = 0;
++  int pos = 64;
++
++  _rng_init (state, seed, dom);
++  _grandom_sample_state (z, log2o, state, &bits, &pos);
++  bytes_clear ((uint8_t *)&bits, sizeof (bits));
++  _rng_clear (state);
+ }
+diff --git a/src/grandom.h b/src/grandom.h
+index 933a716..1033451 100644
+--- a/src/grandom.h
++++ b/src/grandom.h
+@@ -3,6 +3,9 @@
+ 
+ static void _grandom_sample (int_t z, unsigned int log2o,
+                             const uint8_t seed[32], uint64_t dom);
++static void _grandom_sample_state (int_t z, unsigned int log2o,
++                                  rng_state_t state, uint64_t *bits,
++                                  int *pos);
+ #ifdef XXX
+ static int64_t _grandom_sample_i64 (unsigned int log2o, const uint8_t *seed,
+                                    uint64_t dom);
+diff --git a/src/intvec.c b/src/intvec.c
+index ced34a0..0e34a3f 100644
+--- a/src/intvec.c
++++ b/src/intvec.c
+@@ -648,11 +648,19 @@ _intvec_grandom (intvec_t r, unsigned int log2o, const uint8_t seed[32],
+     }
+   else
+     {
++      /* one rng stream for the whole vector (panurus patch) */
++      rng_state_t state;
++      uint64_t bits = 0;
++      int pos = 64;
+       unsigned int i;
+ 
++      _rng_init (state, seed, dom);
+       _VEC_FOREACH_ELEM (r, i)
+       {
+-        _grandom_sample (intvec_get_elem (r, i), log2o, seed, dom);
++        _grandom_sample_state (intvec_get_elem (r, i), log2o, state, &bits,
++                               &pos);
+       }
++      bytes_clear ((uint8_t *)&bits, sizeof (bits));
++      _rng_clear (state);
+     }
+ }

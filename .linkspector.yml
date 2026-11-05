@@ -1,0 +1,8 @@
+dirs:
+  - .
+useGitIgnore: true
+# eprint.iacr.org rate-limits bursts with 429: treat it as alive
+aliveStatusCodes:
+  - 200
+  - 206
+  - 429

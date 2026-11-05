@@ -450,6 +450,17 @@ If a new version of Panurus adds a column (e.g., `ledger_metadata` or `spent_at`
 > ```
 > Any node that also stores tokens locally (e.g. an issuer that is also an owner or auditor) needs this migration applied to its `TokenDB` before upgrading.
 
+### Database Data Change: policy owner type
+
+Tokens owned by a policy identity (`driver.PolicyIdentityType`) used to be stored with
+`owner_type = 'Type (6)'`. They are now stored as `'policy'`. No SDK behaviour depends on the old
+value. To align existing rows, for consistency and for `QueryTokenDetailsParams.OwnerType` filters,
+run (with the table prefix of the deployment):
+
+```sql
+UPDATE fsc_tokens SET owner_type = 'policy' WHERE owner_type = 'Type (6)';
+```
+
 ### Database Schema Changes: `Wallets` / `IdentityConfigurations` linkage
 
 Panurus links every `Wallets` row to the `IdentityConfigurations` row it originated
