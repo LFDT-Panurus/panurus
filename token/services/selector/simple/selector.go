@@ -46,6 +46,7 @@ type selector struct {
 	numRetry             int
 	timeout              time.Duration
 	requestCertification bool
+	metrics              *Metrics
 }
 
 // Select selects tokens to be spent based on ownership, quantity, and type
@@ -234,7 +235,19 @@ func (s *selector) selectByID(ctx context.Context, ownerFilter token.OwnerFilter
 
 		backoff := s.retryBackoff()
 		logger.DebugfContext(ctx, "token selection: let's wait [%v] before retry...", backoff)
-		time.Sleep(backoff)
+		if s.timeout > 0 {
+			backoffStart := time.Now()
+			timer := time.NewTimer(backoff)
+			select {
+			case <-timer.C:
+				s.observeBackoff(backoffStart)
+			case <-ctx.Done():
+				timer.Stop()
+				s.observeBackoff(backoffStart)
+
+				return nil, nil, errors.Wrap(ctx.Err(), "token selection aborted while backing off")
+			}
+		}
 	}
 }
 
@@ -247,4 +260,11 @@ func (s *selector) retryBackoff() time.Duration {
 	}
 
 	return time.Duration(rand.Int64N(int64(s.timeout)))
+}
+
+// observeBackoff records the time elapsed since start as a backoff wait, if metrics are set.
+func (s *selector) observeBackoff(start time.Time) {
+	if s.metrics != nil {
+		s.metrics.BackoffDuration.Observe(time.Since(start).Seconds())
+	}
 }
