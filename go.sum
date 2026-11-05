@@ -599,10 +599,10 @@ github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03
 github.com/BurntSushi/xgb v0.0.0-20160522181843-27f122750802/go.mod h1:IVnqGOEym/WlBOVXweHU+Q+/VP0lqqI8lqeDx9IjBqo=
 github.com/DATA-DOG/go-sqlmock v1.5.2 h1:OcvFkGmslmlZibjAjaHm3L//6LiuBgolP7OputlJIzU=
 github.com/DATA-DOG/go-sqlmock v1.5.2/go.mod h1:88MAG/4G7SMwSE3CeA0ZKzrT5CiOU3OJ+JlNzwDqpNU=
-github.com/IBM/idemix v0.3.1 h1:Hzlad1hsij+Nk8PoGB4E2MmexHUyE9KLyZTJVkK/I5A=
-github.com/IBM/idemix v0.3.1/go.mod h1:S5SXwuwJQXFrY1LwCdvqwfQWOKCb8hVoY18ZcAFc8rQ=
-github.com/IBM/mathlib v0.3.2 h1:4XWONT9OBwzsgVPdqWOZhB/bxETPSdi7t+1u36X9oNo=
-github.com/IBM/mathlib v0.3.2/go.mod h1:SoGBO5m5bHQ4hph+nhf3o5gmBgRLXXZ77/YVa1X7xbc=
+github.com/IBM/idemix v0.3.2-0.20261104152042-7270381aae8e h1:rMOoGufLgvskO4jtiBS+cG807h+FPTFweipmyqboQb0=
+github.com/IBM/idemix v0.3.2-0.20261104152042-7270381aae8e/go.mod h1:4ikhlzCkKZm5di4cm4gR8lEIMWecqp/bI1dPWpU+la4=
+github.com/IBM/mathlib v0.3.3-0.20261103131649-7162020950b3 h1:XnADuNu60toDHV/erkCVaxEbF943CypDH6tCG/YthQc=
+github.com/IBM/mathlib v0.3.3-0.20261103131649-7162020950b3/go.mod h1:SoGBO5m5bHQ4hph+nhf3o5gmBgRLXXZ77/YVa1X7xbc=
 github.com/JohnCGriffin/overflow v0.0.0-20211019200055-46fa312c352c/go.mod h1:X0CRv0ky0k6m906ixxpzmDRLvX58TFUKS2eePweuyxk=
 github.com/Masterminds/semver/v3 v3.5.0 h1:kQceYJfbupGfZOKZQg0kou0DgAKhzDg2NZPAwZ/2OOE=
 github.com/Masterminds/semver/v3 v3.5.0/go.mod h1:4V+yj/TJE1HU9XfppCwVMZq3I84lprf4nC11bSS5beM=
