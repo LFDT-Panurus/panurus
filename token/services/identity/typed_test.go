@@ -63,6 +63,7 @@ func TestWrapWithType(t *testing.T) {
 
 func TestTypeToString(t *testing.T) {
 	// The numeric values are persisted in the owner field of tokens, they must never change.
+	// PolicyIdentityType (6) is skipped on purpose: TypeToString has no case for it yet.
 	for _, tc := range []struct {
 		idType   driver.IdentityType
 		expected int32
