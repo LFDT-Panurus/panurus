@@ -102,11 +102,13 @@ func TConfigurations(t *testing.T, db driver.IdentityStore) {
 	require.NoError(t, err)
 	assert.True(t, exists)
 
-	_, err = db.IteratorConfigurations(ctx, "no core")
+	noCore, err := db.IteratorConfigurations(ctx, "no core")
 	require.NoError(t, err)
-	next, err := it.Next()
+	next, err := noCore.Next()
 	require.NoError(t, err)
 	assert.Nil(t, next)
+	// close it before the writes below: an open cursor can hold a lock they would wait on
+	noCore.Close()
 
 	exists, err = db.ConfigurationExists(ctx, "pineapple", "no core", expected.URL)
 	require.NoError(t, err)

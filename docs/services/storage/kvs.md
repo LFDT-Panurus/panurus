@@ -49,6 +49,27 @@ attribute count — 5 for a `configid` entry, 3 for the wallet id — because th
 also holds the `meta` blob and the other wallet reference, and neither is a wallet id or a
 configuration id.
 
+#### Existence checks
+
+Every `IdentityStore` read tells **absent** apart from **lookup failed**, on every KVS backend. An
+error means the answer is unknown, never "not stored"; a cancelled or expired context stays
+reachable through `errors.Is`.
+
+Presence is decided from `KVS.Get`, never from `KVS.Exists` or `KVS.GetExisting`, which have no
+error return and report a failed read as absent. A miss is either the in-tree KVS' anchored
+`does not exist` error or a `nil` error with the destination untouched (Vault). A stored JSON
+`null` counts as present.
+
+* `GetExistingSignerInfo` returns the `Identity.UniqueID()` of each passed identity with signer
+  info, as the SQL backend does, so `Provider.AreMe` matches
+  ([#1892](https://github.com/LFDT-Panurus/panurus/issues/1892)). It costs one `Get` per
+  identity, and the first failure fails the call. Ids come back deduplicated, in first-occurrence
+  order; don't rely on that across backends.
+* `GetSignerInfo` returns `(nil, nil)` when there is none, as the SQL backend does.
+* `StoreSignerInfo` is insert-once. If the lookup fails, or the existing entry doesn't decode, it
+  returns an error and writes nothing. `AddConfiguration` likewise refuses to write when its
+  collision check fails.
+
 ## Write Atomicity
 
 The KVS abstraction has no multi-key transaction, so a store operation that needs several keys
@@ -104,6 +125,11 @@ The Vault backend maps a composite key onto a Vault path under the configured mo
 path component per key component. All Vault I/O goes through the client's `*WithContext` calls
 (`ReadWithContext`, `WriteWithContext`, `DeleteWithContext`, `ListWithContext`), so a cancelled
 or expired caller context aborts the request in flight.
+`Exists` and `GetExisting` are best-effort (see [Existence checks](#existence-checks)).
+
+The `Keystore` adapter (`kvs.Keystore`) is the one exception to context propagation: its
+interface has no context parameter, so it runs with `context.Background()`, bounded only by the
+Vault client's timeout.
 
 ### Path Encoding
 
@@ -161,13 +187,13 @@ endpoint, so this is one round trip per key. Four properties matter to callers:
 * A path that holds **no value of this backend's** is skipped on the same footing. Every shape
   Vault has for "nothing of ours is here" is one answer — no secret at the path, a secret with no
   data, and a secret whose `data` field is missing, empty or not a map — and `Get` reports all
-  three as a miss (`nil` error, destination untouched), `Exists` as absent, and a scan by skipping
-  them. KV v1 has a single mount per writer-set, so an entry written under it by an operator or
-  another application is reachable by any scan over that mount; answering one of those shapes with
-  an error instead aborted the iteration, and a single foreign entry under the prefix hid every
-  real entry below it from `GetConfID` and `GetWalletIDs`. A secret that *does* carry a `data` map
-  is this backend's own, so a `value` inside it that is missing, not a string or not decodable
-  stays an error — that entry is corrupt, not absent.
+  three as a miss (`nil` error, destination untouched), `Exists` as absent, and a scan by
+  skipping them. KV v1 has a single mount per writer-set, so an entry written under it by an
+  operator or another application is reachable by any scan over that mount; answering one of
+  those shapes with an error instead aborted the iteration, and a single foreign entry under the
+  prefix hid every real entry below it from `GetConfID` and `GetWalletIDs`. A secret that *does* carry a `data` map is this backend's
+  own, so a `value` inside it that is missing, not a string or not decodable stays an error — that
+  entry is corrupt, not absent.
 * A prefix with nothing under it yields an **empty iterator**, never `nil`, so callers can
   iterate without a nil check.
 * `HasNext` is **idempotent**: it memoizes its lookahead, so calling it twice before `Next`
