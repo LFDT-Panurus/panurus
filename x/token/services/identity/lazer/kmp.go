@@ -103,6 +103,9 @@ func (l *KeyManagerProvider) Get(ctx context.Context, identityConfig *driver.Ide
 	}
 	raw, err := conf.Marshal()
 	if err != nil {
+		if identityCache != nil {
+			identityCache.Close()
+		}
 		keyManager.Close()
 
 		return nil, errors.WithMessagef(err, "failed to marshal identity configuration")

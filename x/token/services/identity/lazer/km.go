@@ -229,6 +229,9 @@ func NewKeyManager(conf *Config, keystore idriver.Keystore, identityStore Identi
 	defer func() {
 		if !ok {
 			des.Close()
+			clear(km.usk)
+			clear(km.siKey)
+			clear(km.aiKey)
 		}
 	}()
 	if conf.Signer == nil {
@@ -239,15 +242,10 @@ func NewKeyManager(conf *Config, keystore idriver.Keystore, identityStore Identi
 	}
 
 	secret := conf.Signer.Sk
+	fromConf := len(secret) != 0
 	switch {
-	case len(secret) != 0:
-		ski := secretKeyIdentifier(conf.IPK, secret[:anoncreds.AttrLen])
-		if keystore != nil {
-			if err := keystore.Put(keystorePrefix+hex.EncodeToString(ski), secret); err != nil {
-				return nil, errors.Wrap(err, "failed to store the wallet secret")
-			}
-		}
-		conf.Signer.Ski = ski
+	case fromConf:
+		// stored only once validated, below
 	case len(conf.Signer.Ski) != 0 && keystore != nil:
 		if err := keystore.Get(keystorePrefix+hex.EncodeToString(conf.Signer.Ski), &secret); err != nil {
 			return nil, errors.Wrapf(err, "failed to retrieve the wallet secret with ski [%s]", hex.EncodeToString(conf.Signer.Ski))
@@ -286,6 +284,17 @@ func NewKeyManager(conf *Config, keystore idriver.Keystore, identityStore Identi
 		user.Clear()
 
 		return nil, errors.Wrap(err, "credential is not cryptographically valid")
+	}
+	if fromConf {
+		ski := secretKeyIdentifier(conf.IPK, secret[:anoncreds.AttrLen])
+		if keystore != nil {
+			if err := keystore.Put(keystorePrefix+hex.EncodeToString(ski), secret); err != nil {
+				user.Clear()
+
+				return nil, errors.Wrap(err, "failed to store the wallet secret")
+			}
+		}
+		conf.Signer.Ski = ski
 	}
 	km.user = user
 	km.limiter = options.limiter

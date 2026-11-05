@@ -21,6 +21,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/x/token/services/identity/lazer/anoncreds"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics/disabled"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -928,4 +929,33 @@ func encodingKey(v []int64) []byte {
 	}
 
 	return out
+}
+
+// TestSampleAttributesWipesRejectedSecrets checks that sampleAttributes wipes
+// every user secret it rejects, and keeps the accepted one.
+func TestSampleAttributesWipesRejectedSecrets(t *testing.T) {
+	var seen [][]byte
+	n := 0
+	attrs, err := sampleAttributes("ou", "role", "eid", "rh", 7, func(a [][]byte) (bool, error) {
+		seen = append(seen, a[IdxUSK])
+		n++
+
+		return n == 3, nil
+	})
+	require.NoError(t, err)
+	require.Len(t, seen, 3)
+	zero := make([]byte, anoncreds.AttrLen)
+	assert.Equal(t, zero, seen[0])
+	assert.Equal(t, zero, seen[1])
+	assert.NotEqual(t, zero, attrs[IdxUSK])
+
+	// on an error of the callback too
+	var last []byte
+	_, err = sampleAttributes("ou", "role", "eid", "rh", 7, func(a [][]byte) (bool, error) {
+		last = a[IdxUSK]
+
+		return false, errors.New("boom")
+	})
+	require.Error(t, err)
+	assert.Equal(t, zero, last)
 }

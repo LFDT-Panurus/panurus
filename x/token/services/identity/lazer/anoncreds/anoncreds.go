@@ -299,6 +299,7 @@ func AttrsOK(attrs [][]byte) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	defer wipe(flat)
 
 	return C.cbdc_attrs_ok(ptr(flat)) == 1, nil
 }
@@ -693,8 +694,14 @@ func (v *Verifier) PresVer(attrsRev [][]byte, idxRev []uint32, nyms [][]byte, id
 	if len(nyms) > 0 {
 		// C memory, because Go memory holding Go pointers cannot be passed to C
 		pp := (*[MaxCom]*C.uint8_t)(C.malloc(C.size_t(MaxCom) * C.size_t(unsafe.Sizeof(uintptr(0)))))
-		ll := (*[MaxCom]C.size_t)(C.malloc(C.size_t(MaxCom) * C.size_t(unsafe.Sizeof(C.size_t(0)))))
+		if pp == nil {
+			return errors.New("anoncreds: out of memory")
+		}
 		defer C.free(unsafe.Pointer(pp))
+		ll := (*[MaxCom]C.size_t)(C.malloc(C.size_t(MaxCom) * C.size_t(unsafe.Sizeof(C.size_t(0)))))
+		if ll == nil {
+			return errors.New("anoncreds: out of memory")
+		}
 		defer C.free(unsafe.Pointer(ll))
 		for i, n := range nyms {
 			cn := C.CBytes(n)

@@ -35,11 +35,13 @@ func sampleAttributes(ou, role, eid, rh string, maxSamples int, ok func([][]byte
 		// the issuance proof bounds the norm of the encoded attributes;
 		// resample the secret if it is not satisfied
 		good, err := ok(attrs)
+		if good && err == nil {
+			return attrs, nil
+		}
+		// a rejected usk is never used: wipe it
+		clear(usk)
 		if err != nil {
 			return nil, err
-		}
-		if good {
-			return attrs, nil
 		}
 	}
 

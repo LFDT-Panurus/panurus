@@ -546,3 +546,43 @@ func TestRevocationHandleIsBoundPerSignature(t *testing.T) {
 	assert.NotEqual(t, ai.NymRH, sig.NymRH, "the auditor's check: nymRH of the signature against nym_rh of the audit info")
 	assert.False(t, anoncreds.OpeningVerify(sig.NymRH, rh1, ai.OpeningRH))
 }
+
+// TestNewKeyManagerStoresOnlyValidSecret checks that the wallet secret is put
+// in the keystore, and its SKI set, only once the secret and the credential
+// are validated.
+func TestNewKeyManagerStoresOnlyValidSecret(t *testing.T) {
+	w := newTestWallet(t, "alice")
+	other := newTestWallet(t, "bob")
+	sk := append([]byte(nil), w.signer.Sk...)
+	for _, tc := range []struct {
+		name string
+		mod  func(s *SignerConfig)
+	}{
+		{"short secret", func(s *SignerConfig) { s.Sk = sk[:secretLen+1] }},
+		{"invalid credential", func(s *SignerConfig) { s.Cred = other.signer.Cred }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			signer := *w.signer
+			signer.Sk = append([]byte(nil), sk...)
+			signer.Ski = nil
+			tc.mod(&signer)
+			ks := &memKeystore{}
+			conf := &Config{Version: ProtocolVersionV1, Name: "x", IPK: w.ipk, Signer: &signer}
+			_, err := NewKeyManager(conf, ks, &memIdentityStore{})
+			require.Error(t, err)
+			assert.Empty(t, ks.m)
+			assert.Nil(t, signer.Ski)
+		})
+	}
+
+	// a valid secret is stored under its SKI
+	signer := *w.signer
+	signer.Sk = append([]byte(nil), sk...)
+	signer.Ski = nil
+	ks := &memKeystore{}
+	km, err := NewKeyManager(&Config{Version: ProtocolVersionV1, Name: "x", IPK: w.ipk, Signer: &signer}, ks, &memIdentityStore{})
+	require.NoError(t, err)
+	t.Cleanup(km.Close)
+	assert.Len(t, ks.m, 1)
+	assert.NotEmpty(t, signer.Ski)
+}
