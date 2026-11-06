@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1128,6 +1129,50 @@ func TestLoad_SameNameSamePriorityKeepsIteratorOrder(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "e-first", info.EnrollmentID(),
 		"same-name same-priority lookup must follow iterator order, not completion order")
+}
+
+// TestLoad_SameNamePriorityOrderFirstRegisteredWinsTies checks priority order and tie-breaks.
+func TestLoad_SameNamePriorityOrderFirstRegisteredWinsTies(t *testing.T) {
+	ctx := t.Context()
+
+	urls := []string{"/tmp/a", "/tmp/b-target", "/tmp/c", "/tmp/d-target"}
+	configs := make([]idriver.IdentityConfiguration, len(urls))
+	for i, u := range urls {
+		configs[i] = idriver.IdentityConfiguration{ID: "shared", Type: "testType", URL: u}
+	}
+
+	kmp := &mock.KeyManagerProvider{}
+	kmp.GetCalls(func(_ context.Context, cfg *membership.IdentityConfiguration) (membership.KeyManager, error) {
+		id := []byte("id" + cfg.URL)
+		if strings.HasSuffix(cfg.URL, "-target") {
+			id = []byte("target")
+		}
+
+		return newTestKeyManager("e"+cfg.URL, id), nil
+	})
+
+	newLM := func(t *testing.T, targets []view.Identity) *membership.LocalMembership {
+		t.Helper()
+		lm, _ := newStoredOnlyMembership(configs, kmp)
+		require.NoError(t, lm.Load(ctx, nil, targets))
+
+		return lm
+	}
+
+	t.Run("no targets: first registered wins", func(t *testing.T) {
+		info, err := newLM(t, nil).GetIdentityInfo(ctx, "shared", nil)
+		require.NoError(t, err)
+		assert.Equal(t, "e/tmp/a", info.EnrollmentID())
+	})
+
+	t.Run("targets: first registered preferred identity wins", func(t *testing.T) {
+		// targets match the typed identity
+		target, err := identity.WrapWithType(identity.Type(99), []byte("target"))
+		require.NoError(t, err)
+		info, err := newLM(t, []view.Identity{target}).GetIdentityInfo(ctx, "shared", nil)
+		require.NoError(t, err)
+		assert.Equal(t, "e/tmp/b-target", info.EnrollmentID())
+	})
 }
 
 // closableKeyManager is a KeyManager that records whether it has been closed.
