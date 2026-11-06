@@ -14,6 +14,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
+	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 )
 
 const (
@@ -54,12 +55,6 @@ var (
 	ErrLedgerHeightUnavailable = errors.New("ledger height unavailable")
 )
 
-// blockFromScanner is the subset of fabric.Delivery used by Delivery: the block
-// scan, parameterized by the block to start from.
-type blockFromScanner interface {
-	ScanBlockFrom(ctx context.Context, block uint64, callback fabric.BlockCallback) error
-}
-
 // ledgerHeightProvider is the subset of fabric.Ledger used by Delivery: the
 // current ledger height, which is where a fresh block scan resumes.
 type ledgerHeightProvider interface {
@@ -79,7 +74,8 @@ type LedgerInfoRetry struct {
 }
 
 type Delivery struct {
-	Delivery blockFromScanner
+	// Delivery performs the block scan, parameterized by the block to start from.
+	Delivery BlockScanner
 	Ledger   ledgerHeightProvider
 	Logger   logging.Logger
 
@@ -128,7 +124,20 @@ func (d *Delivery) ScanBlock(background context.Context, callback fabric.BlockCa
 		startingBlock = height
 	}
 
-	return d.Delivery.ScanBlockFrom(background, startingBlock, callback)
+	return d.Delivery.ScanBlockFrom(background, startingBlock, d.skipShadowed(callback))
+}
+
+// skipShadowed wraps a block callback so that each delivered block has its
+// shadowed envelopes removed before the callback (and the per-envelope mappers
+// behind it) see it. A forged envelope ordered ahead of the honest one in the same
+// block would otherwise make the mapper emit the forgery's Invalid event for the
+// txID before the honest Valid one; dropping it here, in the single path both the
+// finality and lookup listener managers scan through, gives each txID one correct
+// event per block. See SkipShadowedEnvelopes.
+func (d *Delivery) skipShadowed(callback fabric.BlockCallback) fabric.BlockCallback {
+	return func(ctx context.Context, block *common.Block) (bool, error) {
+		return callback(ctx, SkipShadowedEnvelopes(block))
+	}
 }
 
 // ledgerHeight returns the current ledger height, retrying transient failures

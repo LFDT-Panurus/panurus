@@ -309,6 +309,64 @@ func TestTTXRecoveryHandler_Recover_LockReleaseErrorDoesNotFailRecovery(t *testi
 	require.Equal(t, []string{txID}, sm.unlockCalls)
 }
 
+// TestTTXRecoveryHandler_Recover_ShadowedForgery_StaysConfirmed is the path-2
+// regression for #2647: a forged envelope ordered ahead of the honest one in the
+// same block makes a point lookup return BAD_PROPOSAL_TXID for a transaction that is
+// in fact committed Valid. Once the ledger lookup resolves the shadowing VALID
+// envelope (ledger.GetTransactionStatus, path 1), the network reports the txID Valid
+// with the honest envelope's token request hash, and recovery must then leave the
+// transaction Confirmed — not Deleted, as it did when the forgery's Invalid verdict
+// reached this handler.
+func TestTTXRecoveryHandler_Recover_ShadowedForgery_StaysConfirmed(t *testing.T) {
+	ctx := context.Background()
+	txID := "tx-shadowed"
+	namespace := "testns"
+	tmsID := token.TMSID{Network: "testnet", Channel: "testchannel", Namespace: "testns"}
+
+	mockNetwork := &mock2.Network{}
+	mockHasher := &mock2.TokenRequestHasher{}
+	mockTTXDB := &mock2.TransactionDB{}
+	mockTokens := &mock2.TokensService{}
+	mockTx := &drivermock.TransactionStoreTransaction{}
+	logger := logging.MustGetLogger()
+	tracer := noop.NewTracerProvider().Tracer("test")
+
+	handler := finality.NewTTXRecoveryHandler(
+		logger,
+		mockNetwork,
+		namespace,
+		mockHasher,
+		tmsID,
+		mockTTXDB,
+		mockTokens,
+		&mock2.SelectorManagerProvider{},
+		tracer,
+		nil,
+	)
+
+	// The honest envelope's token request hash, as the fixed ledger lookup returns it.
+	msgToSign := []byte("message")
+	tokenRequestHash, err := base64.StdEncoding.DecodeString(utils.Hashable(msgToSign).String())
+	require.NoError(t, err)
+
+	// The network reports Valid with the honest envelope's hash, which is what
+	// GetTransactionStatus now returns for a forged-then-honest block.
+	mockNetwork.GetTransactionStatusReturns(network.Valid, tokenRequestHash, "", nil)
+	mockTokens.GetCachedTokenRequestReturns(&token.Request{}, msgToSign)
+	mockTTXDB.NewTransactionReturns(mockTx, nil)
+	mockTokens.AppendValidReturns(nil, nil)
+	mockTx.SetStatusReturns(nil)
+	mockTx.CommitReturns(nil)
+
+	require.NoError(t, handler.Recover(ctx, txID))
+
+	// Confirmed: the token request was applied and committed, and the status was
+	// never set to Deleted.
+	require.Equal(t, 1, mockTx.CommitCallCount(), "the honest transaction must be committed")
+	require.Equal(t, 0, mockTTXDB.SetStatusCallCount(),
+		"a confirmed transaction must not have its status overwritten (never Deleted)")
+}
+
 func TestTTXRecoveryHandler_Recover_InvalidTransaction(t *testing.T) {
 	// Setup
 	ctx := context.Background()

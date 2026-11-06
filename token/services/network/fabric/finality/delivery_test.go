@@ -17,6 +17,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/finality"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
+	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -322,4 +323,38 @@ func TestScanBlock_PropagatesScanError(t *testing.T) {
 	require.ErrorIs(t, err, scanErr)
 	require.NotErrorIs(t, err, finality.ErrLedgerHeightUnavailable, "a scan failure must not be mistaken for a failure to read the height")
 	assert.Equal(t, uint64(3), delivery.startingBlock)
+}
+
+// TestScanBlock_SkipsShadowedEnvelopesBeforeCallback verifies that each delivered
+// block is stripped of forged, shadowed envelopes before the caller's callback (and
+// the per-envelope mappers behind it) ever sees it. A block ordered [forged
+// BAD_PROPOSAL_TXID tx1, honest VALID tx1] must reach the callback as a single VALID
+// tx1 envelope, so the finality and lookup listener managers emit one correct event.
+func TestScanBlock_SkipsShadowedEnvelopesBeforeCallback(t *testing.T) {
+	forgedThenHonest := block(t, 7,
+		[][]byte{endorserEnvelope(t, "tx1"), endorserEnvelope(t, "tx1")},
+		[]peer.TxValidationCode{peer.TxValidationCode_BAD_PROPOSAL_TXID, peer.TxValidationCode_VALID},
+	)
+
+	ledger := &fakeHeightLedger{results: []heightLedgerResult{{info: &fabric.LedgerInfo{Height: 7}}}}
+	delivery := &recordingBlockDelivery{}
+
+	var seen *common.Block
+	callback := func(_ context.Context, b *common.Block) (bool, error) {
+		seen = b
+
+		return false, nil
+	}
+
+	require.NoError(t, newTestDelivery(ledger, delivery).ScanBlock(context.Background(), callback))
+	require.NotNil(t, delivery.callback, "ScanBlockFrom must receive a wrapped callback")
+
+	_, err := delivery.callback(context.Background(), forgedThenHonest)
+	require.NoError(t, err)
+
+	require.NotNil(t, seen, "the caller's callback must be invoked")
+	require.Len(t, seen.Data.Data, 1, "the forged envelope must be dropped before the callback")
+	require.Equal(t, []string{"tx1"}, txIDsOf(t, seen))
+	require.Equal(t, []byte{byte(peer.TxValidationCode_VALID)},
+		seen.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
 }

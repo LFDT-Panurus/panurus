@@ -14,7 +14,9 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
 	events2 "github.com/hyperledger-labs/fabric-smart-client/platform/fabric/core/generic/events"
+	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 
+	ndriver "github.com/LFDT-Panurus/panurus/token/services/network/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/blockscan"
 )
 
@@ -39,16 +41,25 @@ type blockScanner interface {
 	ScanFromBlock(ctx context.Context, block uint64, callback fabric.DeliveryCallback) error
 }
 
-// txMapper is the subset of events.EventInfoMapper used by DeliveryScanQueryByID.
-// It only needs MapProcessedTx; MapTxData (the block-path method) is not called here.
+// txMapper is the subset of events.EventInfoMapper used by DeliveryScanQueryByID:
+// MapProcessedTx for a transaction read back from the ledger, and MapTxData for the
+// honest envelope resolved out of a block when a point lookup returned a forgery.
 type txMapper interface {
 	MapProcessedTx(tx *fabric.ProcessedTransaction) ([]TxInfo, error)
+	MapTxData(ctx context.Context, tx []byte, block *common.BlockMetadata, blockNum driver.BlockNum, txNum driver.TxNum) (map[driver.Namespace]TxInfo, error)
 }
 
 type DeliveryScanQueryByID struct {
 	Delivery blockScanner
 	Ledger   txLedger
 	Mapper   txMapper
+
+	// BlockNumberByTxID and BlockDelivery resolve the honest envelope of a txID
+	// whose point lookup returned a non-VALID (possibly forged) envelope that a
+	// VALID envelope in the same block shadows. When either is nil, the point-lookup
+	// verdict is used unchanged. See finality.HonestEnvelope.
+	BlockNumberByTxID BlockNumberByTxID
+	BlockDelivery     BlockScanner
 }
 
 func (q *DeliveryScanQueryByID) QueryByID(ctx context.Context, lastBlock driver.BlockNum, evicted map[driver.TxID][]events2.ListenerEntry[TxInfo]) (<-chan []TxInfo, error) {
@@ -72,15 +83,11 @@ func (q *DeliveryScanQueryByID) queryByID(ctx context.Context, keys []driver.TxI
 		pt, err := q.Ledger.GetTransactionByID(txID)
 		if err == nil {
 			logger.DebugfContext(ctx, "transaction [%s] found on ledger", txID)
-			infos, err := q.Mapper.MapProcessedTx(pt)
-			if err != nil {
-				logger.Errorf("failed to map tx [%s]: [%s], skipping", txID, err)
-				keySet.Remove(txID)
-
-				continue
-			}
+			infos, ok := q.mapFound(ctx, txID, pt)
 			keySet.Remove(txID)
-			ch <- infos
+			if ok {
+				ch <- infos
+			}
 
 			continue
 		}
@@ -133,4 +140,75 @@ func (q *DeliveryScanQueryByID) queryByID(ctx context.Context, keys []driver.TxI
 		return
 	}
 	logger.DebugfContext(ctx, "finished scanning blocks starting from [%d]", startingBlock)
+}
+
+// mapFound maps a transaction read back from the ledger for an evicted listener. A
+// point lookup returns the lowest (block, txNum) envelope for a txID, which a forged
+// envelope ordered ahead of the honest one would win; so when the looked-up envelope
+// maps to an Invalid verdict and the shadow-resolution dependencies are wired, its
+// block is scanned for a VALID envelope with the same txID, whose verdict is mapped
+// instead.
+//
+// ok is false when the transaction could not be mapped at all (a mapping error on the
+// looked-up envelope, which is logged); the caller then drops the key without
+// emitting an event, as before. A failure to resolve or map the honest envelope falls
+// back to the point-lookup verdict rather than dropping the key.
+func (q *DeliveryScanQueryByID) mapFound(ctx context.Context, txID driver.TxID, pt *fabric.ProcessedTransaction) ([]TxInfo, bool) {
+	infos, err := q.Mapper.MapProcessedTx(pt)
+	if err != nil {
+		logger.Errorf("failed to map tx [%s]: [%s], skipping", txID, err)
+
+		return nil, false
+	}
+
+	// Only a non-VALID point-lookup verdict can be a forgery shadowing a committed
+	// transaction; a VALID one is already the honest envelope. Resolving the honest
+	// envelope costs a block scan, so it is attempted only when the lookup mapped to
+	// Invalid and the shadow-resolution dependencies are wired.
+	if q.BlockNumberByTxID != nil && q.BlockDelivery != nil && isInvalid(infos) {
+		if honest, ok := q.mapHonestEnvelope(ctx, txID); ok {
+			return honest, true
+		}
+	}
+
+	return infos, true
+}
+
+// isInvalid reports whether a mapped transaction's verdict is Invalid. A mapper emits
+// a single Invalid TxInfo for a transaction Fabric rejected (see
+// EndorserTxInfoMapper.MapProcessedTx); a VALID transaction yields one info per
+// namespace carrying a token request, none of them Invalid.
+func isInvalid(infos []TxInfo) bool {
+	for _, info := range infos {
+		if info.Status == ndriver.Invalid {
+			return true
+		}
+	}
+
+	return false
+}
+
+// mapHonestEnvelope resolves and maps the VALID envelope that carries txID in its
+// block, overriding a forged point-lookup verdict. It returns false (so the caller
+// uses the point-lookup verdict) when no VALID envelope shadows the lookup, or when
+// the block could not be read or mapped.
+func (q *DeliveryScanQueryByID) mapHonestEnvelope(ctx context.Context, txID driver.TxID) ([]TxInfo, bool) {
+	block, txNum, found, err := HonestEnvelope(ctx, q.BlockNumberByTxID, q.BlockDelivery, txID)
+	if err != nil {
+		logger.DebugfContext(ctx, "failed resolving honest envelope for [%s], using point-lookup verdict: %s", txID, err)
+
+		return nil, false
+	}
+	if !found {
+		return nil, false
+	}
+
+	txInfos, err := q.Mapper.MapTxData(ctx, block.Data.Data[txNum], block.Metadata, block.Header.GetNumber(), txNum)
+	if err != nil {
+		logger.DebugfContext(ctx, "failed mapping honest envelope for [%s], using point-lookup verdict: %s", txID, err)
+
+		return nil, false
+	}
+
+	return collections.Values(txInfos), true
 }

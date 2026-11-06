@@ -162,6 +162,9 @@ jobs:
           - name: tcc-query-tokens-limits
             pkg: ./token/services/network/fabric/tcc
             func: FuzzQueryTokensLedgerReadsAreBounded
+          - name: finality-skip-shadowed-envelopes
+            pkg: ./token/services/network/fabric/finality
+            func: FuzzSkipShadowedEnvelopesNoPanic
           - name: identity-role-register-recipient
             pkg: ./token/services/identity/role
             func: FuzzLongTermOwnerWalletRegisterRecipientNoPanic

@@ -16,6 +16,7 @@ Welcome to Panurus documentation.
 ## Security
 
 *   [**OpenSSF Security Baseline**](openssf/README.md): Which OpenSSF Baseline level Panurus targets, what is already satisfied, and what is still pending.
+*   [**Forged-Envelope txID Shadowing**](security/forged_envelope_txid_shadowing.md): Why a point lookup of a transaction's ledger status can return a forged envelope's verdict instead of the committed one's, and the single rule Panurus applies — the `VALID` envelope's verdict wins within a block — to resolve it.
 *   [**GO-2026-5932: the `openpgp` unmaintained-package advisory**](security/openpgp_unmaintained_advisory.md): Why the advisory against `golang.org/x/crypto/openpgp` is not a Panurus vulnerability — Panurus imports no openpgp code, so the risk is on whoever chooses to use OpenPGP.
 *   [**HTLC Deadlines and Clock Synchronisation**](security/htlc_deadline_clock_assumptions.md): The clock-synchronisation assumption that the HTLC claim/reclaim deadline rests on, and the deadline margin it requires of a deployment.
 *   [**Selector Resource Limits**](security/selector_resource_limits.md): How to throttle token selection, either with the opt-in built-in per-wallet rate limiter or by supplying your own limiter or `Locker`.
