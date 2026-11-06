@@ -1400,13 +1400,21 @@ func (db *TokenStore) PublicParamsHashes(ctx context.Context) ([]tdriver.PPHash,
 		return nil, errors.Wrapf(err, "error querying db")
 	}
 	defer Close(rows)
-	if err := rows.Err(); err != nil {
-		return nil, errors.Wrapf(err, "error querying db")
-	}
 
 	it := common.NewIterator(rows, func(h *tdriver.PPHash) error { return rows.Scan(h) })
 
-	return iterators.ReadAllValues(it)
+	hashes, err := iterators.ReadAllValues(it)
+	if err != nil {
+		return nil, err
+	}
+	// After the scan, where a truncated read can be detected at all: before it the check only
+	// reported what QueryContext already had, and a connection reset partway through the
+	// result returned a partial history as the complete one (#2586).
+	if err := rows.Err(); err != nil {
+		return nil, errors.Wrap(err, "error reading public parameters hashes")
+	}
+
+	return hashes, nil
 }
 
 // PublicParamsByHash returns the public parameters whose hash matches the passed
@@ -1816,9 +1824,6 @@ func (db *TokenStore) unspendableTokenFormats(ctx context.Context, walletID stri
 		return nil, errors.Wrapf(err, "error querying db")
 	}
 	defer Close(rows)
-	if err := rows.Err(); err != nil {
-		return nil, errors.Wrapf(err, "error querying db")
-	}
 	// read the types from the query result and remove discard those in db.getSupportedTokenFormats()
 
 	supported := collections.NewSet(db.getSupportedTokenFormats()...)
@@ -1827,7 +1832,17 @@ func (db *TokenStore) unspendableTokenFormats(ctx context.Context, walletID stri
 	all := common.NewIterator(rows, func(f *token.Format) error { return rows.Scan(f) })
 	unsupported := iterators.Filter(all, func(f *token.Format) bool { return !supported.Contains(*f) })
 
-	return iterators.ReadAllValues(unsupported)
+	formats, err := iterators.ReadAllValues(unsupported)
+	if err != nil {
+		return nil, err
+	}
+	// After the scan, as in PublicParamsHashes: a short list of unsupported formats makes
+	// UnsupportedTokensIteratorBy skip tokens that do need an upgrade (#2586).
+	if err := rows.Err(); err != nil {
+		return nil, errors.Wrap(err, "error reading unspendable token formats")
+	}
+
+	return formats, nil
 }
 
 type TokenTransaction struct {
