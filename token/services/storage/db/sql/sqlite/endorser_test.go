@@ -50,11 +50,11 @@ func TestQueryValidationsEndorser(t *testing.T) {
 
 	query := "SELECT VALIDATIONS.tx_id, VALIDATIONS.request, VALIDATIONS.metadata, VALIDATIONS.stored_at " +
 		"FROM VALIDATIONS " +
-		"WHERE \\(\\(VALIDATIONS.stored_at >= \\$1\\) AND \\(VALIDATIONS.stored_at <= \\$2\\)\\)"
+		"WHERE \\(\\(VALIDATIONS.stored_at >= \\$1\\) AND \\(VALIDATIONS.stored_at <= \\$2\\)\\) AND \\(VALIDATIONS.rejected = \\$3\\)"
 
 	mockDB.
 		ExpectQuery(query).
-		WithArgs(timeFrom, timeTo).
+		WithArgs(timeFrom, timeTo, false).
 		WillReturnRows(mockDB.NewRows([]string{"tx_id", "request", "metadata", "stored_at"}).AddRow(output...))
 
 	it, err := mockEndorserStore(db).QueryValidations(context.Background(),
@@ -80,8 +80,8 @@ func TestGetStatusEndorser(t *testing.T) {
 	output := []driver2.Value{3, "some_message"}
 
 	mockDB.
-		ExpectQuery("SELECT status, status_message FROM VALIDATIONS WHERE tx_id = \\$1").
-		WithArgs(input).
+		ExpectQuery("SELECT status, status_message FROM VALIDATIONS WHERE \\(tx_id = \\$1\\) AND \\(rejected = \\$2\\)").
+		WithArgs(input, false).
 		WillReturnRows(mockDB.NewRows([]string{"status", "status_message"}).AddRow(output...))
 
 	status, statusMessage, err := mockEndorserStore(db).GetStatus(context.Background(), input)
@@ -103,11 +103,14 @@ func TestAWAddValidationRecordEndorser(t *testing.T) {
 	now := sqlmock.AnyArg()
 
 	mockDB.ExpectBegin()
-	// Expect the INSERT into VALIDATIONS table
+	// Expect the conditional upsert into VALIDATIONS table (approved row, rejected = false)
 	mockDB.
-		ExpectExec("INSERT INTO VALIDATIONS \\(tx_id, request, metadata, pp_hash, status, status_message, stored_at\\) "+
-			"VALUES \\(\\$1, \\$2, \\$3, \\$4, \\$5, \\$6, \\$7\\)").
-		WithArgs(txID, tokenRequest, "null", ppHash, driver.Pending, "", now).
+		ExpectExec("INSERT INTO VALIDATIONS \\(tx_id, request, metadata, pp_hash, rejected, reason, status, status_message, stored_at\\) "+
+			"VALUES \\(\\$1, \\$2, \\$3, \\$4, \\$5, \\$6, \\$7, \\$8, \\$9\\) "+
+			"ON CONFLICT \\(tx_id\\) DO UPDATE SET request=excluded.request, metadata=excluded.metadata, "+
+			"pp_hash=excluded.pp_hash, rejected=excluded.rejected, reason=excluded.reason, status=excluded.status, "+
+			"status_message=excluded.status_message, stored_at=excluded.stored_at WHERE VALIDATIONS.rejected = \\$10").
+		WithArgs(txID, tokenRequest, "null", ppHash, false, "", driver.Pending, "", now, true).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mockDB.ExpectCommit()
 
@@ -139,11 +142,12 @@ func TestQueryValidationsWithStatuses(t *testing.T) {
 	query := "SELECT VALIDATIONS.tx_id, VALIDATIONS.request, VALIDATIONS.metadata, VALIDATIONS.stored_at " +
 		"FROM VALIDATIONS " +
 		"WHERE \\(\\(VALIDATIONS.stored_at >= \\$1\\) AND \\(VALIDATIONS.stored_at <= \\$2\\)\\) AND " +
-		"\\(\\(status\\) IN \\(\\(\\$3\\), \\(\\$4\\)\\)\\)"
+		"\\(VALIDATIONS.rejected = \\$3\\) AND " +
+		"\\(\\(status\\) IN \\(\\(\\$4\\), \\(\\$5\\)\\)\\)"
 
 	mockDB.
 		ExpectQuery(query).
-		WithArgs(timeFrom, timeTo, driver.Pending, driver.Confirmed).
+		WithArgs(timeFrom, timeTo, false, driver.Pending, driver.Confirmed).
 		WillReturnRows(mockDB.NewRows([]string{"tx_id", "request", "metadata", "stored_at"}).AddRow(output...))
 
 	it, err := mockEndorserStore(db).QueryValidations(context.Background(),
@@ -169,8 +173,8 @@ func TestGetStatusNotFound(t *testing.T) {
 	input := "nonexistent"
 
 	mockDB.
-		ExpectQuery("SELECT status, status_message FROM VALIDATIONS WHERE tx_id = \\$1").
-		WithArgs(input).
+		ExpectQuery("SELECT status, status_message FROM VALIDATIONS WHERE \\(tx_id = \\$1\\) AND \\(rejected = \\$2\\)").
+		WithArgs(input, false).
 		WillReturnError(sql.ErrNoRows)
 
 	status, statusMessage, err := mockEndorserStore(db).GetStatus(context.Background(), input)
@@ -196,11 +200,14 @@ func TestAddValidationRecordWithMetadata(t *testing.T) {
 	now := sqlmock.AnyArg()
 
 	mockDB.ExpectBegin()
-	// Expect the INSERT into VALIDATIONS table with metadata
+	// Expect the conditional upsert into VALIDATIONS table with metadata (approved row)
 	mockDB.
-		ExpectExec("INSERT INTO VALIDATIONS \\(tx_id, request, metadata, pp_hash, status, status_message, stored_at\\) "+
-			"VALUES \\(\\$1, \\$2, \\$3, \\$4, \\$5, \\$6, \\$7\\)").
-		WithArgs(txID, tokenRequest, sqlmock.AnyArg(), ppHash, driver.Pending, "", now).
+		ExpectExec("INSERT INTO VALIDATIONS \\(tx_id, request, metadata, pp_hash, rejected, reason, status, status_message, stored_at\\) "+
+			"VALUES \\(\\$1, \\$2, \\$3, \\$4, \\$5, \\$6, \\$7, \\$8, \\$9\\) "+
+			"ON CONFLICT \\(tx_id\\) DO UPDATE SET request=excluded.request, metadata=excluded.metadata, "+
+			"pp_hash=excluded.pp_hash, rejected=excluded.rejected, reason=excluded.reason, status=excluded.status, "+
+			"status_message=excluded.status_message, stored_at=excluded.stored_at WHERE VALIDATIONS.rejected = \\$10").
+		WithArgs(txID, tokenRequest, sqlmock.AnyArg(), ppHash, false, "", driver.Pending, "", now, true).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mockDB.ExpectCommit()
 
@@ -262,8 +269,8 @@ func TestSetStatusEndorser(t *testing.T) {
 	message := "message"
 
 	mockDB.ExpectBegin()
-	mockDB.ExpectExec("UPDATE VALIDATIONS SET status = \\$1, status_message = \\$2 WHERE tx_id = \\$3").
-		WithArgs(status, message, txID).
+	mockDB.ExpectExec("UPDATE VALIDATIONS SET status = \\$1, status_message = \\$2 WHERE \\(tx_id = \\$3\\) AND \\(rejected = \\$4\\)").
+		WithArgs(status, message, txID, false).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mockDB.ExpectCommit()
 
@@ -273,4 +280,20 @@ func TestSetStatusEndorser(t *testing.T) {
 	gomega.Expect(aw.Commit()).To(gomega.Succeed())
 
 	gomega.Expect(mockDB.ExpectationsWereMet()).To(gomega.Succeed())
+}
+
+func TestDeleteValidationRecordEndorser(t *testing.T) {
+	common2.TestDeleteValidationRecordEndorser(t, mockEndorserStore)
+}
+
+func TestRecordValidationFailureEndorser(t *testing.T) {
+	common2.TestRecordValidationFailure(t, mockEndorserStore)
+}
+
+func TestRecordValidationFailureRejectsEmptyEndorser(t *testing.T) {
+	common2.TestRecordValidationFailureRejectsEmpty(t, mockEndorserStore)
+}
+
+func TestQueryValidationFailuresEndorser(t *testing.T) {
+	common2.TestQueryValidationFailures(t, mockEndorserStore)
 }
