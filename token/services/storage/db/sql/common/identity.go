@@ -10,6 +10,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sync"
 
 	"github.com/LFDT-Panurus/panurus/token"
 	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
@@ -25,6 +26,7 @@ import (
 	cache2 "github.com/LFDT-Panurus/panurus/token/services/utils/cache"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/sets"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
@@ -67,6 +69,12 @@ type IdentityStore struct {
 	signerInfoCache cache[bool]
 	auditInfoCache  cache[[]byte]
 	errorWrapper    driver2.SQLErrorWrapper
+
+	// signerInfoMu serializes a read's signer info cache writes against a concurrent store's,
+	// and signerInfoStores counts the stores that cached a signer as present. See
+	// cacheSignerInfoVerdicts.
+	signerInfoMu     sync.Mutex
+	signerInfoStores uint64
 }
 
 func newIdentityStore(
@@ -438,6 +446,68 @@ func (db *IdentityStore) StoreSignerInfo(ctx context.Context, id tdriver.Identit
 	return err
 }
 
+// cacheSignerInfoStored caches the given hashes as present and counts the store, under
+// signerInfoMu so both are atomic against a concurrent read; see cacheSignerInfoVerdicts.
+// Callers must have committed the row first, as the cached true outlives a rollback.
+func (db *IdentityStore) cacheSignerInfoStored(hashes ...string) {
+	db.signerInfoMu.Lock()
+	defer db.signerInfoMu.Unlock()
+
+	db.signerInfoStores++
+	for _, h := range hashes {
+		db.signerInfoCache.Add(h, true)
+	}
+}
+
+// signerInfoStoreCount samples the counter cacheSignerInfoStored bumps. Call it before the
+// existence query, so a store landing while that query is in flight is detectable.
+func (db *IdentityStore) signerInfoStoreCount() uint64 {
+	db.signerInfoMu.Lock()
+	defer db.signerInfoMu.Unlock()
+
+	return db.signerInfoStores
+}
+
+// cacheSignerInfoVerdicts caches a batch existence query's outcome. A positive is terminal, as
+// a signer row is only ever inserted, so it is always cached. A negative is only the query's
+// snapshot: a store committing between the query and this write holds a verdict the query could
+// not see, and caching the stale false over it reports a committed signer as absent until
+// eviction (#2586).
+//
+// Two checks reject such a negative, as each covers a case the other misses:
+//
+//   - storesAtQuery, sampled before the query, catches a store whose cached positive has since
+//     been evicted. It is batch-wide, so one store costs the batch one re-query.
+//   - a cached positive catches a store this call saw no count for, such as one whose row the
+//     query missed through read-replica lag.
+//
+// signerInfoMu, also taken by cacheSignerInfoStored, makes the checks and the write one step.
+func (db *IdentityStore) cacheSignerInfoVerdicts(ctx context.Context, idHashes []string, found sets.Set[string], storesAtQuery uint64) {
+	db.signerInfoMu.Lock()
+	defer db.signerInfoMu.Unlock()
+
+	stored := db.signerInfoStores != storesAtQuery
+	if stored {
+		logger.DebugfContext(ctx, "signer info was stored while the existence query ran, not caching its negatives")
+	}
+	for _, idHash := range idHashes {
+		if found.Contains(idHash) {
+			db.signerInfoCache.Add(idHash, true)
+
+			continue
+		}
+		if stored {
+			continue
+		}
+		if cached, ok := db.signerInfoCache.Get(idHash); ok && cached {
+			logger.DebugfContext(ctx, "signer info for [%s] is cached as present, keeping it", idHash)
+
+			continue
+		}
+		db.signerInfoCache.Add(idHash, false)
+	}
+}
+
 // GetExistingSignerInfo returns the unique ids of the passed identities for which
 // signer info is stored.
 //
@@ -485,6 +555,10 @@ func (db *IdentityStore) GetExistingSignerInfo(ctx context.Context, ids ...tdriv
 		Where(cond.In("identity_hash", idHashes...)).
 		Format(db.ci)
 
+	// Must be sampled before the query: a store counted from here on is one the query may not
+	// have seen, so its verdict wins over this read's. See cacheSignerInfoVerdicts.
+	storesAtQuery := db.signerInfoStoreCount()
+
 	logging.Debug(logger, query, args)
 	rows, err := db.readDB.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -496,15 +570,13 @@ func (db *IdentityStore) GetExistingSignerInfo(ctx context.Context, ids ...tdriv
 	if err != nil {
 		return nil, err
 	}
-	// Must precede the cache loop: the iterator ends a truncated scan with a nil
-	// error, which would cache a real signer as absent (#2562).
+	// Must precede the cache loop: a truncated scan would otherwise cache a real signer as
+	// absent (#2562).
 	if err := rows.Err(); err != nil {
 		return nil, errors.Wrap(err, "error reading existing signer info")
 	}
 
-	for _, idHash := range idHashes {
-		db.signerInfoCache.Add(idHash, found.Contains(idHash))
-	}
+	db.cacheSignerInfoVerdicts(ctx, idHashes, found, storesAtQuery)
 
 	return append(result, found.ToSlice()...), nil
 }
@@ -611,17 +683,18 @@ func (db *IdentityStore) RegisterIdentityDescriptor(ctx context.Context, descrip
 	// update all caches
 	logger.DebugfContext(ctx, "register identity descriptor...update caches...")
 	h := descriptor.Identity.UniqueID()
-	db.signerInfoCache.Add(h, true)
+	signerHashes := []string{h}
 	if len(descriptor.AuditInfo) != 0 {
 		db.auditInfoCache.Add(h, descriptor.AuditInfo)
 	}
 	if !alias.IsNone() && !descriptor.Identity.Equal(alias) {
 		h = alias.UniqueID()
-		db.signerInfoCache.Add(h, true)
+		signerHashes = append(signerHashes, h)
 		if len(descriptor.AuditInfo) != 0 {
 			db.auditInfoCache.Add(h, descriptor.AuditInfo)
 		}
 	}
+	db.cacheSignerInfoStored(signerHashes...)
 	logger.DebugfContext(ctx, "register identity descriptor...update caches...done")
 
 	return nil
@@ -792,7 +865,7 @@ func (db *IdentityStore) storeSignerInfo(ctx context.Context, tx dbTransaction, 
 		logger.DebugfContext(ctx, "signer info [%s] exists, no error to return", h)
 	}
 	if updateCache {
-		db.signerInfoCache.Add(h, true)
+		db.cacheSignerInfoStored(h)
 	}
 	logger.DebugfContext(ctx, "store signer info done")
 
