@@ -17,9 +17,9 @@ func TestMemoryKVS_PutAndGet(t *testing.T) {
 	key := "test-key"
 	val := []byte("test-value")
 
-	require.False(t, m.Exists(ctx, key))
+	var missing []byte
+	require.ErrorIs(t, m.Get(ctx, key, &missing), ErrKeyNotFound)
 	require.NoError(t, m.Put(ctx, key, val))
-	require.True(t, m.Exists(ctx, key))
 
 	var result []byte
 	require.NoError(t, m.Get(ctx, key, &result))
@@ -32,6 +32,7 @@ func TestMemoryKVS_GetNotFound(t *testing.T) {
 	var result []byte
 	err := m.Get(t.Context(), "missing", &result)
 	require.Error(t, err)
+	require.ErrorIs(t, err, ErrKeyNotFound)
 }
 
 func TestMemoryService_ComputeID(t *testing.T) {
