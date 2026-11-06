@@ -65,7 +65,8 @@ func fabtokenOutput(owner driver.Identity, typ token.Type, quantity string) ([]b
 	return (&actions.Output{Owner: owner, Type: typ, Quantity: quantity}).Serialize()
 }
 
-func placeholder() []byte { return bytes.Repeat([]byte{1}, 32) }
+func placeholder() []byte    { return bytes.Repeat([]byte{1}, 32) }
+func placeholderSig() []byte { return bytes.Repeat([]byte{1}, 96) }
 
 func newPP(curve ecc.ID, issuers ...driver.Identity) *pp.PublicParams {
 	p := pp.DefaultPublicParams()
@@ -132,8 +133,8 @@ func newIssueFixture(tb testing.TB, curve ecc.ID) *fixture {
 		TokenType:        "ABC",
 		TypeCommitment:   placeholder(),
 		Outputs:          []snarktoken.OutputDescription{o0, o1},
-		BindingSignature: placeholder(),
-		TotalValue:       []byte{15},
+		BindingSignature: placeholderSig(),
+		TotalValue:       placeholder(),
 	}
 	f.issueMD = &driver.IssueMetadata{
 		Issuer: driver.AuditableIdentity{Identity: issuer, AuditInfo: ai(issuer)},
@@ -187,7 +188,7 @@ func newTransferFixture(tb testing.TB, curve ecc.ID) *fixture {
 			{CommitmentIn: placeholder(), ValueCommitInX: placeholder(), ValueCommitInY: placeholder(), TypeCommitment: placeholder(), SpendProof: placeholder()},
 		},
 		Outputs:          []snarktoken.OutputDescription{o0, o1},
-		BindingSignature: placeholder(),
+		BindingSignature: placeholderSig(),
 	}
 	md0, md1 := id0, id1
 	f.transferMD = &driver.TransferMetadata{

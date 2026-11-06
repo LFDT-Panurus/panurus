@@ -40,7 +40,23 @@ func TestActionLimits(t *testing.T) {
 	t.Parallel()
 
 	limits := driver.ResourceLimits{MaxInputs: 1, MaxOutputs: 1, MaxMetadataEntries: 1, MaxMetadataKeyBytes: 2, MaxMetadataValueBytes: 2}
-	out := token.OutputDescription{}
+	validTC := make([]byte, 32)
+	validProof := make([]byte, 292)
+	out := token.OutputDescription{
+		CommitmentOut:   make([]byte, 32),
+		ValueCommitOutX: make([]byte, 32),
+		ValueCommitOutY: make([]byte, 32),
+		TypeCommitment:  validTC,
+		OutputProof:     validProof,
+		Recipient:       []byte("alice"),
+	}
+	in := token.SpendDescription{
+		CommitmentIn:   make([]byte, 32),
+		ValueCommitInX: make([]byte, 32),
+		ValueCommitInY: make([]byte, 32),
+		TypeCommitment: validTC,
+		SpendProof:     validProof,
+	}
 
 	tests := []struct {
 		name   string
@@ -49,18 +65,24 @@ func TestActionLimits(t *testing.T) {
 		md     map[string][]byte
 		target error
 	}{
-		{"ok", []token.SpendDescription{{}}, []token.OutputDescription{out}, map[string][]byte{"k": []byte("v")}, nil},
-		{"too many inputs", []token.SpendDescription{{}, {}}, []token.OutputDescription{out}, nil, token.ErrTooManyInputs},
-		{"too many outputs", []token.SpendDescription{{}}, []token.OutputDescription{out, out}, nil, token.ErrTooManyOutputs},
-		{"too many entries", []token.SpendDescription{{}}, []token.OutputDescription{out}, map[string][]byte{"a": nil, "b": nil}, token.ErrTooManyMetadataEntries},
-		{"key too large", []token.SpendDescription{{}}, []token.OutputDescription{out}, map[string][]byte{"abc": nil}, token.ErrMetadataKeyTooLarge},
-		{"value too large", []token.SpendDescription{{}}, []token.OutputDescription{out}, map[string][]byte{"a": []byte(strings.Repeat("x", 3))}, token.ErrMetadataValueTooLarge},
+		{"ok", []token.SpendDescription{in}, []token.OutputDescription{out}, map[string][]byte{"k": []byte("v")}, nil},
+		{"too many inputs", []token.SpendDescription{in, in}, []token.OutputDescription{out}, nil, token.ErrTooManyInputs},
+		{"too many outputs", []token.SpendDescription{in}, []token.OutputDescription{out, out}, nil, token.ErrTooManyOutputs},
+		{"too many entries", []token.SpendDescription{in}, []token.OutputDescription{out}, map[string][]byte{"a": nil, "b": nil}, token.ErrTooManyMetadataEntries},
+		{"key too large", []token.SpendDescription{in}, []token.OutputDescription{out}, map[string][]byte{"abc": nil}, token.ErrMetadataKeyTooLarge},
+		{"value too large", []token.SpendDescription{in}, []token.OutputDescription{out}, map[string][]byte{"a": []byte(strings.Repeat("x", 3))}, token.ErrMetadataValueTooLarge},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			ta := &token.TransferAction{Inputs: tc.in, Outputs: tc.outs, Metadata: tc.md}
+			ta := &token.TransferAction{
+				TypeCommitment:   validTC,
+				BindingSignature: make([]byte, 96),
+				Inputs:           tc.in,
+				Outputs:          tc.outs,
+				Metadata:         tc.md,
+			}
 			ta.SetLimits(limits)
 			check(t, tc.target, ta.Validate())
 			raw, err := ta.Serialize()
@@ -72,7 +94,15 @@ func TestActionLimits(t *testing.T) {
 			if len(tc.in) > 1 {
 				return // issue actions have no inputs
 			}
-			ia := &token.IssueAction{Outputs: tc.outs, Metadata: tc.md}
+			ia := &token.IssueAction{
+				Issuer:           []byte("issuer"),
+				TokenType:        "USD",
+				TypeCommitment:   validTC,
+				TotalValue:       make([]byte, 32),
+				BindingSignature: make([]byte, 96),
+				Outputs:          tc.outs,
+				Metadata:         tc.md,
+			}
 			ia.SetLimits(limits)
 			check(t, tc.target, ia.Validate())
 			raw, err = ia.Serialize()

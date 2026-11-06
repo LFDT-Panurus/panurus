@@ -6,6 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 package token
 
 import (
+	"bytes"
+
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	protosv1 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
@@ -85,12 +87,42 @@ func (a *TransferAction) SetLimits(limits driver.ResourceLimits) {
 }
 
 // Validate performs a basic structural self-check on the action.
+// It validates all required fields: TypeCommitment, BindingSignature,
+// per-input SpendDescription fields, per-output OutputDescription fields,
+// InputIDs/Inputs length consistency, InputTokens/Inputs length consistency,
+// type commitment homogeneity across all inputs and outputs, and the
+// configured resource limits.
 func (a *TransferAction) Validate() error {
 	if len(a.Inputs) == 0 && len(a.Outputs) == 0 {
 		return errors.New("transfer action has no inputs and no outputs")
 	}
+	if err := a.checkLimits(); err != nil {
+		return err
+	}
+	if len(a.TypeCommitment) != fieldElementLen {
+		return errors.Errorf("transfer action: TypeCommitment must be %d bytes, got %d", fieldElementLen, len(a.TypeCommitment))
+	}
+	if len(a.BindingSignature) != signatureLen {
+		return errors.Errorf("transfer action: BindingSignature must be %d bytes, got %d", signatureLen, len(a.BindingSignature))
+	}
+	for i := range a.Inputs {
+		if err := a.Inputs[i].Validate(); err != nil {
+			return errors.Wrapf(err, "transfer action: input %d", i)
+		}
+		if !bytes.Equal(a.Inputs[i].TypeCommitment, a.TypeCommitment) {
+			return errors.Errorf("transfer action: input %d TypeCommitment does not match action TypeCommitment", i)
+		}
+	}
+	for j := range a.Outputs {
+		if err := a.Outputs[j].Validate(); err != nil {
+			return errors.Wrapf(err, "transfer action: output %d", j)
+		}
+		if !bytes.Equal(a.Outputs[j].TypeCommitment, a.TypeCommitment) {
+			return errors.Errorf("transfer action: output %d TypeCommitment does not match action TypeCommitment", j)
+		}
+	}
 
-	return a.checkLimits()
+	return nil
 }
 
 // ── driver.ActionWithInputs ────────────────────────────────────────────────────

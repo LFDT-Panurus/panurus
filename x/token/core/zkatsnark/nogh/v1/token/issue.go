@@ -6,6 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 package token
 
 import (
+	"bytes"
+
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	protosv1 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
@@ -130,15 +132,44 @@ func (a *IssueAction) SetLimits(limits driver.ResourceLimits) {
 }
 
 // Validate performs a basic structural self-check on the action.
+// It validates all required fields: Issuer, TokenType, TypeCommitment,
+// TotalValue, BindingSignature, every output's cryptographic fields,
+// type commitment homogeneity, and the configured resource limits.
 func (a *IssueAction) Validate() error {
+	if err := a.checkLimits(); err != nil {
+		return err
+	}
+	if len(a.Issuer) == 0 {
+		return errors.New("issue action: Issuer must not be empty")
+	}
+	if len(a.TokenType) == 0 {
+		return errors.New("issue action: TokenType must not be empty")
+	}
 	if len(a.Outputs) == 0 {
 		return errors.New("issue action has no outputs")
 	}
 	if err := a.validateInputs(); err != nil {
 		return err
 	}
+	if len(a.TypeCommitment) != fieldElementLen {
+		return errors.Errorf("issue action: TypeCommitment must be %d bytes, got %d", fieldElementLen, len(a.TypeCommitment))
+	}
+	if len(a.TotalValue) != fieldElementLen {
+		return errors.Errorf("issue action: TotalValue must be %d bytes, got %d", fieldElementLen, len(a.TotalValue))
+	}
+	if len(a.BindingSignature) != signatureLen {
+		return errors.Errorf("issue action: BindingSignature must be %d bytes, got %d", signatureLen, len(a.BindingSignature))
+	}
+	for j := range a.Outputs {
+		if err := a.Outputs[j].Validate(); err != nil {
+			return errors.Wrapf(err, "issue action: output %d", j)
+		}
+		if !bytes.Equal(a.Outputs[j].TypeCommitment, a.TypeCommitment) {
+			return errors.Errorf("issue action: output %d TypeCommitment does not match action TypeCommitment", j)
+		}
+	}
 
-	return a.checkLimits()
+	return nil
 }
 
 // validateInputs checks the upgrade inputs are complete and pairwise distinct,

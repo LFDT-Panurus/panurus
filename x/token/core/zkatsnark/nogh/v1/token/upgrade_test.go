@@ -178,11 +178,23 @@ func TestTokensUpgradeService(t *testing.T) {
 
 func TestIssueAction_UpgradeInputs(t *testing.T) {
 	alice, bob := newOwner(t), newOwner(t)
+	validTC := make([]byte, 32)
+	validProof := make([]byte, 292)
 	base := func() *snarktoken.IssueAction {
 		return &snarktoken.IssueAction{
-			Issuer:    []byte("issuer"),
-			TokenType: "USD",
-			Outputs:   []snarktoken.OutputDescription{{Recipient: alice.ID}},
+			Issuer:           []byte("issuer"),
+			TokenType:        "USD",
+			TypeCommitment:   validTC,
+			TotalValue:       make([]byte, 32),
+			BindingSignature: make([]byte, 96),
+			Outputs: []snarktoken.OutputDescription{{
+				CommitmentOut:   make([]byte, 32),
+				ValueCommitOutX: make([]byte, 32),
+				ValueCommitOutY: make([]byte, 32),
+				TypeCommitment:  validTC,
+				OutputProof:     validProof,
+				Recipient:       alice.ID,
+			}},
 			Inputs: []*snarktoken.IssueActionInput{
 				{ID: token2.ID{TxId: "tx1", Index: 0}, Token: fabtokenOutput(t, alice.ID, "USD", "10")},
 				{ID: token2.ID{TxId: "tx1", Index: 1}, Token: fabtokenOutput(t, bob.ID, "USD", "10")},
