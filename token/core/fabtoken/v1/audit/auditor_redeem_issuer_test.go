@@ -69,7 +69,7 @@ func buildRedeemAuditContext(t *testing.T, issuers []driver.Identity, approvingI
 // on-chain rejection leaves that Pending record to be reconciled only once the
 // recovery manager's NotFoundGracePeriod elapses.
 func TestTransferAuditValidate_RedeemIssuerMembership(t *testing.T) {
-	validate := TransferAuditValidate(64)
+	validate := TransferAuditValidate()
 
 	t.Run("redeem approved by a recognized issuer is accepted", func(t *testing.T) {
 		issuer := driver.Identity("issuer")

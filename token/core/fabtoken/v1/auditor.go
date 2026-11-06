@@ -88,7 +88,7 @@ func (s *AuditorService) AuditorCheck(ctx context.Context, request *driver.Token
 	}
 
 	pp := s.PublicParametersManager.PublicParams()
-	auditor := audit.NewAuditor(s.Logger, s.tracer, s.Deserializer, pp, pp.Precision(), s.Limits)
+	auditor := audit.NewAuditor(s.Logger, s.tracer, s.Deserializer, pp, s.Limits)
 	s.Logger.DebugfContext(ctx, "Start auditor check")
 	err = auditor.Check(
 		ctx,

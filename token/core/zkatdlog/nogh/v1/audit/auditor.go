@@ -9,6 +9,7 @@ package audit
 import (
 	"bytes"
 	"context"
+	"math/big"
 	"slices"
 
 	math "github.com/IBM/mathlib"
@@ -129,7 +130,6 @@ type Auditor = common.Auditor[*v1.PublicParams, *issue.Action, *transfer.Action,
 
 // NewAuditor creates a new Auditor for zkatdlog validation.
 func NewAuditor(logger logging.Logger, tracer trace.Tracer, infoMatcher InfoMatcher, pp []*math.G1, c *math.Curve, precision uint64, issuers []driver.Identity) *Auditor {
-	// Create public params wrapper - we don't need to set all fields, just what's needed
 	publicParams := &v1.PublicParams{
 		PedersenGenerators: pp,
 		QuantityPrecision:  precision,
@@ -141,7 +141,7 @@ func NewAuditor(logger logging.Logger, tracer trace.Tracer, infoMatcher InfoMatc
 	}
 
 	transferValidators := []ValidateTransferAuditFunc{
-		TransferAuditValidate(infoMatcher, pp, c, precision),
+		TransferAuditValidate(infoMatcher, pp, c),
 	}
 
 	auditor := common.NewAuditor[*v1.PublicParams, *issue.Action, *transfer.Action, driver.Deserializer](
@@ -236,7 +236,7 @@ func IssueAuditValidate(infoMatcher InfoMatcher, pedersenParams []*math.G1, curv
 }
 
 // TransferAuditValidate returns a validation function for transfer actions.
-func TransferAuditValidate(infoMatcher InfoMatcher, pedersenParams []*math.G1, curve *math.Curve, precision uint64) ValidateTransferAuditFunc {
+func TransferAuditValidate(infoMatcher InfoMatcher, pedersenParams []*math.G1, curve *math.Curve) ValidateTransferAuditFunc {
 	return func(ctx context.Context, auditCtx *AuditContext) error {
 		// Get the transfer action
 		action := auditCtx.TransferAction
@@ -271,9 +271,18 @@ func TransferAuditValidate(infoMatcher InfoMatcher, pedersenParams []*math.G1, c
 			return err
 		}
 
-		// Validate that all inputs and outputs have the same token type and sum of values
-		if err := common.ValidateTransferActionTokenTypes(metadata, auditCtx.AuditTokens, true, precision); err != nil {
+		// Validate that all inputs have the same token type. Output types and input/output value
+		// conservation are enforced cryptographically by the transfer proof (TypeAndSumVerifier,
+		// token/core/zkatdlog/nogh/v1/transfer/typeandsum.go) during validation, not here.
+		if err := common.ValidateTransferActionTokenTypes(metadata, auditCtx.AuditTokens); err != nil {
 			return errors.Wrapf(err, "token type validation failed for transfer action")
+		}
+
+		// Independent value-conservation cross-check (defense-in-depth vs. the transfer proof's
+		// TypeAndSumVerifier): the auditor has already opened and verified both the input and the
+		// output values, so it can confirm the sums balance from its own data.
+		if err := validateTransferValueConservation(metadata, auditCtx.AuditTokens, auditCtx.PP.Precision()); err != nil {
+			return errors.Wrapf(err, "value conservation check failed for transfer action")
 		}
 
 		// For redeems, validate that the issuer who approved the redeem is one of the issuers
@@ -290,6 +299,67 @@ func TransferAuditValidate(infoMatcher InfoMatcher, pedersenParams []*math.G1, c
 
 		return nil
 	}
+}
+
+// validateTransferValueConservation cross-checks that the sum of a transfer's input values equals
+// the sum of its output values, using the cleartext openings the auditor already holds and has
+// verified: input quantities come from the audit-token store (auditTokens), and output values come
+// from the output metadata whose commitments validateTransferOutputs/InspectOutput have already
+// confirmed open to exactly these values. It is an independent, defense-in-depth restatement of the
+// guarantee the transfer proof's TypeAndSumVerifier enforces cryptographically, so a regression in
+// proof wiring cannot silently let a non-conserving transfer pass audit. Redeem outputs carry a real
+// committed value and are included in the output sum. precision is the public-parameter quantity
+// precision used to decode the input quantity strings.
+func validateTransferValueConservation(
+	metadata *driver.TransferMetadata,
+	auditTokens map[string]*token2.Token,
+	precision uint64,
+) error {
+	// Sum input values from the audit tokens, looked up by the metadata input IDs.
+	inputSum := big.NewInt(0)
+	for i, in := range metadata.Inputs {
+		if in == nil || in.TokenID == nil {
+			return errors.Errorf("transfer input metadata at index [%d] has no token ID", i)
+		}
+		at, ok := auditTokens[in.TokenID.String()]
+		if !ok || at == nil {
+			return errors.Errorf("audit token for input [%d] [%s] not found", i, in.TokenID)
+		}
+		q, err := token2.ToQuantity(at.Quantity, precision)
+		if err != nil {
+			return errors.Wrapf(err, "failed to parse input quantity at index [%d]", i)
+		}
+		inputSum.Add(inputSum, q.ToBigInt())
+	}
+
+	// Sum output values from the (already commitment-verified) output metadata openings.
+	outputSum := big.NewInt(0)
+	for i, out := range metadata.Outputs {
+		if out == nil {
+			return errors.Errorf("transfer output metadata at index [%d] is nil", i)
+		}
+		tm := &token.Metadata{}
+		if err := tm.Deserialize(out.OutputMetadata); err != nil {
+			return errors.Wrapf(err, "failed to deserialize output metadata at index [%d]", i)
+		}
+		if tm.Value == nil {
+			return errors.Errorf("output metadata at index [%d] has no value", i)
+		}
+		v, err := tm.Value.Uint()
+		if err != nil {
+			return errors.Wrapf(err, "failed to read output value at index [%d]", i)
+		}
+		outputSum.Add(outputSum, new(big.Int).SetUint64(v))
+	}
+
+	if inputSum.Cmp(outputSum) != 0 {
+		return errors.Errorf(
+			"value conservation violated: inputs sum to [%s] but outputs sum to [%s]",
+			inputSum.String(), outputSum.String(),
+		)
+	}
+
+	return nil
 }
 
 // validateRedeemIssuer checks that the issuer who approved a redeem is one of the issuers
