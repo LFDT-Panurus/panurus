@@ -7,7 +7,7 @@ Runtime call tracing library for hierarchical performance profiling.
 ### Basic Example
 
 ```go
-import "github.com/LFDT-Panurus/panurus/tools/profiler/tracer"
+import "github.com/LFDT-Panurus/panurus/cmd/profiler/tracer"
 
 func main() {
     tracer.Enable()

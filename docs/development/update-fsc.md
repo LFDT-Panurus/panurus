@@ -100,9 +100,9 @@ they've drifted.
 
 ### 4. Detect API breakage
 
-For every module in `GO_MODULES` (see `Makefile:36` for the current list — today:
+For every module in `GO_MODULES` (see `GO_MODULES` in the `Makefile` for the current list — today:
 `. integration token/services/storage/db/kvs/hashicorp cmd/artifactgen cmd/tokengen
-cmd/token_validation_service cmd/profiler cmd/skicleanup cmd/node`):
+cmd/token_validation_service cmd/skicleanup cmd/tokendiag cmd/node x/token/services/network/evm`):
 
 ```bash
 (cd <module-dir> && go build ./... && go vet -all ./...)

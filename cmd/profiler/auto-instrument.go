@@ -87,7 +87,7 @@ func instrumentFile(filename string) error {
 
 	// Check if tracer is already imported
 	for _, imp := range node.Imports {
-		if imp.Path.Value == `"github.com/LFDT-Panurus/panurus/tools/profiler/tracer"` {
+		if imp.Path.Value == `"github.com/LFDT-Panurus/panurus/cmd/profiler/tracer"` {
 			hasTracerImport = true
 			if imp.Name != nil {
 				tracerAlias = imp.Name.Name
@@ -186,7 +186,7 @@ func addTracerImport(node *ast.File, alias string) {
 	importSpec := &ast.ImportSpec{
 		Path: &ast.BasicLit{
 			Kind:  token.STRING,
-			Value: `"github.com/LFDT-Panurus/panurus/tools/profiler/tracer"`,
+			Value: `"github.com/LFDT-Panurus/panurus/cmd/profiler/tracer"`,
 		},
 	}
 
