@@ -16,9 +16,9 @@ import (
 
 	token2 "github.com/LFDT-Panurus/panurus/token"
 	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
-	"github.com/LFDT-Panurus/panurus/token/services/identity/storage/kvs/hashicorp"
 	"github.com/LFDT-Panurus/panurus/token/services/storage"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs/hashicorp"
 	vault "github.com/hashicorp/vault/api"
 	fsckvs "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/kvs"
 	"github.com/stretchr/testify/assert"

@@ -145,6 +145,19 @@ if [[ $? -ne 0 ]]; then
 fi
 echo -e "${GREEN}Tracer injected${NC}"
 
+# Ensure tracer package is available in the temporary workspace
+echo -e "${BLUE}Configuring tracer access...${NC}"
+cd "$TEMP_TEST_DIR"
+
+# The tracer lives in the cmd/profiler module: point it at the copy in the temporary workspace
+PROFILER_MODULE_DIR="$WORK_DIR/cmd/profiler"
+go mod edit -replace github.com/LFDT-Panurus/panurus/cmd/profiler="$PROFILER_MODULE_DIR"
+if ! go mod tidy 2>&1; then
+    echo -e "${RED}Error: go mod tidy failed${NC}"
+    exit 1
+fi
+echo -e "${GREEN}Tracer configured${NC}"
+
 # Cleanup function
 cleanup() {
     if [[ -d "$TEMP_DIR" ]]; then
