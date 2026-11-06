@@ -1,0 +1,193 @@
+name: Bill of materials
+
+# Builds two kinds of bill of materials and uploads them as workflow artifacts.
+#
+#   sbom  One CycloneDX software bill of materials (SBOM) per Go module, from
+#         its go.mod, with the detected license of every dependency.
+#   cbom  A CycloneDX cryptography bill of materials (CBOM) from CBOMkit's
+#         source scanner, one per Go module plus a consolidated cbom.json.
+#
+# The CBOM lists only what CBOMkit's Go rules recognize: the standard library
+# crypto packages (except crypto/x509) and golang.org/x/crypto's hkdf, pbkdf2
+# and sha3. Cryptography that comes from other libraries, such as
+# github.com/IBM/mathlib, github.com/IBM/idemix and
+# github.com/consensys/gnark-crypto, is not in it.
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/bom.yml'
+      - '**/go.mod'
+      - '**/go.sum'
+  workflow_dispatch:
+
+# Least privilege: both jobs only read the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  sbom:
+    name: SBOM (CycloneDX, Go modules)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CYCLONEDX_GOMOD_VERSION: v1.12.0
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: "go.mod"
+          cache-dependency-path: "**/*.sum"
+
+      - name: Install cyclonedx-gomod
+        run: |
+          go install "github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@${CYCLONEDX_GOMOD_VERSION}"
+          cyclonedx-gomod version
+
+      - name: Generate one SBOM per Go module
+        run: |
+          set -euo pipefail
+          mkdir -p sbom
+          mods=$(git ls-files '*go.mod' | sort)
+          for modfile in $mods; do
+            dir=$(dirname "$modfile")
+            if [ "$dir" = "." ]; then
+              name=panurus
+            else
+              name="panurus-$(printf '%s' "$dir" | tr '/' '-')"
+            fi
+            # The command-line tools are applications; everything else is
+            # consumed as a library.
+            case "$dir" in
+              cmd/*) type=application ;;
+              *)     type=library ;;
+            esac
+            echo "::group::${dir} -> sbom/${name}.cdx.json (${type})"
+
+            # Some modules require a sibling module at a placeholder version
+            # (v0.0.0) without replacing it, so their full module graph does
+            # not resolve on its own even though they build. For those, point
+            # every in-repo module at this checkout, in the job's copy of
+            # go.mod only, and record that it was done.
+            if ! (cd "$dir" && go list -mod=readonly -m all >/dev/null 2>list.err); then
+              echo "::warning file=${modfile}::Module graph does not resolve as committed: $(head -n 1 "$dir/list.err")"
+              echo "Using this checkout for in-repo modules."
+              for other in $mods; do
+                odir=$(dirname "$other")
+                [ "$odir" = "$dir" ] && continue
+                opath=$(awk '$1 == "module" { print $2; exit }' "$other")
+                # No "/." for the root module: cyclonedx-gomod hashes a
+                # replaced module's directory and mangles file names when
+                # the path does not end in a directory name.
+                target="${GITHUB_WORKSPACE}"
+                [ "$odir" = "." ] || target="${GITHUB_WORKSPACE}/${odir}"
+                (cd "$dir" && go mod edit -replace "${opath}=${target}")
+              done
+              printf '%s\n' "$dir" >> sbom/go-mod-amended.txt
+            fi
+            rm -f "$dir/list.err"
+
+            # License detection reads each dependency's source from the module
+            # cache, so fetch it first; a download failure is then reported by
+            # go itself rather than as a missing license.
+            (cd "$dir" && go mod download)
+            cyclonedx-gomod mod -json -licenses -type "$type" \
+              -output-version 1.6 -output "sbom/${name}.cdx.json" "$dir"
+            echo "::endgroup::"
+          done
+
+      - name: Summarize
+        run: |
+          set -euo pipefail
+          # cyclonedx-gomod records a detected license as evidence, not as a
+          # declared license, so look in both places.
+          lic='(.licenses // .evidence.licenses // [])'
+          {
+            echo "### Software bills of materials"
+            echo
+            echo "| SBOM | Components | No license detected |"
+            echo "| --- | ---: | ---: |"
+            for f in sbom/*.cdx.json; do
+              echo "| \`$(basename "$f")\` | $(jq '.components | length' "$f") | $(jq "[.components[] | select(($lic | length) == 0)] | length" "$f") |"
+            done
+            if [ -f sbom/go-mod-amended.txt ]; then
+              echo
+              echo "These modules do not resolve as committed, so their SBOM was"
+              echo "built with in-repo modules pointed at this checkout:"
+              echo
+              while read -r m; do printf -- "- \`%s\`\n" "$m"; done < sbom/go-mod-amended.txt
+            fi
+            echo
+            echo "| License | Distinct dependency versions |"
+            echo "| --- | ---: |"
+            jq -r ".components[] | [.name, .version, ($lic | map(.license.id // .license.name // .expression) | join(\" + \"))] | @tsv" \
+              sbom/*.cdx.json | sort -u | awk -F'\t' '{ print ($3 == "" ? "(none detected)" : $3) }' \
+              | sort | uniq -c | sort -rn | awk '{ n = $1; $1 = ""; sub(/^ /, ""); printf "| %s | %s |\n", $0, n }'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload SBOMs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom
+          path: sbom/
+          if-no-files-found: error
+
+  cbom:
+    name: CBOM (CBOMkit, Go)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Scan Go sources for cryptography
+        id: cbom
+        uses: cbomkit/cbomkit-action@34a3d960625ae7f7f1b59455eff93a96df090eb7 # v2.3.0
+        env:
+          CBOMKIT_LANGUAGES: go
+          # Shipped code only: tests are not part of the inventory.
+          CBOMKIT_EXCLUDE: '_test\.go$'
+
+      - name: Summarize
+        run: |
+          set -euo pipefail
+          {
+            echo "### Cryptography bill of materials"
+            echo
+            echo "Only cryptography from the Go standard library and three"
+            echo "\`golang.org/x/crypto\` packages is detected. See the note at"
+            echo "the top of the workflow file."
+            echo
+            echo "| Asset | Type | Primitive | Occurrences |"
+            echo "| --- | --- | --- | ---: |"
+            jq -r '(.components // [])[] | [.name, (.cryptoProperties.assetType // .type), (.cryptoProperties.algorithmProperties.primitive // "-"), ((.evidence.occurrences // []) | length)] | @tsv' \
+              cbom/cbom.json | sort | awk -F'\t' '{ printf "| %s | %s | %s | %s |\n", $1, $2, $3, $4 }'
+            echo
+            echo "| CBOM | Assets |"
+            echo "| --- | ---: |"
+            for f in cbom/cbom*.json; do
+              echo "| \`$(basename "$f")\` | $(jq '(.components // []) | length' "$f") |"
+            done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload CBOMs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cbom
+          path: ${{ steps.cbom.outputs.pattern }}
+          if-no-files-found: error
