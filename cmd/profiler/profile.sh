@@ -138,7 +138,7 @@ TEMP_TEST_FILE="$WORK_DIR/${TEST_FILE#$REPO_ROOT/}"
 TEMP_TEST_DIR=$(dirname "$TEMP_TEST_FILE")
 
 cd "$SCRIPT_DIR"
-go run inject-tracer.go -file "$TEMP_TEST_FILE" -bench "$TEST_NAME"
+go run ./injecttracer -file "$TEMP_TEST_FILE" -bench "$TEST_NAME"
 if [[ $? -ne 0 ]]; then
     echo -e "${RED}Error: Failed to inject tracer${NC}"
     exit 1
