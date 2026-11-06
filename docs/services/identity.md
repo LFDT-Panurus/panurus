@@ -231,6 +231,18 @@ func (d *Base) NewWalletService(...) (*wallet.Service, error) {
 }
 ```
 
+### Signer cache size
+
+`Provider` keeps resolved signers in a bounded in-memory cache keyed by the identity's `UniqueID()`.
+Its size defaults to `identity.DefaultSignerCacheSize` (50 entries) and is set per TMS with
+`token.tms.<tms>.wallets.signerCacheSize` (see [configuration](../configuration.md)), which the drivers
+pass to `NewProvider` via `identity.WithSignerCacheSize`; a value of 0 or less selects the default.
+
+Each typed identity takes **two** slots — the outer typed bytes and the bare inner identity are both
+lookup keys — so the default holds about 25 typed identities. A node that signs with more distinct
+identities than that in rotation evicts them and re-deserializes (for Idemix, re-running the
+sign+verify probe) on every `GetSigner`; size the cache to at least twice that working set.
+
 ### SignerRouter (conf_id-pinned fast path)
 
 `GetSigner`'s default resolution path is a **fallback deserializer**: a linear scan across every `KeyManager` registered under the identity's type, each probed with a cryptographic sign+verify to find the one that actually matches. `SignerRouter` (`token/services/identity/signer_router.go`) is an optional fast path that skips this scan-and-probe entirely: it resolves the `conf_id` an identity was bound under (via a `ConfIDResolver`) and dispatches straight to the single `KeyManager` registered for that `conf_id`.
