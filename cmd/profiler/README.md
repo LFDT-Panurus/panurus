@@ -166,7 +166,7 @@ For most use cases, use `profile.sh` instead of manual instrumentation.
 
 - `profile.sh` - Automated profiling script
 - `auto-instrument.go` - Adds tracer hooks to Go files
-- `inject-tracer.go` - Injects tracer into test/benchmark
+- `injecttracer/` - Injects tracer into test/benchmark
 - `tracer/` - Runtime tracing library
 
 ## Troubleshooting

@@ -1,5 +1,3 @@
-//go:build tools
-
 /*
 Copyright IBM Corp. All Rights Reserved.
 
@@ -16,6 +14,8 @@ import (
 	"go/printer"
 	"go/token"
 	"os"
+
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
 func main() {
@@ -24,7 +24,7 @@ func main() {
 	flag.Parse()
 
 	if *benchFile == "" || *benchName == "" {
-		fmt.Println("Usage: go run inject-tracer.go -file <path> -bench <name>")
+		fmt.Println("Usage: go run ./injecttracer -file <path> -bench <name>")
 		os.Exit(1)
 	}
 
@@ -38,7 +38,7 @@ func injectTracer(filename, benchName string) error {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, filename, nil, parser.ParseComments)
 	if err != nil {
-		return fmt.Errorf("failed to parse file: %w", err)
+		return errors.Wrap(err, "failed to parse file")
 	}
 
 	// Add tracer import if not present
@@ -53,24 +53,32 @@ func injectTracer(filename, benchName string) error {
 		if fn, ok := n.(*ast.FuncDecl); ok && fn.Name.Name == benchName {
 			injectTracerCode(fn)
 			modified = true
+
 			return false
 		}
+
 		return true
 	})
 
 	if !modified {
-		return fmt.Errorf("benchmark function %s not found", benchName)
+		return errors.Errorf("benchmark function %s not found", benchName)
 	}
 
 	// Write back to file
 	f, err := os.Create(filename)
 	if err != nil {
-		return fmt.Errorf("failed to create file: %w", err)
+		return errors.Wrap(err, "failed to create file")
 	}
-	defer f.Close()
 
 	if err := printer.Fprint(f, fset, file); err != nil {
-		return fmt.Errorf("failed to write file: %w", err)
+		_ = f.Close()
+
+		return errors.Wrap(err, "failed to write file")
+	}
+
+	// os.Create truncated the file: a failed Close can mean a partial write.
+	if err := f.Close(); err != nil {
+		return errors.Wrap(err, "failed to write file")
 	}
 
 	return nil
@@ -126,6 +134,7 @@ func addTracerImport(file *ast.File) {
 	for _, decl := range file.Decls {
 		if gen, ok := decl.(*ast.GenDecl); ok && gen.Tok == token.IMPORT {
 			importDecl = gen
+
 			break
 		}
 	}
@@ -176,6 +185,7 @@ var (
 	flagFile, err := parser.ParseFile(fset, "", "package main\n"+flagVars, 0)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Failed to parse flag declarations: %v\n", err)
+
 		return
 	}
 
@@ -229,8 +239,10 @@ func injectTracerCode(fn *ast.FuncDecl) {
 	ast.Inspect(initFile, func(n ast.Node) bool {
 		if fn, ok := n.(*ast.FuncDecl); ok && fn.Name.Name == "dummy" {
 			initStmts = fn.Body.List
+
 			return false
 		}
+
 		return true
 	})
 
