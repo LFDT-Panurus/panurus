@@ -22,8 +22,9 @@ import (
 // as the first of its tokens aged past the TTL, permanently breaking the wallet.
 //
 // This is the opposite of the Idemix providers (idemix.SKIProvider, idemixnym.SKIProvider),
-// whose SKIs identify a one-shot pseudonym key created for a single recipient identity. Such a
-// key is dead once its token is deleted, which is exactly what makes it safe to remove.
+// whose SKIs identify a pseudonym key created for a single recipient identity. Such a key is dead
+// once every token owned by that identity is deleted, which is exactly what makes it safe to
+// remove; the storage only reports a deleted token for cleanup once that is the case.
 //
 // Consequence to be aware of: a deleted X.509-owned token still gets a row in
 // token_ski_cleanups, because cleanupToken records "no key material to delete" the same way it

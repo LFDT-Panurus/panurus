@@ -1924,4 +1924,59 @@ func TGetDeletedTokensPendingSKICleanup(t *testing.T, db TestTokenDB) {
 		}
 		assert.True(t, foundOwnedControl, "owned token should still be returned")
 	})
+
+	// Test 13: an owner identity that owns several tokens keeps its keys until all of them are
+	// spent. The keys are derived from the owner identity alone, so they are shared by every token
+	// it owns, and deleting them while one is still unspent would make that token unspendable.
+	t.Run("SharedOwnerIdentity", func(t *testing.T) {
+		storeOwnedToken := func(txID string, owner []byte, ownerType string) {
+			require.NoError(t, db.StoreToken(ctx, driver2.TokenRecord{
+				TxID:           txID,
+				Index:          0,
+				OwnerRaw:       []byte{1, 2, 3},
+				OwnerType:      ownerType,
+				OwnerIdentity:  owner,
+				Ledger:         []byte("ledger"),
+				LedgerMetadata: []byte{},
+				Quantity:       "0x01",
+				Type:           ABC,
+				Amount:         big.NewInt(1),
+				Owner:          true,
+			}, []string{"alice"}))
+		}
+		pending := func() map[string]bool {
+			tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 100)
+			require.NoError(t, err, "query should not error")
+			found := map[string]bool{}
+			for _, tok := range tokens {
+				found[tok.TxID] = true
+			}
+
+			return found
+		}
+
+		shared := []byte("shared_owner")
+		storeOwnedToken("shared_a", shared, "idemix")
+		storeOwnedToken("shared_b", shared, "idemix")
+		require.NoError(t, db.DeleteTokens(ctx, "deleter_tx", &token.ID{TxId: "shared_a", Index: 0}))
+
+		found := pending()
+		assert.False(t, found["shared_a"], "a spent token must not be returned while its owner identity still owns an unspent token")
+
+		require.NoError(t, db.DeleteTokens(ctx, "deleter_tx", &token.ID{TxId: "shared_b", Index: 0}))
+
+		found = pending()
+		assert.True(t, found["shared_a"], "once every token of the owner identity is spent, its tokens must be returned")
+		assert.True(t, found["shared_b"], "once every token of the owner identity is spent, its tokens must be returned")
+
+		// The same identity bytes under another owner type are a different identity and do not
+		// hold the token back.
+		other := []byte("other_type_owner")
+		storeOwnedToken("other_type_a", other, "idemix")
+		storeOwnedToken("other_type_b", other, "x509")
+		require.NoError(t, db.DeleteTokens(ctx, "deleter_tx", &token.ID{TxId: "other_type_a", Index: 0}))
+
+		found = pending()
+		assert.True(t, found["other_type_a"], "an unspent token of another owner type must not hold the token back")
+	})
 }
