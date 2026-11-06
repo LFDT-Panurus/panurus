@@ -226,7 +226,13 @@ func (t *DBTransaction) AppendToken(ctx context.Context, tta *TokenToAppend) err
 		Issuer:         tta.Flags.Issuer,
 		Redeemed:       tta.Flags.Redeemed,
 	}, tta.Owners)
-	if err != nil && !errors.HasCause(err, driver.UniqueKeyViolation) {
+	if err != nil {
+		if errors.HasCause(err, driver.UniqueKeyViolation) {
+			logger.DebugfContext(ctx, "token [%s:%d] already exists, skipping owner notification", tta.TxID, tta.Index)
+
+			return nil
+		}
+
 		return errors.Wrapf(err, "cannot store token in db")
 	}
 
@@ -253,13 +259,18 @@ func (t *DBTransaction) Notify(ctx context.Context, topic string, tmsID token.TM
 		return
 	}
 
-	e := NewTokenProcessorEvent(topic, &TokenMessage{
+	e, err := NewTokenProcessorEvent(topic, &TokenMessage{
 		TMSID:     tmsID,
 		WalletID:  walletID,
 		TokenType: tokenType,
 		TxID:      txID,
 		Index:     index,
 	})
+	if err != nil {
+		logger.ErrorfContext(ctx, "failed creating token processor event: %s", err)
+
+		return
+	}
 
 	logger.DebugfContext(ctx, "record new event %v", e)
 	t.pending = append(t.pending, e)
@@ -327,11 +338,16 @@ type TokenProcessorEvent struct {
 }
 
 // NewTokenProcessorEvent creates a new event with the given topic and message.
-func NewTokenProcessorEvent(topic string, message *TokenMessage) *TokenProcessorEvent {
+// It returns an error if message is nil.
+func NewTokenProcessorEvent(topic string, message *TokenMessage) (*TokenProcessorEvent, error) {
+	if message == nil {
+		return nil, errors.New("nil token message")
+	}
+
 	return &TokenProcessorEvent{
 		topic:   topic,
 		message: *message,
-	}
+	}, nil
 }
 
 // TokenMessage contains the details of a token-related event.

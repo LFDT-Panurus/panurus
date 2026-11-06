@@ -15,6 +15,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/tokens"
 	"github.com/LFDT-Panurus/panurus/token/services/tokens/mock"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -122,6 +123,31 @@ func TestTransaction_AppendToken_Notify(t *testing.T) {
 		TxID:      "tx1",
 		Index:     0,
 	}, e.Message())
+}
+
+func TestTransaction_AppendToken_UniqueKeyViolationDoesNotNotify(t *testing.T) {
+	ctx := context.Background()
+	tmsID := token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}
+	mockTx := &mock.FakeTokenStoreTransaction{}
+	pub := &mock.FakePublisher{}
+
+	tx, err := tokens.NewTransaction(pub, &tokendb.Transaction{TokenStoreTransaction: mockTx}, tmsID)
+	require.NoError(t, err)
+
+	tta := tokens.TokenToAppend{
+		TxID:      "tx1",
+		Index:     0,
+		Tok:       &token2.Token{Type: "TOK", Owner: []byte("alice"), Quantity: "0x64"},
+		Precision: 64,
+		Owners:    []string{"wallet1"},
+		Flags:     tokens.Flags{Mine: true},
+	}
+	mockTx.StoreTokenReturns(driver.UniqueKeyViolation)
+	err = tx.AppendToken(ctx, &tta)
+	require.NoError(t, err)
+
+	require.NoError(t, tx.Commit(ctx))
+	assert.Equal(t, 0, pub.PublishCallCount(), "should not notify owners on UniqueKeyViolation")
 }
 
 // TestTransaction_AppendToken_NoEventBeforeCommit is the reproduction reported in
@@ -383,9 +409,17 @@ func TestTokenProcessorEvent(t *testing.T) {
 		TxID:      "tx1",
 		Index:     0,
 	}
-	e := tokens.NewTokenProcessorEvent(tokens.AddToken, msg)
+	e, err := tokens.NewTokenProcessorEvent(tokens.AddToken, msg)
+	require.NoError(t, err)
 	assert.Equal(t, tokens.AddToken, e.Topic())
 	assert.NotNil(t, e.Message())
+}
+
+func TestNewTokenProcessorEvent_NilMessage(t *testing.T) {
+	e, err := tokens.NewTokenProcessorEvent(tokens.AddToken, nil)
+	assert.Nil(t, e)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nil token message")
 }
 
 func TestDBStorage_NewTransaction_Error(t *testing.T) {
