@@ -45,8 +45,8 @@ func TestEndorserSelectionForOwnOrg(t *testing.T) {
 func TestEndorserSelectionForOwnOrgNoOrganization(t *testing.T) {
 	tms := WithEndorsersFromOwnOrg(newTMS())
 
-	// The bootstrap node has no Fabric organization and does not endorse: nothing to select.
-	assert.Nil(t, EndorserSelectionFor(tms, newNode("lib-p2p-bootstrap-node")))
+	// A node without a Fabric organization does not endorse: nothing to select.
+	assert.Nil(t, EndorserSelectionFor(tms, newNode("norg")))
 }
 
 func TestEndorserSelectionForOwnOrgIgnoresOtherNetworks(t *testing.T) {

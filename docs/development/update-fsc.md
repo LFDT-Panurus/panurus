@@ -54,10 +54,9 @@ Two FSC sub-modules are separate Go modules, pinned by `replace` in
 - `github.com/hyperledger-labs/fabric-smart-client/platform/fabric/services/state/cc/query`
 - `github.com/hyperledger-labs/fabric-smart-client/platform/view/services/comm/host/libp2p`
 
-FSC tags them on the same commit as each release (`v0.27.0` is one commit for the root
-module and both sub-modules), and FSC core and its libp2p host can change together:
-since `v0.27.0`, core stops closing shared libp2p streams only when the host implements
-`SharedStreams()`, which older libp2p tags lack. So:
+FSC tags them on the same commit as each release (`v0.28.0` is one commit for the root
+module and both sub-modules), and FSC core and its libp2p host can change together, so
+they must be kept on the same tag as core. So:
 
 - **Tagged release** (`VER=vX.Y.Z`): bump both sub-modules to the same tag. Edit the
   `replace` lines in `hashicorp` and `tokengen` by hand, run
@@ -139,8 +138,7 @@ individual checks.
 
 `govulncheck` findings with no upstream fix are tracked in
 `ci/govulncheck-allowlist.txt`, not silenced ad hoc. If this FSC bump changes
-which vulnerable transitive dependency (e.g. `go-libp2p-kad-dht`, see
-`GO-2024-3218` in that file) is reachable — a fix ships upstream, the call
+which vulnerable transitive dependency (e.g. a libp2p dependency) is reachable — a fix ships upstream, the call
 path disappears, or a *new* reachable finding appears — update the allowlist
 file accordingly instead of leaving it stale or bypassing the check.
 
