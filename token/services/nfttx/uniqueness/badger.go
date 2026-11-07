@@ -8,12 +8,9 @@ import (
 	"context"
 	"os"
 
-	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	badger "github.com/dgraph-io/badger/v4"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
-
-var logger = logging.MustGetLogger()
 
 // BadgerKVS is a badger-backed implementation of the KVS interface.
 type BadgerKVS struct {
@@ -52,32 +49,11 @@ func (b *BadgerKVS) Close() error {
 	return b.db.Close()
 }
 
-// Exists returns true if the key exists in the store.
+// Get retrieves the value for the given key. A missing key is reported as ErrKeyNotFound; any
+// other badger failure (txn conflict, corruption, ...) is propagated as itself.
 //
 // BadgerDB transactions are goroutine-safe via MVCC, so no external locking is
-// required around Exists/Get/Put.
-//
-// The KVS interface forces Exists to return bool with no error, so any error
-// other than ErrKeyNotFound (e.g. txn conflict, corruption) is logged here
-// rather than silently swallowed - callers will see Exists return false, but
-// the underlying failure will be visible in the logs for diagnosis.
-func (b *BadgerKVS) Exists(_ context.Context, k string) bool {
-	err := b.db.View(func(txn *badger.Txn) error {
-		_, err := txn.Get([]byte(k))
-
-		return err
-	})
-	if err == nil {
-		return true
-	}
-	if !errors.Is(err, badger.ErrKeyNotFound) {
-		logger.Warnf("badger Exists(%q) returned unexpected error: %v", k, err)
-	}
-
-	return false
-}
-
-// Get retrieves the value for the given key.
+// required around Get/Put.
 func (b *BadgerKVS) Get(_ context.Context, k string, v any) error {
 	ptr, ok := v.(*[]byte)
 	if !ok {
@@ -88,8 +64,8 @@ func (b *BadgerKVS) Get(_ context.Context, k string, v any) error {
 		item, err := txn.Get([]byte(k))
 		if err != nil {
 			if errors.Is(err, badger.ErrKeyNotFound) {
-				// Wrap (not Errorf) so callers can still errors.Is(err, badger.ErrKeyNotFound).
-				return errors.Wrapf(err, "key %s not found", k)
+				// Join both so errors.Is reports either sentinel.
+				return errors.Wrapf(errors.Join(ErrKeyNotFound, err), "key %s not found", k)
 			}
 
 			return err

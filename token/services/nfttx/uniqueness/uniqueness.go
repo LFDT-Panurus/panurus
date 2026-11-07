@@ -18,9 +18,17 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/nfttx/marshaller"
 )
 
+// ErrKeyNotFound is how a KVS Get reports that the key holds no value. Wrap it rather than
+// returning it bare, so errors.Is still reports it and the backend's own cause stays readable.
+var ErrKeyNotFound = errors.New("key not found")
+
 // KVS is the interface for the key-value store backend used by the uniqueness service.
+//
+// Get must propagate store failures, and report a missing key either as ErrKeyNotFound or as a
+// nil error leaving the destination untouched. Anything else is a failed read. Get is
+// deliberately the only read here: a bare bool cannot tell absence from a failed read, and
+// mistaking the latter for the former made the service overwrite a live salt (#2626).
 type KVS interface {
-	Exists(ctx context.Context, k string) bool
 	Get(ctx context.Context, k string, v any) error
 	Put(ctx context.Context, k string, key any) error
 }
@@ -47,13 +55,14 @@ func (s *Service) ComputeID(ctx context.Context, state any) (string, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	k := "github.com/LFDT-Panurus/panurus/token/services/nfttx/uniqueness/key"
+	// Get, not an Exists-style bool: a failed read must not read as an absent salt (#2626).
 	var key []byte
-	if s.kvs.Exists(ctx, k) {
-		if err := s.kvs.Get(ctx, k, &key); err != nil {
-			return "", errors.WithMessagef(err, "failed to get key %s", k)
-		}
-	} else {
-		// sample a random 32 bytes key and store it
+	if err := s.kvs.Get(ctx, k, &key); err != nil && !errors.Is(err, ErrKeyNotFound) {
+		return "", errors.WithMessagef(err, "failed to get key %s", k)
+	}
+	// Empty covers both shapes of absence: an ErrKeyNotFound above, and a backend that reports
+	// a missing key as a nil error with the destination untouched (the vault KVS does).
+	if len(key) == 0 {
 		size := 32
 		key = make([]byte, size)
 		n, err := rand.Read(key)

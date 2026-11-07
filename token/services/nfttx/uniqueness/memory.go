@@ -24,22 +24,13 @@ func NewMemoryKVS() *MemoryKVS {
 	}
 }
 
-// Exists returns true if the key exists in the store.
-func (m *MemoryKVS) Exists(_ context.Context, k string) bool {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
-	_, ok := m.store[k]
-
-	return ok
-}
-
-// Get retrieves the value for the given key.
+// Get retrieves the value for the given key. A missing key is reported as ErrKeyNotFound.
 func (m *MemoryKVS) Get(_ context.Context, k string, v any) error {
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
 	val, ok := m.store[k]
 	if !ok {
-		return errors.Errorf("key %s not found", k)
+		return errors.Wrapf(ErrKeyNotFound, "key %s not found", k)
 	}
 	ptr, ok := v.(*[]byte)
 	if !ok {
