@@ -26,7 +26,6 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabricx"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc/node"
-	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc/support/libp2p"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/monitoring"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/tracing"
 )
@@ -224,7 +223,6 @@ func Topology(opts common.Opts) []api.Topology {
 		fabric2.SetOrgs(tms, "Org1")
 	}
 	nodeList := fscTopology.ListNodes()
-	fscTopology.SetBootstrapNode(fscTopology.AddNodeByName("lib-p2p-bootstrap-node"))
 
 	if !opts.NoAuditor {
 		tms.AddAuditor(auditor)
@@ -259,8 +257,6 @@ func Topology(opts common.Opts) []api.Topology {
 				node.AddSDKWithBase(opts.SDKs[0], &endorser.SDK{})
 			}
 		}
-
-		fscTopology.ListNodes("lib-p2p-bootstrap-node")[0].AddSDK(&libp2p.SDK{})
 
 		// add the rest of Panuruss
 		for i := 1; i < len(opts.SDKs); i++ {
