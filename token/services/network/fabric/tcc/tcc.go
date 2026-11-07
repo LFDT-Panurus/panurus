@@ -107,14 +107,24 @@ func (cc *TokenChaincode) Invoke(stub shim.ChaincodeStubInterface) (res *pb.Resp
 			logger.Errorf("[%s] invoke triggered panic: %s\n%s\n", txID, r, string(debug.Stack()))
 			res = shim.Error(fmt.Sprintf("failed responding [%s]", r))
 		} else {
-			if res.Status == 200 {
-				logger.Debugf("[%s] OK", txID)
-			} else {
-				logger.Errorf("[%s] %d: %s", txID, res.Status, res.Message)
-			}
+			logInvokeResult(txID, res)
 		}
 	}()
 
+	return cc.dispatch(stub, txID)
+}
+
+// logInvokeResult logs the outcome of an Invoke call that returned without panicking.
+func logInvokeResult(txID string, res *pb.Response) {
+	if res.Status == 200 {
+		logger.Debugf("[%s] OK", txID)
+	} else {
+		logger.Errorf("[%s] %d: %s", txID, res.Status, res.Message)
+	}
+}
+
+// dispatch routes an Invoke call to the chaincode function named by its first argument.
+func (cc *TokenChaincode) dispatch(stub shim.ChaincodeStubInterface, txID string) *pb.Response {
 	args := stub.GetArgs()
 	switch l := len(args); l {
 	case 0:
@@ -123,20 +133,7 @@ func (cc *TokenChaincode) Invoke(stub shim.ChaincodeStubInterface) (res *pb.Resp
 		logger.Debugf("[%s] %s", txID, string(args[0]))
 		switch f := string(args[0]); f {
 		case InvokeFunction:
-			if len(args) != 1 {
-				return shim.Error("empty token request")
-			}
-			// extract token request from transient
-			t, err := stub.GetTransient()
-			if err != nil {
-				return shim.Error("failed getting transient")
-			}
-			tokenRequest, ok := t["token_request"]
-			if !ok {
-				return shim.Error("failed getting token request, entry not found")
-			}
-
-			return cc.ProcessRequest(tokenRequest, stub)
+			return cc.invokeTokenRequest(stub, args)
 		case QueryPublicParamsFunction:
 			return cc.QueryPublicParams(stub)
 		case QueryTokensFunctions:
@@ -161,6 +158,25 @@ func (cc *TokenChaincode) Invoke(stub shim.ChaincodeStubInterface) (res *pb.Resp
 			return shim.Error(fmt.Sprintf("function [%s] not recognized", f))
 		}
 	}
+}
+
+// invokeTokenRequest handles InvokeFunction: it reads the token request from the transient map
+// and processes it.
+func (cc *TokenChaincode) invokeTokenRequest(stub shim.ChaincodeStubInterface, args [][]byte) *pb.Response {
+	if len(args) != 1 {
+		return shim.Error("empty token request")
+	}
+	// extract token request from transient
+	t, err := stub.GetTransient()
+	if err != nil {
+		return shim.Error("failed getting transient")
+	}
+	tokenRequest, ok := t["token_request"]
+	if !ok {
+		return shim.Error("failed getting token request, entry not found")
+	}
+
+	return cc.ProcessRequest(tokenRequest, stub)
 }
 
 func (cc *TokenChaincode) Params(builtInParams string) ([]byte, error) {
