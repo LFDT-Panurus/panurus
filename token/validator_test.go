@@ -142,7 +142,7 @@ func TestNewLedgerFromGetter(t *testing.T) {
 	ledger := NewLedgerFromGetter(getStateFn)
 
 	assert.NotNil(t, ledger)
-	assert.NotNil(t, ledger.f)
+	assert.NotNil(t, ledger.(*stateGetter).f)
 }
 
 // TestStateGetter_GetState verifies state retrieval from ledger

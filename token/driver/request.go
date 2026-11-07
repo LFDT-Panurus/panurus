@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package driver
 
 import (
+	"maps"
 	slices0 "slices"
 
 	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/utils"
@@ -28,6 +29,9 @@ const (
 	// MaxAnchorSize defines the maximum allowed size for anchor parameter in bytes.
 	// This limit prevents potential DoS attacks through excessive memory allocation.
 	MaxAnchorSize = 128 // bytes
+
+	// AnchorApplicationMetadataKey is the reserved key in ApplicationMetadata for binding TokenRequestMetadata to an Anchor.
+	AnchorApplicationMetadataKey = "org.lfdt.panurus.anchor"
 )
 
 // Typed errors for protocol validation
@@ -945,6 +949,8 @@ type ActionMetadataEntry struct {
 // TokenRequestMetadata contains the supplementary information needed to process and interpret a TokenRequest.
 // It includes metadata for each issuance and transfer action, enabling de-obfuscation and identity recovery.
 type TokenRequestMetadata struct {
+	// Anchor models the anchor of the token request this metadata is bound to.
+	Anchor TokenRequestAnchor
 	// Actions contains metadata for all actions in the corresponding TokenRequest.
 	Actions []*ActionMetadataEntry
 	// Application allows for attaching arbitrary application-level metadata to the token request.
@@ -1025,10 +1031,24 @@ func (m *TokenRequestMetadata) FromBytes(raw []byte) error {
 }
 
 func (m *TokenRequestMetadata) ToProtos() (*request.TokenRequestMetadata, error) {
+	if _, exists := m.Application[AnchorApplicationMetadataKey]; exists {
+		return nil, errors.Errorf("application metadata contains reserved key [%s]", AnchorApplicationMetadataKey)
+	}
+
+	var appMeta map[string][]byte
+	if len(m.Anchor) > 0 {
+		appMeta = make(map[string][]byte, len(m.Application)+1)
+		maps.Copy(appMeta, m.Application)
+		appMeta[AnchorApplicationMetadataKey] = []byte(m.Anchor)
+	} else if m.Application != nil {
+		appMeta = make(map[string][]byte, len(m.Application))
+		maps.Copy(appMeta, m.Application)
+	}
+
 	trm := &request.TokenRequestMetadata{
 		Version:             ProtocolV1,
 		Metadata:            nil,
-		ApplicationMetadata: m.Application,
+		ApplicationMetadata: appMeta,
 	}
 	trm.Metadata = make([]*request.ActionMetadata, 0, len(m.Actions))
 
@@ -1074,7 +1094,25 @@ func (m *TokenRequestMetadata) FromProtos(trm *request.TokenRequestMetadata) err
 		return errors.Errorf("invalid token request metadata version, expected [%d], got [%d]", ProtocolV1, trm.Version)
 	}
 
-	m.Application = trm.ApplicationMetadata
+	m.Anchor = ""
+	m.Application = nil
+	if trm.ApplicationMetadata != nil {
+		if anchorBytes, ok := trm.ApplicationMetadata[AnchorApplicationMetadataKey]; ok {
+			m.Anchor = TokenRequestAnchor(anchorBytes)
+		}
+		appCount := len(trm.ApplicationMetadata)
+		if _, ok := trm.ApplicationMetadata[AnchorApplicationMetadataKey]; ok {
+			appCount--
+		}
+		if appCount > 0 {
+			m.Application = make(map[string][]byte, appCount)
+			for k, v := range trm.ApplicationMetadata {
+				if k != AnchorApplicationMetadataKey {
+					m.Application[k] = v
+				}
+			}
+		}
+	}
 	m.Actions = make([]*ActionMetadataEntry, 0, len(trm.Metadata))
 
 	for _, meta := range trm.Metadata {
