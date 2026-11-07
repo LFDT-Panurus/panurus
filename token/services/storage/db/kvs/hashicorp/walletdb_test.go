@@ -11,10 +11,10 @@ import (
 	"testing"
 
 	token2 "github.com/LFDT-Panurus/panurus/token"
-	"github.com/LFDT-Panurus/panurus/token/services/identity/storage/kvs/hashicorp"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/dbtest"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs/hashicorp"
 	"github.com/stretchr/testify/require"
 )
 

@@ -1,4 +1,4 @@
-module github.com/LFDT-Panurus/panurus/token/services/identity/storage/kvs/hashicorp
+module github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs/hashicorp
 
 go 1.27.3
 
