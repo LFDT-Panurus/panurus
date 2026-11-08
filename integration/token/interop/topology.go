@@ -54,8 +54,6 @@ func HTLCSingleFabricNetworkTopology(opts common.Opts) []api.Topology {
 	tms.AddAuditor(auditor)
 	tms.AddIssuerByID("issuer")
 
-	fscTopology.SetBootstrapNode(fscTopology.AddNodeByName("lib-p2p-bootstrap-node"))
-
 	for _, sdk := range opts.SDKs {
 		fscTopology.AddSDK(sdk)
 	}

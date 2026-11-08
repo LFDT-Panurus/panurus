@@ -21,7 +21,6 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc/node"
-	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc/support/libp2p"
 )
 
 var (
@@ -115,9 +114,6 @@ func Topology(opts common.Opts) []api.Topology {
 	fabTokenTms.AddAuditor(auditor2)
 	fabTokenTms.AddIssuer(issuer2)
 
-	// FSC topology
-	fscTopology.SetBootstrapNode(fscTopology.AddNodeByName("lib-p2p-bootstrap-node"))
-
 	// set Panuruss
 	// auditors
 	for _, node := range fscTopology.ListNodes("auditor1", "auditor2") {
@@ -133,9 +129,6 @@ func Topology(opts common.Opts) []api.Topology {
 	for _, node := range fscTopology.ListNodes("alice", "bob") {
 		node.AddSDKWithBase(opts.SDKs[0], &party.SDK{})
 	}
-
-	// additional nodes that are backend specific
-	fscTopology.ListNodes("lib-p2p-bootstrap-node")[0].AddSDK(&libp2p.SDK{})
 
 	// add the rest of Panuruss
 	for i := 1; i < len(opts.SDKs); i++ {

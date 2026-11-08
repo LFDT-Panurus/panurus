@@ -729,6 +729,9 @@ affects operators; FSC's own upgrade guides have the full details.
 See FSC's
 [v0.26 to v0.27 upgrade guide](https://github.com/hyperledger-labs/fabric-smart-client/blob/v0.27.0/docs/upgrade/v0.26-to-v0.27.md).
 
+See also FSC's
+[v0.27 to v0.28 upgrade guide](https://github.com/hyperledger-labs/fabric-smart-client/blob/v0.28.0/docs/upgrade/v0.27-to-v0.28.md).
+
 ---
 
 ## Summary of Upgradability Responsibilities

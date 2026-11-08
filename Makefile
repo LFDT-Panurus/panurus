@@ -190,10 +190,10 @@ fabric-docker-images:
 .PHONY: monitoring-docker-images
 # pull monitoring docker images (explorer, prometheus, grafana, jaeger)
 monitoring-docker-images:
-	docker pull ghcr.io/hyperledger-labs/explorer-db:latest
-	docker pull ghcr.io/hyperledger-labs/explorer:latest
-	docker pull prom/prometheus:latest
-	docker pull grafana/grafana:latest
+	docker pull ghcr.io/hyperledger-labs/explorer-db:2.0.0
+	docker pull ghcr.io/hyperledger-labs/explorer:2.0.0
+	docker pull ghcr.io/prometheus/prometheus:v3.15.1
+	docker pull grafana/grafana:13.3.0
 	docker pull cr.jaegertracing.io/jaegertracing/jaeger:2.12.0
 
 .PHONY: integration-tests-nft-dlog
