@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package dbtest
 
 import (
+	"context"
 	"fmt"
 	"math/big"
 	"strings"
@@ -87,9 +88,47 @@ var tokensCases = []struct {
 	{"QueryTokenDetails", TQueryTokenDetails},
 	{"AmountValidation", TAmountValidation},
 	{"TTokenTypes", TTokenTypes},
-	{"ListUnspentTokensByWallets", TListUnspentTokensByWallets},
 	{"QuerySpendableTokens", TQuerySpendableTokens},
 	{"GetDeletedTokensPendingSKICleanup", TGetDeletedTokensPendingSKICleanup},
+}
+
+// listUnspentTokens drains the unspent-tokens iterator into a materialised list
+// for assertions (ListUnspentTokens was removed in favour of the iterator).
+func listUnspentTokens(db TestTokenDB, ctx context.Context) (*token.UnspentTokens, error) {
+	it, err := db.UnspentTokensIterator(ctx)
+	if err != nil {
+		return nil, err
+	}
+	toks, err := iterators.ReadAllPointers(it)
+	if err != nil {
+		return nil, err
+	}
+
+	return &token.UnspentTokens{Tokens: toks}, nil
+}
+
+// listHistoryIssuedTokens drains the issued-tokens iterator for assertions.
+func listHistoryIssuedTokens(db TestTokenDB, ctx context.Context) (*token.IssuedTokens, error) {
+	it, err := db.ListHistoryIssuedTokens(ctx)
+	if err != nil {
+		return nil, err
+	}
+	toks, err := iterators.ReadAllPointers(it)
+	if err != nil {
+		return nil, err
+	}
+
+	return &token.IssuedTokens{Tokens: toks}, nil
+}
+
+// queryTokenDetails drains the token-details iterator for assertions.
+func queryTokenDetails(db TestTokenDB, ctx context.Context, params driver2.QueryTokenDetailsParams) ([]driver2.TokenDetails, error) {
+	it, err := db.QueryTokenDetails(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+
+	return iterators.ReadAllValues(it)
 }
 
 func TTokenTransaction(t *testing.T, db TestTokenDB) {
@@ -235,7 +274,7 @@ func TSaveAndGetToken(t *testing.T, db TestTokenDB) {
 	}
 	require.NoError(t, db.StoreToken(t.Context(), tr, []string{"alice"}))
 
-	tok, err := db.ListUnspentTokens(t.Context())
+	tok, err := listUnspentTokens(db, t.Context())
 	require.NoError(t, err)
 	assert.Len(t, tok.Tokens, 24, "unspentTokensIterator: expected all tokens to be returned (2 for the one owned by alice and bob)")
 	assert.Equal(t, "48", tok.Sum(64).Decimal(), "expect sum to be 2*22")
@@ -357,7 +396,7 @@ func TDeleteAndMine(t *testing.T, db TestTokenDB) {
 	require.NoError(t, db.StoreToken(t.Context(), tr, []string{"alice"}))
 	require.NoError(t, db.DeleteTokens(ctx, "tx103", &token.ID{TxId: "tx101", Index: 0}))
 
-	tok, err := db.ListUnspentTokens(t.Context())
+	tok, err := listUnspentTokens(db, t.Context())
 	require.NoError(t, err)
 	assert.Len(t, tok.Tokens, 2, "expected only tx101-0 to be deleted")
 
@@ -514,7 +553,7 @@ func TListIssuedTokens(t *testing.T, db TestTokenDB) {
 	}
 	require.NoError(t, db.StoreToken(t.Context(), tr, nil))
 
-	tok, err := db.ListHistoryIssuedTokens(ctx)
+	tok, err := listHistoryIssuedTokens(db, ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -530,7 +569,7 @@ func TListIssuedTokens(t *testing.T, db TestTokenDB) {
 		assert.NotEmpty(t, token.Owner, "expected owner raw to not be empty")
 	}
 
-	tok, err = db.ListHistoryIssuedTokens(ctx)
+	tok, err = listHistoryIssuedTokens(db, ctx)
 	require.NoError(t, err)
 	assert.Len(t, tok.ByType("DEF").Tokens, 1, "expected tx102-0 to be filtered")
 	for _, token := range tok.Tokens {
@@ -789,7 +828,7 @@ func TDeleteMultiple(t *testing.T, db TestTokenDB) {
 	require.NoError(t, db.StoreToken(t.Context(), tr, []string{"alice"}))
 	require.NoError(t, db.DeleteTokens(t.Context(), "", &token.ID{TxId: "tx101", Index: 0}, &token.ID{TxId: "tx102", Index: 0}))
 
-	tok, err := db.ListUnspentTokens(t.Context())
+	tok, err := listUnspentTokens(db, t.Context())
 	require.NoError(t, err)
 	assert.Len(t, tok.Tokens, 1, "expected only tx101-0 and tx102-0 to be deleted", tok.Tokens)
 
@@ -991,7 +1030,7 @@ func TAmountValidation(t *testing.T, db TestTokenDB) {
 	// A record whose amount fits is accepted, and the authoritative quantity is preserved.
 	record := bigAmountRecord()
 	require.NoError(t, db.StoreToken(ctx, record, []string{"alice"}))
-	toks, err := db.ListUnspentTokens(ctx)
+	toks, err := listUnspentTokens(db, ctx)
 	require.NoError(t, err)
 	require.Len(t, toks.Tokens, 1)
 	assert.Equal(t, record.Quantity, toks.Tokens[0].Quantity)
@@ -1009,7 +1048,7 @@ func TBigAmountRoundTrip(t *testing.T, db TestTokenDB) {
 	record := bigAmountRecord()
 	require.NoError(t, db.StoreToken(ctx, record, []string{"alice"}))
 
-	res, err := db.QueryTokenDetails(ctx, driver2.QueryTokenDetailsParams{WalletID: "alice"})
+	res, err := queryTokenDetails(db, ctx, driver2.QueryTokenDetailsParams{WalletID: "alice"})
 	require.NoError(t, err)
 	require.Len(t, res, 1)
 	assert.Zero(t, res[0].Amount.Cmp(record.Amount),
@@ -1090,7 +1129,7 @@ func TQueryTokenDetails(t *testing.T, db TestTokenDB) {
 	}
 
 	// all
-	res, err := db.QueryTokenDetails(ctx, driver2.QueryTokenDetailsParams{})
+	res, err := queryTokenDetails(db, ctx, driver2.QueryTokenDetailsParams{})
 	require.NoError(t, err)
 	assert.Len(t, res, 3)
 	assertEqual(t, tx1, res[0])
@@ -1101,14 +1140,14 @@ func TQueryTokenDetails(t *testing.T, db TestTokenDB) {
 	assert.False(t, res[2].IsSpent, "tx2-1 is not spent")
 
 	// alice
-	res, err = db.QueryTokenDetails(ctx, driver2.QueryTokenDetailsParams{WalletID: "alice"})
+	res, err = queryTokenDetails(db, ctx, driver2.QueryTokenDetailsParams{WalletID: "alice"})
 	require.NoError(t, err)
 	assert.Len(t, res, 2)
 	assertEqual(t, tx1, res[0])
 	assertEqual(t, tx2, res[1])
 
 	// alice TST1
-	res, err = db.QueryTokenDetails(ctx, driver2.QueryTokenDetailsParams{WalletID: "alice", TokenType: "TST1"})
+	res, err = queryTokenDetails(db, ctx, driver2.QueryTokenDetailsParams{WalletID: "alice", TokenType: "TST1"})
 	require.NoError(t, err)
 	assert.Len(t, res, 1)
 	assertEqual(t, tx1, res[0])
@@ -1117,7 +1156,7 @@ func TQueryTokenDetails(t *testing.T, db TestTokenDB) {
 	assert.Equal(t, balance.Uint64(), res[0].Amount.Uint64())
 
 	// alice TST
-	res, err = db.QueryTokenDetails(ctx, driver2.QueryTokenDetailsParams{WalletID: "alice", TokenType: TST})
+	res, err = queryTokenDetails(db, ctx, driver2.QueryTokenDetailsParams{WalletID: "alice", TokenType: TST})
 	require.NoError(t, err)
 	assert.Len(t, res, 1)
 	assertEqual(t, tx2, res[0])
@@ -1126,7 +1165,7 @@ func TQueryTokenDetails(t *testing.T, db TestTokenDB) {
 	assert.Equal(t, balance.Uint64(), res[0].Amount.Uint64())
 
 	// bob TST
-	res, err = db.QueryTokenDetails(ctx, driver2.QueryTokenDetailsParams{WalletID: "bob", TokenType: TST})
+	res, err = queryTokenDetails(db, ctx, driver2.QueryTokenDetailsParams{WalletID: "bob", TokenType: TST})
 	require.NoError(t, err)
 	assert.Len(t, res, 1)
 	assertEqual(t, tx21, res[0])
@@ -1136,13 +1175,13 @@ func TQueryTokenDetails(t *testing.T, db TestTokenDB) {
 
 	// spent
 	require.NoError(t, db.DeleteTokens(ctx, "delby", &token.ID{TxId: "tx2", Index: 1}))
-	res, err = db.QueryTokenDetails(ctx, driver2.QueryTokenDetailsParams{})
+	res, err = queryTokenDetails(db, ctx, driver2.QueryTokenDetailsParams{})
 	require.NoError(t, err)
 	assert.Len(t, res, 2)
 	assert.False(t, res[0].IsSpent, "tx1 is not spent")
 	assert.False(t, res[1].IsSpent, "tx2-0 is not spent")
 
-	res, err = db.QueryTokenDetails(ctx, driver2.QueryTokenDetailsParams{IncludeDeleted: true})
+	res, err = queryTokenDetails(db, ctx, driver2.QueryTokenDetailsParams{IncludeDeleted: true})
 	require.NoError(t, err)
 	assert.Len(t, res, 3)
 	assert.False(t, res[0].IsSpent, "tx1 is not spent")
@@ -1151,7 +1190,7 @@ func TQueryTokenDetails(t *testing.T, db TestTokenDB) {
 	assert.Equal(t, "delby", res[2].SpentBy)
 
 	// by ids
-	res, err = db.QueryTokenDetails(ctx, driver2.QueryTokenDetailsParams{IDs: []*token.ID{{TxId: "tx1", Index: 0}, {TxId: "tx2", Index: 0}}, IncludeDeleted: true})
+	res, err = queryTokenDetails(db, ctx, driver2.QueryTokenDetailsParams{IDs: []*token.ID{{TxId: "tx1", Index: 0}, {TxId: "tx2", Index: 0}}, IncludeDeleted: true})
 	require.NoError(t, err)
 	assert.Len(t, res, 2)
 	assertEqual(t, tx1, res[0])
@@ -1258,130 +1297,6 @@ func TTokenTypes(t *testing.T, db TestTokenDB) {
 	it, err = db.SpendableTokensIteratorBy(t.Context(), "", "TST1")
 	require.NoError(t, err)
 	consumeSpendableTokensIterator(t, it, "TST1", 1)
-}
-
-// TListUnspentTokensByWallets exercises the batch variant of
-// ListUnspentTokensBy. Seeds tokens across multiple wallets — two via
-// the ownership wallet_id column (StoreToken's owner list) and one via
-// the owner_wallet_id column on TokenRecord — then verifies the batch
-// method partitions results correctly and honors the empty-input /
-// missing-wallet / type-filter contracts.
-func TListUnspentTokensByWallets(t *testing.T, db TestTokenDB) {
-	t.Helper()
-	ctx := t.Context()
-
-	storeForOwners := func(txID string, typ token.Type, owners []string) {
-		require.NoError(t, db.StoreToken(ctx, driver2.TokenRecord{
-			TxID:           txID,
-			Index:          0,
-			OwnerRaw:       []byte{1, 2, 3},
-			OwnerType:      "idemix",
-			OwnerIdentity:  []byte{},
-			Ledger:         []byte("ledger"),
-			LedgerMetadata: []byte{},
-			Quantity:       "0x02",
-			Type:           typ,
-			Amount:         big.NewInt(2),
-			Owner:          true,
-		}, owners))
-	}
-	storeForOwnerWalletID := func(txID string, typ token.Type, walletID string) {
-		require.NoError(t, db.StoreToken(ctx, driver2.TokenRecord{
-			TxID:           txID,
-			Index:          0,
-			OwnerRaw:       []byte{1, 2, 3},
-			OwnerType:      "idemix",
-			OwnerIdentity:  []byte{},
-			OwnerWalletID:  walletID,
-			Ledger:         []byte("ledger"),
-			LedgerMetadata: []byte{},
-			Quantity:       "0x02",
-			Type:           typ,
-			Amount:         big.NewInt(2),
-			Owner:          true,
-		}, nil))
-	}
-	storeDisagree := func(txID string, typ token.Type, ownerWalletID string, owners []string) {
-		require.NoError(t, db.StoreToken(ctx, driver2.TokenRecord{
-			TxID:           txID,
-			Index:          0,
-			OwnerRaw:       []byte{1, 2, 3},
-			OwnerType:      "idemix",
-			OwnerIdentity:  []byte{},
-			OwnerWalletID:  ownerWalletID,
-			Ledger:         []byte("ledger"),
-			LedgerMetadata: []byte{},
-			Quantity:       "0x02",
-			Type:           typ,
-			Amount:         big.NewInt(2),
-			Owner:          true,
-		}, owners))
-	}
-
-	storeForOwners("bw-a-1", TST, []string{"alice"})
-	storeForOwners("bw-a-2", TST, []string{"alice"})
-	storeForOwners("bw-a-3", ABC, []string{"alice"}) // second type for alice; exercises typ filter
-	storeForOwners("bw-b-1", TST, []string{"bob"})
-	storeForOwnerWalletID("bw-p-1", TST, "pineapple") // exercises the owner_wallet_id column path
-
-	// Batch across the two storage columns: alice (wallet_id) +
-	// pineapple (owner_wallet_id). bob is in the DB but not requested.
-	// Empty typ → all types, so alice's ABC token is included.
-	res, err := db.ListUnspentTokensByWallets(ctx, []string{"alice", "pineapple"}, "")
-	require.NoError(t, err)
-	assert.Len(t, res, 2)
-	require.NotNil(t, res["alice"])
-	require.NotNil(t, res["pineapple"])
-	assert.Len(t, res["alice"].Tokens, 3)
-	assert.Len(t, res["pineapple"].Tokens, 1)
-	_, hasBob := res["bob"]
-	assert.False(t, hasBob, "unrequested wallet must not appear in result")
-
-	// Narrow to TST — alice's ABC token drops out.
-	res, err = db.ListUnspentTokensByWallets(ctx, []string{"alice", "pineapple"}, TST)
-	require.NoError(t, err)
-	assert.Len(t, res["alice"].Tokens, 2)
-	assert.Len(t, res["pineapple"].Tokens, 1)
-
-	// Narrow to ABC — only alice has one.
-	res, err = db.ListUnspentTokensByWallets(ctx, []string{"alice", "pineapple"}, ABC)
-	require.NoError(t, err)
-	assert.Len(t, res, 1)
-	assert.Len(t, res["alice"].Tokens, 1)
-
-	// Unknown wallets produce no map entry (not an error, not a zero-token entry).
-	res, err = db.ListUnspentTokensByWallets(ctx, []string{"ghost"}, "")
-	require.NoError(t, err)
-	assert.Empty(t, res)
-
-	// Mixed existent + missing: only the existent ones come back.
-	res, err = db.ListUnspentTokensByWallets(ctx, []string{"alice", "ghost", "bob"}, TST)
-	require.NoError(t, err)
-	assert.Len(t, res, 2)
-	assert.Len(t, res["alice"].Tokens, 2)
-	assert.Len(t, res["bob"].Tokens, 1)
-
-	// Empty / nil input must short-circuit.
-	res, err = db.ListUnspentTokensByWallets(ctx, nil, "")
-	require.NoError(t, err)
-	assert.Empty(t, res)
-	res, err = db.ListUnspentTokensByWallets(ctx, []string{}, "")
-	require.NoError(t, err)
-	assert.Empty(t, res)
-
-	// Disagreement between tokens.owner_wallet_id and ownership.wallet_id:
-	// StoreToken writes them independently, so a row can match via the
-	// Ownership join while carrying a different owner_wallet_id. The caller
-	// asked for "carol", so the token must be bucketed under "carol" — not
-	// under the unrequested "stranger".
-	storeDisagree("bw-dis-1", TST, "stranger", []string{"carol"})
-	res, err = db.ListUnspentTokensByWallets(ctx, []string{"carol"}, "")
-	require.NoError(t, err)
-	require.Len(t, res, 1)
-	require.NotNil(t, res["carol"])
-	assert.Len(t, res["carol"].Tokens, 1)
-	_, hasStranger := res["stranger"]
-	assert.False(t, hasStranger, "unrequested wallet must not appear as a bucket key")
 }
 
 // TQuerySpendableTokens exercises the bounded spendable-token query: the amount bounds, the

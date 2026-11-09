@@ -58,25 +58,26 @@ func NewDriverWithDbProvider(config driver3.Config, dbProvider fscSqlite.DbProvi
 		logger.Warnf("failed to load storage config: %v — using defaults", err)
 	}
 	tableNamesConfig := storageConfig.TableNames
+	limits := storageConfig.Limits
 
 	d := &Driver{
 		cp:               fscSqlite.NewConfigProvider(common.NewConfig(config)),
 		tableNamesConfig: tableNamesConfig,
 	}
 
-	d.TokenLock = newProviderWithKeyMapper(dbProvider, NewTokenLockStore, tableNamesConfig)
-	d.Identity = newIdentityStoreProvider(dbProvider, tableNamesConfig)
-	d.Wallet = newWalletStoreProvider(d, dbProvider, tableNamesConfig)
-	d.Token = newProviderWithKeyMapper(dbProvider, NewTokenStore, tableNamesConfig)
-	d.AuditTx = newProviderWithKeyMapper(dbProvider, NewAuditTransactionStore, tableNamesConfig)
-	d.OwnerTx = newProviderWithKeyMapper(dbProvider, NewTransactionStore, tableNamesConfig)
-	d.Endorser = newProviderWithKeyMapper(dbProvider, NewEndorserStore, tableNamesConfig)
-	d.KeyStore = newProviderWithKeyMapper(dbProvider, NewKeystoreStore, tableNamesConfig)
+	d.TokenLock = newProviderWithKeyMapper(dbProvider, NewTokenLockStore, tableNamesConfig, limits)
+	d.Identity = newIdentityStoreProvider(dbProvider, tableNamesConfig, limits)
+	d.Wallet = newWalletStoreProvider(d, dbProvider, tableNamesConfig, limits)
+	d.Token = newProviderWithKeyMapper(dbProvider, NewTokenStore, tableNamesConfig, limits)
+	d.AuditTx = newProviderWithKeyMapper(dbProvider, NewAuditTransactionStore, tableNamesConfig, limits)
+	d.OwnerTx = newProviderWithKeyMapper(dbProvider, NewTransactionStore, tableNamesConfig, limits)
+	d.Endorser = newProviderWithKeyMapper(dbProvider, NewEndorserStore, tableNamesConfig, limits)
+	d.KeyStore = newProviderWithKeyMapper(dbProvider, NewKeystoreStore, tableNamesConfig, limits)
 
 	return d
 }
 
-func newIdentityStoreProvider(dbProvider fscSqlite.DbProvider, tableNamesConfig common2.TableNamesConfig) lazy.Provider[fscSqlite.Config, *IdentityStore] {
+func newIdentityStoreProvider(dbProvider fscSqlite.DbProvider, tableNamesConfig common2.TableNamesConfig, limits common2.Limits) lazy.Provider[fscSqlite.Config, *IdentityStore] {
 	return lazy.NewProviderWithKeyMapper(key, func(o fscSqlite.Config) (*IdentityStore, error) {
 		opts := fscSqlite.Opts{
 			DataSource:      o.DataSource,
@@ -110,6 +111,7 @@ func newIdentityStoreProvider(dbProvider fscSqlite.DbProvider, tableNamesConfig 
 		if err != nil {
 			return nil, err
 		}
+		p.ApplyLimits(limits)
 		if !o.SkipCreateTable {
 			if err := p.CreateSchema(); err != nil {
 				return nil, err
@@ -123,7 +125,7 @@ func newIdentityStoreProvider(dbProvider fscSqlite.DbProvider, tableNamesConfig 
 // newWalletStoreProvider returns a lazy provider for WalletStore. Wallets carries a hard
 // FOREIGN KEY to IdentityConfigurations (conf_id), so its schema must be created after the
 // Identity store's — lazy providers otherwise offer no ordering guarantee across stores.
-func newWalletStoreProvider(d *Driver, dbProvider fscSqlite.DbProvider, tableNamesConfig common2.TableNamesConfig) lazy.Provider[fscSqlite.Config, *WalletStore] {
+func newWalletStoreProvider(d *Driver, dbProvider fscSqlite.DbProvider, tableNamesConfig common2.TableNamesConfig, limits common2.Limits) lazy.Provider[fscSqlite.Config, *WalletStore] {
 	return lazy.NewProviderWithKeyMapper(key, func(o fscSqlite.Config) (*WalletStore, error) {
 		// Ensure IdentityConfigurations exists before creating Wallets' schema.
 		if _, err := d.Identity.Get(o); err != nil {
@@ -152,6 +154,7 @@ func newWalletStoreProvider(d *Driver, dbProvider fscSqlite.DbProvider, tableNam
 		if err != nil {
 			return nil, err
 		}
+		p.ApplyLimits(limits)
 		if !o.SkipCreateTable {
 			if err := p.CreateSchema(); err != nil {
 				return nil, err
@@ -234,7 +237,7 @@ func (d *Driver) NewEndorser(name driver2.PersistenceName, params ...string) (dr
 	return d.Endorser.Get(*opts)
 }
 
-func newProviderWithKeyMapper[V common.DBObject](dbProvider fscSqlite.DbProvider, constructor common2.PersistenceConstructor[V], tableNamesConfig common2.TableNamesConfig) lazy.Provider[fscSqlite.Config, V] {
+func newProviderWithKeyMapper[V common.DBObject](dbProvider fscSqlite.DbProvider, constructor common2.PersistenceConstructor[V], tableNamesConfig common2.TableNamesConfig, limits common2.Limits) lazy.Provider[fscSqlite.Config, V] {
 	return lazy.NewProviderWithKeyMapper(key, func(o fscSqlite.Config) (V, error) {
 		opts := fscSqlite.Opts{
 			DataSource:      o.DataSource,
@@ -258,6 +261,7 @@ func newProviderWithKeyMapper[V common.DBObject](dbProvider fscSqlite.DbProvider
 		if err != nil {
 			return utils.Zero[V](), err
 		}
+		common2.ApplyLimits(p, limits)
 		if !o.SkipCreateTable {
 			if err := p.CreateSchema(); err != nil {
 				return utils.Zero[V](), err

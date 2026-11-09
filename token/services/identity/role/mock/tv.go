@@ -41,17 +41,17 @@ type TokenVault struct {
 		result1 *big.Int
 		result2 error
 	}
-	ListHistoryIssuedTokensStub        func(context.Context) (*token.IssuedTokens, error)
+	ListHistoryIssuedTokensStub        func(context.Context) (driver.IssuedTokensIterator, error)
 	listHistoryIssuedTokensMutex       sync.RWMutex
 	listHistoryIssuedTokensArgsForCall []struct {
 		arg1 context.Context
 	}
 	listHistoryIssuedTokensReturns struct {
-		result1 *token.IssuedTokens
+		result1 driver.IssuedTokensIterator
 		result2 error
 	}
 	listHistoryIssuedTokensReturnsOnCall map[int]struct {
-		result1 *token.IssuedTokens
+		result1 driver.IssuedTokensIterator
 		result2 error
 	}
 	RedeemedBalanceStub        func(context.Context, driver.IssuerBalanceQuery) (*big.Int, error)
@@ -218,7 +218,7 @@ func (fake *TokenVault) IssuedBalanceReturnsOnCall(i int, result1 *big.Int, resu
 	}{result1, result2}
 }
 
-func (fake *TokenVault) ListHistoryIssuedTokens(arg1 context.Context) (*token.IssuedTokens, error) {
+func (fake *TokenVault) ListHistoryIssuedTokens(arg1 context.Context) (driver.IssuedTokensIterator, error) {
 	fake.listHistoryIssuedTokensMutex.Lock()
 	ret, specificReturn := fake.listHistoryIssuedTokensReturnsOnCall[len(fake.listHistoryIssuedTokensArgsForCall)]
 	fake.listHistoryIssuedTokensArgsForCall = append(fake.listHistoryIssuedTokensArgsForCall, struct {
@@ -243,7 +243,7 @@ func (fake *TokenVault) ListHistoryIssuedTokensCallCount() int {
 	return len(fake.listHistoryIssuedTokensArgsForCall)
 }
 
-func (fake *TokenVault) ListHistoryIssuedTokensCalls(stub func(context.Context) (*token.IssuedTokens, error)) {
+func (fake *TokenVault) ListHistoryIssuedTokensCalls(stub func(context.Context) (driver.IssuedTokensIterator, error)) {
 	fake.listHistoryIssuedTokensMutex.Lock()
 	defer fake.listHistoryIssuedTokensMutex.Unlock()
 	fake.ListHistoryIssuedTokensStub = stub
@@ -256,28 +256,28 @@ func (fake *TokenVault) ListHistoryIssuedTokensArgsForCall(i int) context.Contex
 	return argsForCall.arg1
 }
 
-func (fake *TokenVault) ListHistoryIssuedTokensReturns(result1 *token.IssuedTokens, result2 error) {
+func (fake *TokenVault) ListHistoryIssuedTokensReturns(result1 driver.IssuedTokensIterator, result2 error) {
 	fake.listHistoryIssuedTokensMutex.Lock()
 	defer fake.listHistoryIssuedTokensMutex.Unlock()
 	fake.ListHistoryIssuedTokensStub = nil
 	fake.listHistoryIssuedTokensReturns = struct {
-		result1 *token.IssuedTokens
+		result1 driver.IssuedTokensIterator
 		result2 error
 	}{result1, result2}
 }
 
-func (fake *TokenVault) ListHistoryIssuedTokensReturnsOnCall(i int, result1 *token.IssuedTokens, result2 error) {
+func (fake *TokenVault) ListHistoryIssuedTokensReturnsOnCall(i int, result1 driver.IssuedTokensIterator, result2 error) {
 	fake.listHistoryIssuedTokensMutex.Lock()
 	defer fake.listHistoryIssuedTokensMutex.Unlock()
 	fake.ListHistoryIssuedTokensStub = nil
 	if fake.listHistoryIssuedTokensReturnsOnCall == nil {
 		fake.listHistoryIssuedTokensReturnsOnCall = make(map[int]struct {
-			result1 *token.IssuedTokens
+			result1 driver.IssuedTokensIterator
 			result2 error
 		})
 	}
 	fake.listHistoryIssuedTokensReturnsOnCall[i] = struct {
-		result1 *token.IssuedTokens
+		result1 driver.IssuedTokensIterator
 		result2 error
 	}{result1, result2}
 }

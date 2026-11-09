@@ -53,6 +53,8 @@ type UnsupportedTokensIterator = iterators.Iterator[*token.LedgerToken]
 
 type LedgerTokensIterator = iterators.Iterator[*token.LedgerToken]
 
+type IssuedTokensIterator = iterators.Iterator[*token.IssuedToken]
+
 // Vault defines the interface for accessing the token vault, which stores tokens and their certifications.
 // It provides a QueryEngine for querying the ledger and a CertificationStorage for managing certifications.
 //
@@ -91,13 +93,11 @@ type QueryEngine interface {
 	UnspentLedgerTokensIteratorBy(ctx context.Context) (LedgerTokensIterator, error)
 	// UnspentTokensIteratorBy returns an iterator over unspent tokens owned by a specific wallet and optionally filtered by token type.
 	UnspentTokensIteratorBy(ctx context.Context, walletID string, tokenType token.Type) (UnspentTokensIterator, error)
-	// ListUnspentTokens returns a comprehensive list of all unspent tokens.
-	ListUnspentTokens(ctx context.Context) (*token.UnspentTokens, error)
 	// ListAuditTokens returns the audited token data for the specified token IDs.
 	// The result is in order of ids meaning that the first token correspond to the first id and so on.
 	ListAuditTokens(ctx context.Context, ids ...*token.ID) ([]*token.Token, error)
-	// ListHistoryIssuedTokens returns a list of all tokens issued by the service.
-	ListHistoryIssuedTokens(ctx context.Context) (*token.IssuedTokens, error)
+	// ListHistoryIssuedTokens returns an iterator over all tokens issued by the service.
+	ListHistoryIssuedTokens(ctx context.Context) (IssuedTokensIterator, error)
 	// PublicParams returns the serialized public parameters used by the driver.
 	PublicParams(ctx context.Context) ([]byte, error)
 	// PublicParamsByHash returns the serialized public parameters whose hash matches the passed one.
@@ -150,7 +150,7 @@ type TokenVault interface {
 	GetTokenOutputsAndMeta(ctx context.Context, ids []*token.ID) ([][]byte, [][]byte, []token.Format, error)
 	GetTokenOutputs(ctx context.Context, ids []*token.ID, callback QueryCallbackFunc) error
 	UnspentTokensIteratorBy(ctx context.Context, id string, tokenType token.Type) (UnspentTokensIterator, error)
-	ListHistoryIssuedTokens(ctx context.Context) (*token.IssuedTokens, error)
+	ListHistoryIssuedTokens(ctx context.Context) (IssuedTokensIterator, error)
 	PublicParams(ctx context.Context) ([]byte, error)
 	Balance(ctx context.Context, id string, tokenType token.Type) (*big.Int, error)
 }

@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package role_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math/big"
@@ -22,6 +23,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/identity/wallet"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/token"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics/disabled"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -143,7 +145,11 @@ func TestIssuerWallet(t *testing.T) {
 				{Type: "T1", Quantity: "30", Issuer: driver.Identity("other")},
 			},
 		}
-		tv.ListHistoryIssuedTokensReturns(tokens, nil)
+		// A fresh iterator per call: an iterator is single-use, and HistoryTokens
+		// is invoked several times below.
+		tv.ListHistoryIssuedTokensStub = func(context.Context) (driver.IssuedTokensIterator, error) {
+			return iterators.Slice(tokens.Tokens), nil
+		}
 
 		// Case 1: All types
 		res, err := w.HistoryTokens(t.Context(), &driver.ListTokensOptions{})
@@ -157,7 +163,9 @@ func TestIssuerWallet(t *testing.T) {
 		assert.Equal(t, token.Type("T1"), res.Tokens[0].Type)
 
 		// Case 3: Error from vault
-		tv.ListHistoryIssuedTokensReturns(nil, errors.New("vault error"))
+		tv.ListHistoryIssuedTokensStub = func(context.Context) (driver.IssuedTokensIterator, error) {
+			return nil, errors.New("vault error")
+		}
 		_, err = w.HistoryTokens(t.Context(), &driver.ListTokensOptions{})
 		require.Error(t, err)
 	})
