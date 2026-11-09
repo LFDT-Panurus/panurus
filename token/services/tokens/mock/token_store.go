@@ -238,30 +238,17 @@ type FakeTokenStore struct {
 		result1 []*token.Token
 		result2 error
 	}
-	ListHistoryIssuedTokensStub        func(context.Context) (*token.IssuedTokens, error)
+	ListHistoryIssuedTokensStub        func(context.Context) (drivera.IssuedTokensIterator, error)
 	listHistoryIssuedTokensMutex       sync.RWMutex
 	listHistoryIssuedTokensArgsForCall []struct {
 		arg1 context.Context
 	}
 	listHistoryIssuedTokensReturns struct {
-		result1 *token.IssuedTokens
+		result1 drivera.IssuedTokensIterator
 		result2 error
 	}
 	listHistoryIssuedTokensReturnsOnCall map[int]struct {
-		result1 *token.IssuedTokens
-		result2 error
-	}
-	ListUnspentTokensStub        func(context.Context) (*token.UnspentTokens, error)
-	listUnspentTokensMutex       sync.RWMutex
-	listUnspentTokensArgsForCall []struct {
-		arg1 context.Context
-	}
-	listUnspentTokensReturns struct {
-		result1 *token.UnspentTokens
-		result2 error
-	}
-	listUnspentTokensReturnsOnCall map[int]struct {
-		result1 *token.UnspentTokens
+		result1 drivera.IssuedTokensIterator
 		result2 error
 	}
 	ListUnspentTokensByStub        func(context.Context, string, token.Type) (*token.UnspentTokens, error)
@@ -277,21 +264,6 @@ type FakeTokenStore struct {
 	}
 	listUnspentTokensByReturnsOnCall map[int]struct {
 		result1 *token.UnspentTokens
-		result2 error
-	}
-	ListUnspentTokensByWalletsStub        func(context.Context, []string, token.Type) (map[string]*token.UnspentTokens, error)
-	listUnspentTokensByWalletsMutex       sync.RWMutex
-	listUnspentTokensByWalletsArgsForCall []struct {
-		arg1 context.Context
-		arg2 []string
-		arg3 token.Type
-	}
-	listUnspentTokensByWalletsReturns struct {
-		result1 map[string]*token.UnspentTokens
-		result2 error
-	}
-	listUnspentTokensByWalletsReturnsOnCall map[int]struct {
-		result1 map[string]*token.UnspentTokens
 		result2 error
 	}
 	MarkTokenCleanedStub        func(context.Context, string, uint64, string) error
@@ -386,18 +358,18 @@ type FakeTokenStore struct {
 		result1 drivera.SpendableTokensIterator
 		result2 error
 	}
-	QueryTokenDetailsStub        func(context.Context, driver.QueryTokenDetailsParams) ([]driver.TokenDetails, error)
+	QueryTokenDetailsStub        func(context.Context, driver.QueryTokenDetailsParams) (driver.TokenDetailsIterator, error)
 	queryTokenDetailsMutex       sync.RWMutex
 	queryTokenDetailsArgsForCall []struct {
 		arg1 context.Context
 		arg2 driver.QueryTokenDetailsParams
 	}
 	queryTokenDetailsReturns struct {
-		result1 []driver.TokenDetails
+		result1 driver.TokenDetailsIterator
 		result2 error
 	}
 	queryTokenDetailsReturnsOnCall map[int]struct {
-		result1 []driver.TokenDetails
+		result1 driver.TokenDetailsIterator
 		result2 error
 	}
 	RedeemedBalanceStub        func(context.Context, drivera.IssuerBalanceQuery) (*big.Int, error)
@@ -1607,7 +1579,7 @@ func (fake *FakeTokenStore) ListAuditTokensReturnsOnCall(i int, result1 []*token
 	}{result1, result2}
 }
 
-func (fake *FakeTokenStore) ListHistoryIssuedTokens(arg1 context.Context) (*token.IssuedTokens, error) {
+func (fake *FakeTokenStore) ListHistoryIssuedTokens(arg1 context.Context) (drivera.IssuedTokensIterator, error) {
 	fake.listHistoryIssuedTokensMutex.Lock()
 	ret, specificReturn := fake.listHistoryIssuedTokensReturnsOnCall[len(fake.listHistoryIssuedTokensArgsForCall)]
 	fake.listHistoryIssuedTokensArgsForCall = append(fake.listHistoryIssuedTokensArgsForCall, struct {
@@ -1632,7 +1604,7 @@ func (fake *FakeTokenStore) ListHistoryIssuedTokensCallCount() int {
 	return len(fake.listHistoryIssuedTokensArgsForCall)
 }
 
-func (fake *FakeTokenStore) ListHistoryIssuedTokensCalls(stub func(context.Context) (*token.IssuedTokens, error)) {
+func (fake *FakeTokenStore) ListHistoryIssuedTokensCalls(stub func(context.Context) (drivera.IssuedTokensIterator, error)) {
 	fake.listHistoryIssuedTokensMutex.Lock()
 	defer fake.listHistoryIssuedTokensMutex.Unlock()
 	fake.ListHistoryIssuedTokensStub = stub
@@ -1645,92 +1617,28 @@ func (fake *FakeTokenStore) ListHistoryIssuedTokensArgsForCall(i int) context.Co
 	return argsForCall.arg1
 }
 
-func (fake *FakeTokenStore) ListHistoryIssuedTokensReturns(result1 *token.IssuedTokens, result2 error) {
+func (fake *FakeTokenStore) ListHistoryIssuedTokensReturns(result1 drivera.IssuedTokensIterator, result2 error) {
 	fake.listHistoryIssuedTokensMutex.Lock()
 	defer fake.listHistoryIssuedTokensMutex.Unlock()
 	fake.ListHistoryIssuedTokensStub = nil
 	fake.listHistoryIssuedTokensReturns = struct {
-		result1 *token.IssuedTokens
+		result1 drivera.IssuedTokensIterator
 		result2 error
 	}{result1, result2}
 }
 
-func (fake *FakeTokenStore) ListHistoryIssuedTokensReturnsOnCall(i int, result1 *token.IssuedTokens, result2 error) {
+func (fake *FakeTokenStore) ListHistoryIssuedTokensReturnsOnCall(i int, result1 drivera.IssuedTokensIterator, result2 error) {
 	fake.listHistoryIssuedTokensMutex.Lock()
 	defer fake.listHistoryIssuedTokensMutex.Unlock()
 	fake.ListHistoryIssuedTokensStub = nil
 	if fake.listHistoryIssuedTokensReturnsOnCall == nil {
 		fake.listHistoryIssuedTokensReturnsOnCall = make(map[int]struct {
-			result1 *token.IssuedTokens
+			result1 drivera.IssuedTokensIterator
 			result2 error
 		})
 	}
 	fake.listHistoryIssuedTokensReturnsOnCall[i] = struct {
-		result1 *token.IssuedTokens
-		result2 error
-	}{result1, result2}
-}
-
-func (fake *FakeTokenStore) ListUnspentTokens(arg1 context.Context) (*token.UnspentTokens, error) {
-	fake.listUnspentTokensMutex.Lock()
-	ret, specificReturn := fake.listUnspentTokensReturnsOnCall[len(fake.listUnspentTokensArgsForCall)]
-	fake.listUnspentTokensArgsForCall = append(fake.listUnspentTokensArgsForCall, struct {
-		arg1 context.Context
-	}{arg1})
-	stub := fake.ListUnspentTokensStub
-	fakeReturns := fake.listUnspentTokensReturns
-	fake.recordInvocation("ListUnspentTokens", []interface{}{arg1})
-	fake.listUnspentTokensMutex.Unlock()
-	if stub != nil {
-		return stub(arg1)
-	}
-	if specificReturn {
-		return ret.result1, ret.result2
-	}
-	return fakeReturns.result1, fakeReturns.result2
-}
-
-func (fake *FakeTokenStore) ListUnspentTokensCallCount() int {
-	fake.listUnspentTokensMutex.RLock()
-	defer fake.listUnspentTokensMutex.RUnlock()
-	return len(fake.listUnspentTokensArgsForCall)
-}
-
-func (fake *FakeTokenStore) ListUnspentTokensCalls(stub func(context.Context) (*token.UnspentTokens, error)) {
-	fake.listUnspentTokensMutex.Lock()
-	defer fake.listUnspentTokensMutex.Unlock()
-	fake.ListUnspentTokensStub = stub
-}
-
-func (fake *FakeTokenStore) ListUnspentTokensArgsForCall(i int) context.Context {
-	fake.listUnspentTokensMutex.RLock()
-	defer fake.listUnspentTokensMutex.RUnlock()
-	argsForCall := fake.listUnspentTokensArgsForCall[i]
-	return argsForCall.arg1
-}
-
-func (fake *FakeTokenStore) ListUnspentTokensReturns(result1 *token.UnspentTokens, result2 error) {
-	fake.listUnspentTokensMutex.Lock()
-	defer fake.listUnspentTokensMutex.Unlock()
-	fake.ListUnspentTokensStub = nil
-	fake.listUnspentTokensReturns = struct {
-		result1 *token.UnspentTokens
-		result2 error
-	}{result1, result2}
-}
-
-func (fake *FakeTokenStore) ListUnspentTokensReturnsOnCall(i int, result1 *token.UnspentTokens, result2 error) {
-	fake.listUnspentTokensMutex.Lock()
-	defer fake.listUnspentTokensMutex.Unlock()
-	fake.ListUnspentTokensStub = nil
-	if fake.listUnspentTokensReturnsOnCall == nil {
-		fake.listUnspentTokensReturnsOnCall = make(map[int]struct {
-			result1 *token.UnspentTokens
-			result2 error
-		})
-	}
-	fake.listUnspentTokensReturnsOnCall[i] = struct {
-		result1 *token.UnspentTokens
+		result1 drivera.IssuedTokensIterator
 		result2 error
 	}{result1, result2}
 }
@@ -1797,77 +1705,6 @@ func (fake *FakeTokenStore) ListUnspentTokensByReturnsOnCall(i int, result1 *tok
 	}
 	fake.listUnspentTokensByReturnsOnCall[i] = struct {
 		result1 *token.UnspentTokens
-		result2 error
-	}{result1, result2}
-}
-
-func (fake *FakeTokenStore) ListUnspentTokensByWallets(arg1 context.Context, arg2 []string, arg3 token.Type) (map[string]*token.UnspentTokens, error) {
-	var arg2Copy []string
-	if arg2 != nil {
-		arg2Copy = make([]string, len(arg2))
-		copy(arg2Copy, arg2)
-	}
-	fake.listUnspentTokensByWalletsMutex.Lock()
-	ret, specificReturn := fake.listUnspentTokensByWalletsReturnsOnCall[len(fake.listUnspentTokensByWalletsArgsForCall)]
-	fake.listUnspentTokensByWalletsArgsForCall = append(fake.listUnspentTokensByWalletsArgsForCall, struct {
-		arg1 context.Context
-		arg2 []string
-		arg3 token.Type
-	}{arg1, arg2Copy, arg3})
-	stub := fake.ListUnspentTokensByWalletsStub
-	fakeReturns := fake.listUnspentTokensByWalletsReturns
-	fake.recordInvocation("ListUnspentTokensByWallets", []interface{}{arg1, arg2Copy, arg3})
-	fake.listUnspentTokensByWalletsMutex.Unlock()
-	if stub != nil {
-		return stub(arg1, arg2, arg3)
-	}
-	if specificReturn {
-		return ret.result1, ret.result2
-	}
-	return fakeReturns.result1, fakeReturns.result2
-}
-
-func (fake *FakeTokenStore) ListUnspentTokensByWalletsCallCount() int {
-	fake.listUnspentTokensByWalletsMutex.RLock()
-	defer fake.listUnspentTokensByWalletsMutex.RUnlock()
-	return len(fake.listUnspentTokensByWalletsArgsForCall)
-}
-
-func (fake *FakeTokenStore) ListUnspentTokensByWalletsCalls(stub func(context.Context, []string, token.Type) (map[string]*token.UnspentTokens, error)) {
-	fake.listUnspentTokensByWalletsMutex.Lock()
-	defer fake.listUnspentTokensByWalletsMutex.Unlock()
-	fake.ListUnspentTokensByWalletsStub = stub
-}
-
-func (fake *FakeTokenStore) ListUnspentTokensByWalletsArgsForCall(i int) (context.Context, []string, token.Type) {
-	fake.listUnspentTokensByWalletsMutex.RLock()
-	defer fake.listUnspentTokensByWalletsMutex.RUnlock()
-	argsForCall := fake.listUnspentTokensByWalletsArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
-}
-
-func (fake *FakeTokenStore) ListUnspentTokensByWalletsReturns(result1 map[string]*token.UnspentTokens, result2 error) {
-	fake.listUnspentTokensByWalletsMutex.Lock()
-	defer fake.listUnspentTokensByWalletsMutex.Unlock()
-	fake.ListUnspentTokensByWalletsStub = nil
-	fake.listUnspentTokensByWalletsReturns = struct {
-		result1 map[string]*token.UnspentTokens
-		result2 error
-	}{result1, result2}
-}
-
-func (fake *FakeTokenStore) ListUnspentTokensByWalletsReturnsOnCall(i int, result1 map[string]*token.UnspentTokens, result2 error) {
-	fake.listUnspentTokensByWalletsMutex.Lock()
-	defer fake.listUnspentTokensByWalletsMutex.Unlock()
-	fake.ListUnspentTokensByWalletsStub = nil
-	if fake.listUnspentTokensByWalletsReturnsOnCall == nil {
-		fake.listUnspentTokensByWalletsReturnsOnCall = make(map[int]struct {
-			result1 map[string]*token.UnspentTokens
-			result2 error
-		})
-	}
-	fake.listUnspentTokensByWalletsReturnsOnCall[i] = struct {
-		result1 map[string]*token.UnspentTokens
 		result2 error
 	}{result1, result2}
 }
@@ -2306,7 +2143,7 @@ func (fake *FakeTokenStore) QuerySpendableTokensReturnsOnCall(i int, result1 dri
 	}{result1, result2}
 }
 
-func (fake *FakeTokenStore) QueryTokenDetails(arg1 context.Context, arg2 driver.QueryTokenDetailsParams) ([]driver.TokenDetails, error) {
+func (fake *FakeTokenStore) QueryTokenDetails(arg1 context.Context, arg2 driver.QueryTokenDetailsParams) (driver.TokenDetailsIterator, error) {
 	fake.queryTokenDetailsMutex.Lock()
 	ret, specificReturn := fake.queryTokenDetailsReturnsOnCall[len(fake.queryTokenDetailsArgsForCall)]
 	fake.queryTokenDetailsArgsForCall = append(fake.queryTokenDetailsArgsForCall, struct {
@@ -2332,7 +2169,7 @@ func (fake *FakeTokenStore) QueryTokenDetailsCallCount() int {
 	return len(fake.queryTokenDetailsArgsForCall)
 }
 
-func (fake *FakeTokenStore) QueryTokenDetailsCalls(stub func(context.Context, driver.QueryTokenDetailsParams) ([]driver.TokenDetails, error)) {
+func (fake *FakeTokenStore) QueryTokenDetailsCalls(stub func(context.Context, driver.QueryTokenDetailsParams) (driver.TokenDetailsIterator, error)) {
 	fake.queryTokenDetailsMutex.Lock()
 	defer fake.queryTokenDetailsMutex.Unlock()
 	fake.QueryTokenDetailsStub = stub
@@ -2345,28 +2182,28 @@ func (fake *FakeTokenStore) QueryTokenDetailsArgsForCall(i int) (context.Context
 	return argsForCall.arg1, argsForCall.arg2
 }
 
-func (fake *FakeTokenStore) QueryTokenDetailsReturns(result1 []driver.TokenDetails, result2 error) {
+func (fake *FakeTokenStore) QueryTokenDetailsReturns(result1 driver.TokenDetailsIterator, result2 error) {
 	fake.queryTokenDetailsMutex.Lock()
 	defer fake.queryTokenDetailsMutex.Unlock()
 	fake.QueryTokenDetailsStub = nil
 	fake.queryTokenDetailsReturns = struct {
-		result1 []driver.TokenDetails
+		result1 driver.TokenDetailsIterator
 		result2 error
 	}{result1, result2}
 }
 
-func (fake *FakeTokenStore) QueryTokenDetailsReturnsOnCall(i int, result1 []driver.TokenDetails, result2 error) {
+func (fake *FakeTokenStore) QueryTokenDetailsReturnsOnCall(i int, result1 driver.TokenDetailsIterator, result2 error) {
 	fake.queryTokenDetailsMutex.Lock()
 	defer fake.queryTokenDetailsMutex.Unlock()
 	fake.QueryTokenDetailsStub = nil
 	if fake.queryTokenDetailsReturnsOnCall == nil {
 		fake.queryTokenDetailsReturnsOnCall = make(map[int]struct {
-			result1 []driver.TokenDetails
+			result1 driver.TokenDetailsIterator
 			result2 error
 		})
 	}
 	fake.queryTokenDetailsReturnsOnCall[i] = struct {
-		result1 []driver.TokenDetails
+		result1 driver.TokenDetailsIterator
 		result2 error
 	}{result1, result2}
 }

@@ -143,35 +143,10 @@ func TestQueryEngine_UnspentTokensIterator_Error(t *testing.T) {
 	assert.Equal(t, expectedErr, err)
 }
 
-// TestQueryEngine_ListUnspentTokens verifies listing unspent tokens
-func TestQueryEngine_ListUnspentTokens(t *testing.T) {
-	mockQE := &mock.QueryEngine{}
-	expectedUnspentTokens := &token.UnspentTokens{}
-	mockQE.ListUnspentTokensReturns(expectedUnspentTokens, nil)
-
-	queryEngine := NewQueryEngine(logging.MustGetLogger(), mockQE, 3, time.Second)
-	unspentTokens, err := queryEngine.ListUnspentTokens(t.Context())
-	require.NoError(t, err)
-	assert.Equal(t, expectedUnspentTokens, unspentTokens)
-}
-
-// TestQueryEngine_ListUnspentTokens_Error verifies error handling when listing unspent tokens fails
-func TestQueryEngine_ListUnspentTokens_Error(t *testing.T) {
-	mockQE := &mock.QueryEngine{}
-	expectedErr := errors.New("mock error")
-	mockQE.ListUnspentTokensReturns(nil, expectedErr)
-
-	queryEngine := NewQueryEngine(logging.MustGetLogger(), mockQE, 3, time.Second)
-	unspentTokens, err := queryEngine.ListUnspentTokens(t.Context())
-	require.Error(t, err)
-	assert.Nil(t, unspentTokens)
-	assert.Equal(t, expectedErr, err)
-}
-
 // TestQueryEngine_ListHistoryIssuedTokens verifies listing historical issued tokens
 func TestQueryEngine_ListHistoryIssuedTokens(t *testing.T) {
 	mockQE := &mock.QueryEngine{}
-	expectedIssuedTokens := &token.IssuedTokens{}
+	expectedIssuedTokens := iterators.Slice([]*token.IssuedToken{})
 	mockQE.ListHistoryIssuedTokensReturns(expectedIssuedTokens, nil)
 
 	queryEngine := NewQueryEngine(logging.MustGetLogger(), mockQE, 3, time.Second)

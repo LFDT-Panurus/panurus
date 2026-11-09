@@ -15,9 +15,13 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
 	"github.com/LFDT-Panurus/panurus/token/token"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 )
+
+// TokenDetailsIterator is an iterator over token details returned by QueryTokenDetails.
+type TokenDetailsIterator = iterators.Iterator[*TokenDetails]
 
 type TokenRecord struct {
 	// TxID is the ID of the transaction that created the token
@@ -275,40 +279,10 @@ type TokenStore interface {
 	UnsupportedTokensIteratorBy(ctx context.Context, walletID string, tokenType token.Type) (driver.UnsupportedTokensIterator, error)
 	// ListUnspentTokensBy returns the list of all tokens owned by the passed identifier of a given type
 	ListUnspentTokensBy(ctx context.Context, walletID string, typ token.Type) (*token.UnspentTokens, error)
-	// ListUnspentTokensByWallets returns unspent tokens owned by any of the
-	// provided wallets, partitioned by wallet id. An optional token type
-	// filter narrows the result set (empty type means any type).
-	//
-	// The returned map contains only wallet ids that had at least one
-	// matching unspent token — callers should treat a missing key as "no
-	// tokens" (same semantics as an empty *token.UnspentTokens). An empty
-	// or nil walletIDs slice returns an empty map without touching the
-	// database.
-	//
-	// This is a single-query alternative to calling ListUnspentTokensBy
-	// per wallet in a loop: one SQL statement with an IN clause, then
-	// partitioned on the read side.
-	//
-	// Scale note: the IN clause expands to two placeholders per wallet id
-	// (one per wallet column). Postgres's default parameter limit (~65k)
-	// leaves ample headroom; SQLite's default (999) caps the practical
-	// batch size at a few hundred wallet ids. Callers expecting thousands
-	// of ids should chunk on the caller side and merge the returned maps.
-	//
-	// Position in the ListUnspentTokens family:
-	//
-	//	UnspentTokensIterator(ctx)                       → iterator (all)
-	//	UnspentTokensIteratorBy(ctx, walletID, typ)      → iterator (one wallet)
-	//	ListUnspentTokens(ctx)                           → *UnspentTokens (all)
-	//	ListUnspentTokensBy(ctx, walletID, typ)          → *UnspentTokens (one wallet)
-	//	ListUnspentTokensByWallets(ctx, walletIDs, typ)  → map[walletID]*UnspentTokens (batch)
-	ListUnspentTokensByWallets(ctx context.Context, walletIDs []string, typ token.Type) (map[string]*token.UnspentTokens, error)
-	// ListUnspentTokens returns the list of all owned tokens
-	ListUnspentTokens(ctx context.Context) (*token.UnspentTokens, error)
 	// ListAuditTokens returns the audited tokens for the passed ids
 	ListAuditTokens(ctx context.Context, ids ...*token.ID) ([]*token.Token, error)
-	// ListHistoryIssuedTokens returns the list of all issued tokens
-	ListHistoryIssuedTokens(ctx context.Context) (*token.IssuedTokens, error)
+	// ListHistoryIssuedTokens returns an iterator over all issued tokens
+	ListHistoryIssuedTokens(ctx context.Context) (driver.IssuedTokensIterator, error)
 	// GetTokenOutputs returns the value of the tokens as they appear on the ledger for the passed ids.
 	// For each token, the call-back function is invoked. The call-back function is invoked respecting the order of the passed ids.
 	GetTokenOutputs(ctx context.Context, ids []*token.ID, callback driver.QueryCallbackFunc) error
@@ -347,8 +321,8 @@ type TokenStore interface {
 	NewTokenDBTransaction() (TokenStoreTransaction, error)
 	// ContinueTokenDBTransaction returns a new TokenStoreTransaction building upon the passed transaction.
 	ContinueTokenDBTransaction(tx Transaction) (TokenStoreTransaction, error)
-	// QueryTokenDetails provides detailed information about tokens
-	QueryTokenDetails(ctx context.Context, params QueryTokenDetailsParams) ([]TokenDetails, error)
+	// QueryTokenDetails returns an iterator over detailed information about tokens
+	QueryTokenDetails(ctx context.Context, params QueryTokenDetailsParams) (TokenDetailsIterator, error)
 	// Balance returns the sum of the amounts of the tokens with type and EID equal to those passed as arguments.
 	// The result is returned as a *big.Int to support arbitrary precision and prevent overflow.
 	Balance(ctx context.Context, ownerEID string, typ token.Type) (*big.Int, error)
