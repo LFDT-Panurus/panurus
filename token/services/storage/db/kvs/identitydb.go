@@ -9,6 +9,7 @@ package kvs
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 
 	"github.com/LFDT-Panurus/panurus/token"
@@ -90,6 +91,11 @@ func (s *IdentityStore) AddConfiguration(ctx context.Context, wp storage.Identit
 	return s.kvs.Put(ctx, k, &wp)
 }
 
+// GetConfiguration returns the configuration stored for the given id, type, and url, or
+// (nil, nil) if none is stored. An error means the lookup failed: the answer is unknown.
+//
+// The record may belong to a different (id, url) pair sharing its row key; see
+// GetConfigurationID.
 func (s *IdentityStore) GetConfiguration(ctx context.Context, id, typ, url string) (*storage.IdentityConfiguration, error) {
 	k, err := kvs.CreateCompositeKey(
 		IdentityDBPrefix,
@@ -104,13 +110,17 @@ func (s *IdentityStore) GetConfiguration(ctx context.Context, id, typ, url strin
 		return nil, errors.Wrapf(err, "failed to create key")
 	}
 
-	if !s.kvs.Exists(ctx, k) {
+	raw, found, err := getRaw(ctx, s.kvs, k)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to get identity configuration [%s:%s:%s]", id, typ, url)
+	}
+	if !found {
 		return nil, nil
 	}
 
 	var res storage.IdentityConfiguration
-	if err := s.kvs.Get(ctx, k, &res); err != nil {
-		return nil, err
+	if err := decodeRecord(raw, &res); err != nil {
+		return nil, errors.WithMessagef(err, "identity configuration [%s:%s:%s]", id, typ, url)
 	}
 
 	return &res, nil
@@ -191,6 +201,8 @@ func (s *IdentityStore) ConfigurationsByID(ctx context.Context, id, configuratio
 	return res, nil
 }
 
+// ConfigurationExists reports whether a configuration is stored under the row key of the given
+// id, type, and url. An error means the lookup failed: the answer is unknown.
 func (s *IdentityStore) ConfigurationExists(ctx context.Context, id, configurationType, url string) (bool, error) {
 	k, err := kvs.CreateCompositeKey(
 		IdentityDBPrefix,
@@ -205,7 +217,12 @@ func (s *IdentityStore) ConfigurationExists(ctx context.Context, id, configurati
 		return false, errors.Wrapf(err, "failed to create key")
 	}
 
-	return s.kvs.Exists(ctx, k), nil
+	_, found, err := getRaw(ctx, s.kvs, k)
+	if err != nil {
+		return false, errors.Wrapf(err, "failed to check whether identity configuration [%s:%s:%s] exists", id, configurationType, url)
+	}
+
+	return found, nil
 }
 
 func (s *IdentityStore) Notifier() (idriver.IdentityConfigurationNotifier, error) {
@@ -244,8 +261,8 @@ func (s *IdentityStore) StoreIdentityData(ctx context.Context, id []byte, identi
 	return nil
 }
 
-// GetAuditInfo returns the audit info stored for identity, or nil if none is
-// stored.
+// GetAuditInfo returns the audit info stored for identity, or nil if none is stored.
+// An error means the lookup failed: the answer is unknown.
 //
 // Verification: the row is addressed by identity hash, so the identity stored
 // in the record is compared against the requested one before the audit info is
@@ -266,11 +283,8 @@ func (s *IdentityStore) GetAuditInfo(ctx context.Context, identity []byte) ([]by
 			tdriver.Identity(identity).String(),
 		},
 	)
-	if !s.kvs.Exists(ctx, k) {
-		return nil, nil
-	}
-	var res RecipientData
-	if err := s.kvs.Get(ctx, k, &res); err != nil {
+	res, found, err := s.getRecipientData(ctx, k, identity)
+	if err != nil || !found {
 		return nil, err
 	}
 	if len(res.Identity) != 0 {
@@ -283,7 +297,7 @@ func (s *IdentityStore) GetAuditInfo(ctx context.Context, identity []byte) ([]by
 }
 
 // GetTokenInfo returns the token metadata and its audit info stored for
-// identity, or nil if none is stored.
+// identity, or nil if none is stored. Errors are as for GetAuditInfo.
 //
 // Verification: as for GetAuditInfo, the identity stored in the record is
 // compared against the requested one.
@@ -299,11 +313,8 @@ func (s *IdentityStore) GetTokenInfo(ctx context.Context, identity []byte) ([]by
 			tdriver.Identity(identity).String(),
 		},
 	)
-	if !s.kvs.Exists(ctx, k) {
-		return nil, nil, nil
-	}
-	var res RecipientData
-	if err := s.kvs.Get(ctx, k, &res); err != nil {
+	res, found, err := s.getRecipientData(ctx, k, identity)
+	if err != nil || !found {
 		return nil, nil, err
 	}
 	if len(res.Identity) != 0 {
@@ -315,6 +326,24 @@ func (s *IdentityStore) GetTokenInfo(ctx context.Context, identity []byte) ([]by
 	return res.TokenMetadata, res.TokenMetadataAuditInfo, nil
 }
 
+// getRecipientData reads the RecipientData stored under k. found=false is an authoritative miss;
+// any other failure, an undecodable record included, is an error.
+func (s *IdentityStore) getRecipientData(ctx context.Context, k string, identity []byte) (*RecipientData, bool, error) {
+	raw, found, err := getRaw(ctx, s.kvs, k)
+	if err != nil {
+		return nil, false, errors.Wrapf(err, "failed to get identity data record under [%s]", tdriver.Identity(identity).String())
+	}
+	if !found {
+		return nil, false, nil
+	}
+	var res RecipientData
+	if err := decodeRecord(raw, &res); err != nil {
+		return nil, false, errors.WithMessagef(err, "identity data record under [%s]", tdriver.Identity(identity).String())
+	}
+
+	return &res, true, nil
+}
+
 // StoreSignerInfo binds id to the signer info a key manager resolves into a
 // signer.
 //
@@ -323,6 +352,9 @@ func (s *IdentityStore) GetTokenInfo(ctx context.Context, identity []byte) ([]by
 // "<empty>" row key. Note that unlike the SQL backend this store keeps only the
 // signer info under the identity hash, so GetSignerInfo cannot verify the
 // identity a record belongs to; see docs/security/store_integrity_verification.md.
+//
+// Signer info is written once: an existing entry is kept. If the lookup fails, or the existing
+// entry cannot be decoded, an error is returned and nothing is written.
 func (s *IdentityStore) StoreSignerInfo(ctx context.Context, id tdriver.Identity, info []byte) error {
 	if err := integrity.CheckIdentity(id); err != nil {
 		return errors.WithMessage(err, "refusing to store signer info")
@@ -339,10 +371,17 @@ func (s *IdentityStore) StoreSignerInfo(ctx context.Context, id tdriver.Identity
 	if err != nil {
 		return errors.Wrap(err, "failed to create composite key to store entry in kvs")
 	}
-	if s.kvs.Exists(ctx, k) {
-		// Already stored, possibly with a real (non-nil) blob written by
-		// RegisterIdentityDescriptor. Do not clobber it with a later, possibly nil, write -
-		// mirrors the SQL backend's insert-once/ignore-conflict semantics.
+	raw, found, err := getRaw(ctx, s.kvs, k)
+	if err != nil {
+		return errors.Wrapf(err, "failed to check for existing signer info for [%s]", idHash)
+	}
+	if found {
+		// Insert-once, as in the SQL backend: don't clobber a real blob with a later nil one.
+		var existing []byte
+		if err := decodeRecord(raw, &existing); err != nil {
+			return errors.WithMessagef(err, "existing signer info for [%s]", idHash)
+		}
+
 		return nil
 	}
 	err = s.kvs.Put(ctx, k, info)
@@ -353,8 +392,11 @@ func (s *IdentityStore) StoreSignerInfo(ctx context.Context, id tdriver.Identity
 	return nil
 }
 
-// GetExistingSignerInfo returns the keys of the passed identities for which signer
-// info is stored.
+// GetExistingSignerInfo returns the unique ids (tdriver.Identity.UniqueID) of the passed
+// identities that have signer info, each once, in order of first occurrence.
+//
+// Each identity costs one read so that a failed lookup is reported: the first failure aborts the
+// call with an error. Batching needs an error-returning FSC lookup (see the #2063 TODO).
 //
 // Verification: an empty identity is excluded from the lookup rather than looked
 // up, for the reason given on StoreSignerInfo — its unique id is the shared
@@ -365,31 +407,40 @@ func (s *IdentityStore) StoreSignerInfo(ctx context.Context, id tdriver.Identity
 // identity signer info can exist for, and failing the batch would also lose the
 // answer for the caller's other identities.
 func (s *IdentityStore) GetExistingSignerInfo(ctx context.Context, identities ...tdriver.Identity) ([]string, error) {
-	keys := make([]string, 0, len(identities))
+	existing := make([]string, 0, len(identities))
+	seen := make(map[string]struct{}, len(identities))
 	for _, id := range identities {
 		if err := integrity.CheckIdentity(id); err != nil {
 			// the empty identity shares one key with every other empty identity;
 			// it is never consulted
 			continue
 		}
+		idHash := id.UniqueID()
+		if _, ok := seen[idHash]; ok {
+			continue
+		}
+		seen[idHash] = struct{}{}
 		k, err := kvs.CreateCompositeKey(
 			IdentityDBPrefix,
 			[]string{
 				IdentityDBSigner,
 				s.tmsID.String(),
-				id.UniqueID(),
+				idHash,
 			},
 		)
 		if err != nil {
-			return nil, err
+			return nil, errors.Wrapf(err, "failed to create key")
 		}
-		keys = append(keys, k)
-	}
-	if len(keys) == 0 {
-		return []string{}, nil
+		_, found, err := getRaw(ctx, s.kvs, k)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to check for signer info for [%s]", idHash)
+		}
+		if found {
+			existing = append(existing, idHash)
+		}
 	}
 
-	return s.kvs.GetExisting(ctx, keys...), nil
+	return existing, nil
 }
 
 // SignerInfoExists returns true if signer info is stored for id.
@@ -406,8 +457,8 @@ func (s *IdentityStore) SignerInfoExists(ctx context.Context, id []byte) (bool, 
 	return len(existing) > 0, nil
 }
 
-// GetSignerInfo returns the signer info stored for identity, or nil if none is
-// stored.
+// GetSignerInfo returns the signer info stored for identity, or (nil, nil) if none is stored.
+// An error means the lookup failed: the answer is unknown.
 //
 // Verification: an empty identity is refused. This store does not keep the
 // identity alongside the signer info, so — unlike the SQL backend — it cannot
@@ -427,11 +478,18 @@ func (s *IdentityStore) GetSignerInfo(ctx context.Context, identity []byte) ([]b
 		},
 	)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to create key")
+	}
+	raw, found, err := getRaw(ctx, s.kvs, k)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to get signer info for [%s]", idHash)
+	}
+	if !found {
+		return nil, nil
 	}
 	var res []byte
-	if err := s.kvs.Get(ctx, k, &res); err != nil {
-		return nil, err
+	if err := decodeRecord(raw, &res); err != nil {
+		return nil, errors.WithMessagef(err, "signer info for [%s]", idHash)
 	}
 
 	return res, nil
@@ -500,6 +558,15 @@ func (w *IdentityConfigurationsIterator) Next() (*storage.IdentityConfiguration,
 
 func (w *IdentityConfigurationsIterator) Close() {
 	_ = w.Iterator.Close()
+}
+
+// decodeRecord unmarshals a raw record read by getRaw into v.
+func decodeRecord(raw json.RawMessage, v any) error {
+	if err := json.Unmarshal(raw, v); err != nil {
+		return errors.Wrap(err, "cannot unmarshal stored record")
+	}
+
+	return nil
 }
 
 func mergeIDURL(id string, url string) string {

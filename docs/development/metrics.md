@@ -257,6 +257,7 @@ tokens and so unions them, meaning a token contended across several attempts is 
 |---|---|---|---|
 | `panurus_services_selector_sherdlock_unspent_tokens_invocations` | counter | `fetcher_type` | The number of invocations |
 | `panurus_services_selector_sherdlock_selection_duration_seconds` | histogram | — | Duration of a token selection call in seconds |
+| `panurus_services_selector_sherdlock_selection_backoff_duration_seconds` | histogram | — | Time spent in a backoff wait between token selection rounds in seconds |
 | `panurus_services_selector_sherdlock_selection_outcome_total` | counter | `outcome` | Total number of token selection outcomes by result type |
 | `panurus_services_selector_sherdlock_selection_immediate_retries` | histogram | — | Distribution of immediate retry counts per token selection call |
 | `panurus_services_selector_sherdlock_lock_conflicts_total` | counter | — | Total number of lost lock races (a token was already locked by another process) |
@@ -266,7 +267,34 @@ tokens and so unions them, meaning a token contended across several attempts is 
 | `panurus_services_selector_sherdlock_cache_invalidations_total` | counter | — | Total number of times the candidate source was told its snapshot is behind the token store, forcing the next read to refresh it |
 | `panurus_services_selector_sherdlock_candidate_permutation_duration_seconds` | histogram | `fetcher_type` | Duration in seconds of copying and shuffling a wallet's candidate token list (NewPermutation) |
 
+**Backoff time.** `selection_duration_seconds` includes the time a `StubbornSelector` sleeps between
+rounds. `selection_backoff_duration_seconds` records each such wait (the elapsed time, so a wait cut
+short by context cancellation records what was actually waited), which lets you split an elevated
+`Select` latency into backoff versus selection work. Zero-length waits are observed too. Sherdlock
+also waits after its final failed round, so a selection that gives up records max retries + 1 waits.
+The metrics are process-global, with no `tms` label.
+
 Source: `token/services/selector/sherdlock/metrics.go`.
+
+## Token selection (simple)
+
+Recorded by the `simple` selector driver. Only one selector driver is wired per process
+(`token.selector.driver`), so this section and the sherdlock one are never both exported.
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `panurus_services_selector_simple_selection_backoff_duration_seconds` | histogram | — | Time spent in a backoff wait between token selection rounds in seconds |
+
+`selection_backoff_duration_seconds` records the elapsed time of each wait between selection
+attempts, including a wait cut short by context cancellation. There is no wait after the last
+attempt, and none at all when the manager's retry timeout is non-positive; a jitter of exactly zero
+is still observed as 0. The metric is process-global, with no `tms` label.
+
+The simple driver exports no other selection metrics, in particular no `selection_duration_seconds`.
+This histogram therefore shows how much time and how many waits backoff accounts for, but there is no
+total selection latency to split it against, as there is for sherdlock.
+
+Source: `token/services/selector/simple/metrics.go`.
 
 ## Token selection rate limiting
 

@@ -261,6 +261,63 @@ var BobAcceptedTransactions = []TransactionRecord{
 
 type OnRestartFunc = func(*integration.Infrastructure, string)
 
+// defaultTestTokenType is the token type the test functions that accept TestOption use
+// unless WithTokenType says otherwise.
+const defaultTestTokenType token2.Type = "USD"
+
+// TestOption configures a test function of this package that accepts it. Each option
+// lists the functions that honour it; the others ignore it.
+type TestOption func(*testOptions)
+
+// testOptions holds the settings that the TestOption values configure.
+type testOptions struct {
+	// tokenType is the token type the test issues and moves.
+	tokenType token2.Type
+	// restartAfterUpdate are the names of the nodes to restart after a public parameters
+	// update.
+	restartAfterUpdate []string
+}
+
+// WithTokenType makes the test issue and move tokens of type t instead of "USD", so that it
+// does not see the balances that earlier specs left on a network shared with
+// token.ShareNetwork, nor count against the issuer's quota, which applies to "USD" only.
+// t must not contain ".": the token selector keys its cache by wallet ID and type joined by
+// ".", and wallet IDs are dotted.
+//
+// It is honoured by TestRedeemUnauthorizedIssuer, TestRemoteOwnerWallet,
+// TestRemoteOwnerWalletWithWMP, TestRevokeIdentity and TestPublicParamsUpdate.
+func WithTokenType(t token2.Type) TestOption {
+	return func(o *testOptions) {
+		o.tokenType = t
+	}
+}
+
+// WithRestartAfterUpdate makes TestPublicParamsUpdate restart the named nodes once every
+// node has picked up the updated public parameters, before any transaction is issued
+// against them. Only TestPublicParamsUpdate honours it.
+func WithRestartAfterUpdate(names ...string) TestOption {
+	return func(o *testOptions) {
+		o.restartAfterUpdate = append(o.restartAfterUpdate, names...)
+	}
+}
+
+// compileTestOptions applies opts, in order, over the defaults.
+func compileTestOptions(opts ...TestOption) *testOptions {
+	o := &testOptions{tokenType: defaultTestTokenType}
+	for _, opt := range opts {
+		opt(o)
+	}
+
+	return o
+}
+
+// TestAll runs the end-to-end fungible token flow: issue, transfer, swap, redeem, public
+// parameters update, restarts, auditor limits, routing, concurrency and consistency checks.
+//
+// TestAll asserts the full transaction history of the auditor and of the owners, and the
+// issuer's whole USD quota, so it must run on a fresh network: in a token.ShareNetwork
+// container it must be the first spec. It fails right away if the auditor has already
+// audited a transaction.
 func TestAll(network *integration.Infrastructure, auditorId string, onRestart OnRestartFunc, aries bool, sel *token3.ReplicaSelector) {
 	auditor := sel.Get(auditorId)
 	issuer := sel.Get("issuer")
@@ -277,6 +334,8 @@ func TestAll(network *integration.Infrastructure, auditorId string, onRestart On
 
 	SetKVSEntry(network, issuer, "auditor", auditor.Id())
 	CheckPublicParams(network, issuer, auditor, alice, bob, charlie, manager)
+	// the assertions below cover the whole history, see the Godoc
+	checkFreshNetwork(network, auditor)
 
 	t0 := time.Now()
 	gomega.Eventually(DoesWalletExist).WithArguments(network, issuer, "", views.IssuerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
@@ -885,14 +944,27 @@ func TestSelector(network *integration.Infrastructure, auditorId string, sel *to
 // TestPublicParamsUpdate updates the public parameters of the given TMS and checks that
 // the network keeps working with the new parameters.
 //
-// The optional restartAfterUpdate node names are restarted once the update has been
-// picked up by every node, before any transaction is issued against the new parameters.
-// Pass the endorser nodes of a network whose endorsers track the on-chain version of the
-// public parameters (FabricX) to cover
+// It honours WithTokenType, the type it issues (default "USD"), and WithRestartAfterUpdate,
+// the nodes it restarts once the update has been picked up by every node, before any
+// transaction is issued against the new parameters. Pass the endorser nodes of a network
+// whose endorsers track the on-chain version of the public parameters (FabricX) to cover
 // https://github.com/LFDT-Panurus/panurus/issues/2255: an endorser that rebuilds its
 // public parameters version from scratch on startup attaches a stale version to every
 // transaction it endorses, and the committer rejects them all with an MVCC conflict.
-func TestPublicParamsUpdate(network *integration.Infrastructure, newAuditorID string, ppBytes []byte, networkName string, issuerAsAuditor bool, sel *token3.ReplicaSelector, updateWithAppend bool, restartAfterUpdate ...string) {
+func TestPublicParamsUpdate(network *integration.Infrastructure, newAuditorID string, ppBytes []byte, networkName string, issuerAsAuditor bool, sel *token3.ReplicaSelector, updateWithAppend bool, opts ...TestOption) {
+	testPublicParamsUpdate(network, newAuditorID, ppBytes, networkName, issuerAsAuditor, sel, updateWithAppend, compileTestOptions(opts...))
+}
+
+func testPublicParamsUpdate(
+	network *integration.Infrastructure,
+	newAuditorID string,
+	ppBytes []byte,
+	networkName string,
+	issuerAsAuditor bool,
+	sel *token3.ReplicaSelector,
+	updateWithAppend bool,
+	o *testOptions,
+) {
 	newAuditor := sel.Get(newAuditorID)
 	tms := GetTMSByNetworkName(network, networkName)
 	newIssuer := sel.Get("newIssuer")
@@ -904,9 +976,9 @@ func TestPublicParamsUpdate(network *integration.Infrastructure, newAuditorID st
 		auditor = issuer
 	}
 	RegisterAuditor(network, auditor)
-	txId := IssueCash(network, "", "USD", 110, alice, auditor, true, issuer)
+	txId := IssueCash(network, "", o.tokenType, 110, alice, auditor, true, issuer)
 	gomega.Expect(txId).NotTo(gomega.BeEmpty())
-	CheckBalanceAndHolding(network, alice, "", "USD", 110, auditor)
+	CheckBalanceAndHolding(network, alice, "", o.tokenType, 110, auditor)
 
 	RegisterAuditor(network, newAuditor)
 	UpdatePublicParams(network, ppBytes, tms)
@@ -929,20 +1001,20 @@ func TestPublicParamsUpdate(network *integration.Infrastructure, newAuditorID st
 	// restart the requested nodes now that the update is in place, so that what follows
 	// exercises nodes that learnt the new public parameters at startup rather than from
 	// the update notification
-	if len(restartAfterUpdate) > 0 {
-		refs := make([]*token3.NodeReference, 0, len(restartAfterUpdate))
-		for _, name := range restartAfterUpdate {
+	if len(o.restartAfterUpdate) > 0 {
+		refs := make([]*token3.NodeReference, 0, len(o.restartAfterUpdate))
+		for _, name := range o.restartAfterUpdate {
 			refs = append(refs, sel.Get(name))
 		}
 		Restart(network, false, nil, refs...)
 	}
 
-	txId = IssueCash(network, "", "USD", 110, alice, newAuditor, true, newIssuer)
+	txId = IssueCash(network, "", o.tokenType, 110, alice, newAuditor, true, newIssuer)
 	gomega.Expect(txId).NotTo(gomega.BeEmpty())
-	CheckBalance(network, alice, "", "USD", 220)
-	CheckHolding(network, alice, "", "USD", 110, newAuditor)
+	CheckBalance(network, alice, "", o.tokenType, 220)
+	CheckHolding(network, alice, "", o.tokenType, 110, newAuditor)
 	if updateWithAppend {
-		IssueCash(network, "", "USD", 110, alice, newAuditor, true, issuer)
+		IssueCash(network, "", o.tokenType, 110, alice, newAuditor, true, issuer)
 	} else {
 		// The dlog auditor rejects an unrecognized issuer during audit, before the
 		// transaction ever reaches the on-chain validator that returns ErrIssuerNotAuthorized.
@@ -950,13 +1022,13 @@ func TestPublicParamsUpdate(network *integration.Infrastructure, newAuditorID st
 		if tms.Driver == zkatdlognoghv1.DriverIdentifier {
 			expectedErr = "is not a recognized issuer"
 		}
-		IssueCash(network, "", "USD", 110, alice, newAuditor, true, issuer, expectedErr)
+		IssueCash(network, "", o.tokenType, 110, alice, newAuditor, true, issuer, expectedErr)
 	}
 	if newAuditorID != "auditor" {
 		if updateWithAppend {
-			IssueCash(network, "", "USD", 110, alice, auditor, true, newIssuer)
+			IssueCash(network, "", o.tokenType, 110, alice, auditor, true, newIssuer)
 		} else {
-			IssueCashWithNoAuditorSigVerification(network, "", "USD", 110, alice, auditor, true, newIssuer, "is not in auditors")
+			IssueCashWithNoAuditorSigVerification(network, "", o.tokenType, 110, alice, auditor, true, newIssuer, "is not in auditors")
 		}
 	}
 
@@ -984,7 +1056,11 @@ func testTwoGeneratedOwnerWalletsSameNode(network *integration.Infrastructure, a
 	CheckBalanceAndHolding(network, charlie, "charlie.ExtraId2", "SPE", 15, auditor)
 }
 
-func TestRevokeIdentity(network *integration.Infrastructure, auditorId string, sel *token3.ReplicaSelector) {
+// TestRevokeIdentity revokes bob's identity and checks that bob can no longer receive tokens,
+// while bob.id1 still can. It revokes bob for good, so on a shared network it must run
+// after every spec that moves tokens to bob.
+func TestRevokeIdentity(network *integration.Infrastructure, auditorId string, sel *token3.ReplicaSelector, opts ...TestOption) {
+	o := compileTestOptions(opts...)
 	auditor := sel.Get(auditorId)
 	issuer := sel.Get("issuer")
 	alice := sel.Get("alice")
@@ -992,26 +1068,26 @@ func TestRevokeIdentity(network *integration.Infrastructure, auditorId string, s
 
 	RegisterAuditor(network, auditor)
 
-	IssueCash(network, "", "USD", 110, alice, auditor, true, issuer)
-	CheckBalanceAndHolding(network, alice, "", "USD", 110, auditor)
-	CheckBalanceAndHolding(network, bob, "", "USD", 0, auditor)
-	CheckBalanceAndHolding(network, bob, "bob.id1", "USD", 0, auditor)
+	IssueCash(network, "", o.tokenType, 110, alice, auditor, true, issuer)
+	CheckBalanceAndHolding(network, alice, "", o.tokenType, 110, auditor)
+	CheckBalanceAndHolding(network, bob, "", o.tokenType, 0, auditor)
+	CheckBalanceAndHolding(network, bob, "bob.id1", o.tokenType, 0, auditor)
 
 	rId := GetRevocationHandle(network, bob)
 	RevokeIdentity(network, auditor, rId)
 	// try to issue to bob
-	IssueCash(network, "", "USD", 22, bob, auditor, true, issuer, fsclogging.SHA256Base64([]byte(rId)).String()+" Identity is in revoked state")
+	IssueCash(network, "", o.tokenType, 22, bob, auditor, true, issuer, fsclogging.SHA256Base64([]byte(rId)).String()+" Identity is in revoked state")
 	// try to transfer to bob
-	TransferCash(network, alice, "", "USD", 22, bob, auditor, fsclogging.SHA256Base64([]byte(rId)).String()+" Identity is in revoked state")
-	CheckBalanceAndHolding(network, alice, "", "USD", 110, auditor)
-	CheckBalanceAndHolding(network, bob, "", "USD", 0, auditor)
-	CheckBalanceAndHolding(network, bob, "bob.id1", "USD", 0, auditor)
+	TransferCash(network, alice, "", o.tokenType, 22, bob, auditor, fsclogging.SHA256Base64([]byte(rId)).String()+" Identity is in revoked state")
+	CheckBalanceAndHolding(network, alice, "", o.tokenType, 110, auditor)
+	CheckBalanceAndHolding(network, bob, "", o.tokenType, 0, auditor)
+	CheckBalanceAndHolding(network, bob, "bob.id1", o.tokenType, 0, auditor)
 
 	// Issuer to bob.id1
-	IssueCash(network, "", "USD", 90, sel.Get("bob.id1"), auditor, true, issuer)
-	CheckBalanceAndHolding(network, alice, "", "USD", 110, auditor)
-	CheckBalanceAndHolding(network, bob, "", "USD", 0, auditor)
-	CheckBalanceAndHolding(network, bob, "bob.id1", "USD", 90, auditor)
+	IssueCash(network, "", o.tokenType, 90, sel.Get("bob.id1"), auditor, true, issuer)
+	CheckBalanceAndHolding(network, alice, "", o.tokenType, 110, auditor)
+	CheckBalanceAndHolding(network, bob, "", o.tokenType, 0, auditor)
+	CheckBalanceAndHolding(network, bob, "bob.id1", o.tokenType, 90, auditor)
 }
 
 func TestMixed(network *integration.Infrastructure, onRestart OnRestartFunc, sel *token3.ReplicaSelector) {
@@ -1076,11 +1152,18 @@ func TestMixed(network *integration.Infrastructure, onRestart OnRestartFunc, sel
 	CheckBalanceAndHoldingForTMSID(network, alice, "", "USD", 115, auditor2, fabTokenId)
 }
 
-func TestRemoteOwnerWallet(network *integration.Infrastructure, auditor string, sel *token3.ReplicaSelector, websSocket bool) {
-	TestRemoteOwnerWalletWithWMP(network, NewWalletManagerProvider(&walletManagerLoader{II: network}), auditor, sel, websSocket)
+// TestRemoteOwnerWallet runs TestRemoteOwnerWalletWithWMP with a WalletManagerProvider that
+// loads the owner wallets from the nodes' configuration.
+func TestRemoteOwnerWallet(network *integration.Infrastructure, auditor string, sel *token3.ReplicaSelector, websSocket bool, opts ...TestOption) {
+	TestRemoteOwnerWalletWithWMP(network, NewWalletManagerProvider(&walletManagerLoader{II: network}), auditor, sel, websSocket, opts...)
 }
 
-func TestRemoteOwnerWalletWithWMP(network *integration.Infrastructure, wmp *WalletManagerProvider, auditorId string, sel *token3.ReplicaSelector, websSocket bool) {
+// TestRemoteOwnerWalletWithWMP moves tokens from, to and between remote owner wallets, whose
+// keys are held by wmp rather than by the node, over gRPC or, if websSocket is set, over a
+// websocket. It asserts absolute balances of alice_remote, alice_remote_2, bob, bob_remote
+// and charlie, so two runs on the same network need different token types.
+func TestRemoteOwnerWalletWithWMP(network *integration.Infrastructure, wmp *WalletManagerProvider, auditorId string, sel *token3.ReplicaSelector, websSocket bool, opts ...TestOption) {
+	o := compileTestOptions(opts...)
 	auditor := sel.Get(auditorId)
 	issuer := sel.Get("issuer")
 	alice := sel.Get("alice")
@@ -1096,35 +1179,35 @@ func TestRemoteOwnerWalletWithWMP(network *integration.Infrastructure, wmp *Wall
 	SetKVSEntry(network, issuer, "auditor", auditor.Id())
 	CheckPublicParams(network, issuer, auditor, alice, bob, charlie, manager)
 
-	Withdraw(network, wmp, websSocket, alice, "alice_remote", "USD", 10, auditor, issuer)
-	CheckBalanceAndHolding(network, alice, "alice_remote", "USD", 10, auditor)
+	Withdraw(network, wmp, websSocket, alice, "alice_remote", o.tokenType, 10, auditor, issuer)
+	CheckBalanceAndHolding(network, alice, "alice_remote", o.tokenType, 10, auditor)
 
-	TransferCashFromExternalWallet(network, wmp, websSocket, alice, "alice_remote", "USD", 7, bob, auditor)
-	CheckBalanceAndHolding(network, alice, "alice_remote", "USD", 3, auditor)
-	CheckBalanceAndHolding(network, alice, "alice_remote_2", "USD", 0, auditor)
-	CheckBalanceAndHolding(network, bob, "", "USD", 7, auditor)
-	TransferCashToExternalWallet(network, wmp, bob, "", "USD", 3, alice, "alice_remote", auditor)
-	CheckBalanceAndHolding(network, alice, "alice_remote", "USD", 6, auditor)
-	CheckBalanceAndHolding(network, alice, "alice_remote_2", "USD", 0, auditor)
-	CheckBalanceAndHolding(network, bob, "", "USD", 4, auditor)
-	TransferCashFromExternalWallet(network, wmp, websSocket, alice, "alice_remote", "USD", 4, charlie, auditor)
-	CheckBalanceAndHolding(network, alice, "alice_remote", "USD", 2, auditor)
-	CheckBalanceAndHolding(network, alice, "alice_remote_2", "USD", 0, auditor)
-	CheckBalanceAndHolding(network, bob, "", "USD", 4, auditor)
-	CheckBalanceAndHolding(network, bob, "bob_remote", "USD", 0, auditor)
-	CheckBalanceAndHolding(network, charlie, "", "USD", 4, auditor)
-	TransferCashFromAndToExternalWallet(network, wmp, websSocket, alice, "alice_remote", "USD", 1, bob, "bob_remote", auditor)
-	CheckBalanceAndHolding(network, alice, "alice_remote", "USD", 1, auditor)
-	CheckBalanceAndHolding(network, alice, "alice_remote_2", "USD", 0, auditor)
-	CheckBalanceAndHolding(network, bob, "", "USD", 4, auditor)
-	CheckBalanceAndHolding(network, bob, "bob_remote", "USD", 1, auditor)
-	CheckBalanceAndHolding(network, charlie, "", "USD", 4, auditor)
-	TransferCashFromAndToExternalWallet(network, wmp, websSocket, alice, "alice_remote", "USD", 1, alice, "alice_remote_2", auditor)
-	CheckBalanceAndHolding(network, alice, "alice_remote", "USD", 0, auditor)
-	CheckBalanceAndHolding(network, alice, "alice_remote_2", "USD", 1, auditor)
-	CheckBalanceAndHolding(network, bob, "", "USD", 4, auditor)
-	CheckBalanceAndHolding(network, bob, "bob_remote", "USD", 1, auditor)
-	CheckBalanceAndHolding(network, charlie, "", "USD", 4, auditor)
+	TransferCashFromExternalWallet(network, wmp, websSocket, alice, "alice_remote", o.tokenType, 7, bob, auditor)
+	CheckBalanceAndHolding(network, alice, "alice_remote", o.tokenType, 3, auditor)
+	CheckBalanceAndHolding(network, alice, "alice_remote_2", o.tokenType, 0, auditor)
+	CheckBalanceAndHolding(network, bob, "", o.tokenType, 7, auditor)
+	TransferCashToExternalWallet(network, wmp, bob, "", o.tokenType, 3, alice, "alice_remote", auditor)
+	CheckBalanceAndHolding(network, alice, "alice_remote", o.tokenType, 6, auditor)
+	CheckBalanceAndHolding(network, alice, "alice_remote_2", o.tokenType, 0, auditor)
+	CheckBalanceAndHolding(network, bob, "", o.tokenType, 4, auditor)
+	TransferCashFromExternalWallet(network, wmp, websSocket, alice, "alice_remote", o.tokenType, 4, charlie, auditor)
+	CheckBalanceAndHolding(network, alice, "alice_remote", o.tokenType, 2, auditor)
+	CheckBalanceAndHolding(network, alice, "alice_remote_2", o.tokenType, 0, auditor)
+	CheckBalanceAndHolding(network, bob, "", o.tokenType, 4, auditor)
+	CheckBalanceAndHolding(network, bob, "bob_remote", o.tokenType, 0, auditor)
+	CheckBalanceAndHolding(network, charlie, "", o.tokenType, 4, auditor)
+	TransferCashFromAndToExternalWallet(network, wmp, websSocket, alice, "alice_remote", o.tokenType, 1, bob, "bob_remote", auditor)
+	CheckBalanceAndHolding(network, alice, "alice_remote", o.tokenType, 1, auditor)
+	CheckBalanceAndHolding(network, alice, "alice_remote_2", o.tokenType, 0, auditor)
+	CheckBalanceAndHolding(network, bob, "", o.tokenType, 4, auditor)
+	CheckBalanceAndHolding(network, bob, "bob_remote", o.tokenType, 1, auditor)
+	CheckBalanceAndHolding(network, charlie, "", o.tokenType, 4, auditor)
+	TransferCashFromAndToExternalWallet(network, wmp, websSocket, alice, "alice_remote", o.tokenType, 1, alice, "alice_remote_2", auditor)
+	CheckBalanceAndHolding(network, alice, "alice_remote", o.tokenType, 0, auditor)
+	CheckBalanceAndHolding(network, alice, "alice_remote_2", o.tokenType, 1, auditor)
+	CheckBalanceAndHolding(network, bob, "", o.tokenType, 4, auditor)
+	CheckBalanceAndHolding(network, bob, "bob_remote", o.tokenType, 1, auditor)
+	CheckBalanceAndHolding(network, charlie, "", o.tokenType, 4, auditor)
 }
 
 func TestMaliciousTransactions(net *integration.Infrastructure, sel *token3.ReplicaSelector) {
@@ -1794,7 +1877,11 @@ func TestRedeem(network *integration.Infrastructure, sel *token3.ReplicaSelector
 // The auditor-view allow-list (a test-app business rule, not part of the token SDK) is
 // cleared first via AuthorizeRedeemIssuer so that the rejection asserted below comes from
 // the layer under test, not from that unrelated, pre-existing check.
-func TestRedeemUnauthorizedIssuer(network *integration.Infrastructure, sel *token3.ReplicaSelector, networkName string) {
+//
+// It issues and redeems tokens of the WithTokenType type ("USD" by default), so it can run
+// after other specs on a network shared with token.ShareNetwork.
+func TestRedeemUnauthorizedIssuer(network *integration.Infrastructure, sel *token3.ReplicaSelector, networkName string, opts ...TestOption) {
+	o := compileTestOptions(opts...)
 	auditor := sel.Get("auditor")
 	issuer := sel.Get("issuer")
 	newIssuer := sel.Get("newIssuer")
@@ -1814,9 +1901,9 @@ func TestRedeemUnauthorizedIssuer(network *integration.Infrastructure, sel *toke
 
 	gomega.Eventually(DoesWalletExist).WithArguments(network, issuer, "", views.IssuerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
 
-	IssueCash(network, "", "USD", 110, issuer, auditor, true, issuer)
-	CheckBalance(network, issuer, "", "USD", 110)
-	CheckHolding(network, issuer, "", "USD", 110, auditor)
+	IssueCash(network, "", o.tokenType, 110, issuer, auditor, true, issuer)
+	CheckBalance(network, issuer, "", o.tokenType, 110)
+	CheckHolding(network, issuer, "", o.tokenType, 110, auditor)
 
 	// Clear the auditor-view's own allow-list hurdle so the rejection observed below comes
 	// from the on-chain validator's issuer-membership check, not from that unrelated layer.
@@ -1827,13 +1914,13 @@ func TestRedeemUnauthorizedIssuer(network *integration.Infrastructure, sel *toke
 	// audit (mirroring the on-chain validator's own ErrIssuerNotAuthorized check), so the
 	// rejection is observed at the auditor layer, before the transaction ever reaches the
 	// chaincode, for both drivers.
-	RedeemCashForTMSID(network, issuer, "", "USD", 10, auditor, newIssuer, defaultTMSID, "is not a recognized issuer")
-	CheckBalance(network, issuer, "", "USD", 110)
-	CheckHolding(network, issuer, "", "USD", 110, auditor)
+	RedeemCashForTMSID(network, issuer, "", o.tokenType, 10, auditor, newIssuer, defaultTMSID, "is not a recognized issuer")
+	CheckBalance(network, issuer, "", o.tokenType, 110)
+	CheckHolding(network, issuer, "", o.tokenType, 110, auditor)
 
 	// An authorized redeem still succeeds: the fix does not over-tighten the control.
 	AuthorizeRedeemIssuer(network, auditor, GetIssuerIdentity(tms, issuer.Id()))
-	RedeemCashForTMSID(network, issuer, "", "USD", 10, auditor, issuer, defaultTMSID)
-	CheckBalance(network, issuer, "", "USD", 100)
-	CheckHolding(network, issuer, "", "USD", 100, auditor)
+	RedeemCashForTMSID(network, issuer, "", o.tokenType, 10, auditor, issuer, defaultTMSID)
+	CheckBalance(network, issuer, "", o.tokenType, 100)
+	CheckHolding(network, issuer, "", o.tokenType, 100, auditor)
 }

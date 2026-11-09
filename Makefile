@@ -42,7 +42,7 @@ TOP = .
 include $(TOP)/checks.mk
 
 # Define all Go module directories
-GO_MODULES := . integration token/services/storage/db/kvs/hashicorp cmd/artifactgen cmd/tokengen cmd/token_validation_service cmd/profiler cmd/skicleanup cmd/tokendiag cmd/node x/token/services/network/evm
+GO_MODULES := . integration token/services/storage/db/kvs/hashicorp cmd/artifactgen cmd/tokengen cmd/token_validation_service cmd/skicleanup cmd/tokendiag cmd/node x/token/services/network/evm
 TIDY_GO_MODULES := $(GO_MODULES) tools
 
 # include fabricx target
@@ -89,6 +89,7 @@ benchmark-selector-postgres:
 unit-tests:
 	@go test $(GO_TEST_PARAMS) $(GO_PACKAGES)
 	cd token/services/storage/db/kvs/hashicorp/; go test -cover ./...
+	cd integration; go test -cover ./token/
 	cd x/token/services/network/evm; go test -coverpkg=./... -coverprofile=profile.cov ./...
 	@tail -n +2 x/token/services/network/evm/profile.cov >> profile.cov
 	@rm -f x/token/services/network/evm/profile.cov
@@ -140,10 +141,11 @@ unit-tests-race-core:
 	$(call race_shard,-E '$(UNIT_RACE_CORE_RE)')
 
 .PHONY: unit-tests-race-rest
-# run the remaining unit tests, the nwo harness tests and the evm module tests with race detection
+# run the remaining unit tests, the nwo harness and integration/token tests and the evm module tests with race detection
 unit-tests-race-rest:
 	$(call race_shard,-vE '$(UNIT_RACE_DB_RE)|$(UNIT_RACE_CORE_RE)')
 	cd integration/nwo/; go test -cover ./...
+	@export GORACE=history_size=7; cd integration; go test -race -cover ./token/
 	@export GORACE=history_size=7; cd x/token/services/network/evm; go test -race $(EVM_RACE_COVER_FLAGS) ./...
 ifdef COVERAGE
 	@tail -n +2 x/token/services/network/evm/profile.cov >> $(COVERAGE_PROFILE)
@@ -188,10 +190,10 @@ fabric-docker-images:
 .PHONY: monitoring-docker-images
 # pull monitoring docker images (explorer, prometheus, grafana, jaeger)
 monitoring-docker-images:
-	docker pull ghcr.io/hyperledger-labs/explorer-db:latest
-	docker pull ghcr.io/hyperledger-labs/explorer:latest
-	docker pull prom/prometheus:latest
-	docker pull grafana/grafana:latest
+	docker pull ghcr.io/hyperledger-labs/explorer-db:2.0.0
+	docker pull ghcr.io/hyperledger-labs/explorer:2.0.0
+	docker pull ghcr.io/prometheus/prometheus:v3.15.1
+	docker pull grafana/grafana:13.3.0
 	docker pull cr.jaegertracing.io/jaegertracing/jaeger:2.12.0
 
 .PHONY: integration-tests-nft-dlog
@@ -306,7 +308,7 @@ txgen:
 # regenerate validator transfer profile documentation
 profile-validator-transfer:
 	@echo "Regenerating validator transfer profile..."
-	@cd tools/profiler && ./profile.sh BenchmarkValidatorTransfer -f VerifyTokenRequestFromRaw 
+	@cd cmd/profiler && ./profile.sh BenchmarkValidatorTransfer -f VerifyTokenRequestFromRaw 
 
 .PHONY: profile
 # run profiler on any test or benchmark
@@ -321,9 +323,9 @@ profile:
 	fi
 	@echo "Running profiler on $(TEST)..."
 	@if [ -n "$(ROOT)" ]; then \
-		cd tools/profiler && ./profile.sh $(TEST) -f $(ROOT); \
+		cd cmd/profiler && ./profile.sh $(TEST) -f $(ROOT); \
 	else \
-		cd tools/profiler && ./profile.sh $(TEST); \
+		cd cmd/profiler && ./profile.sh $(TEST); \
 	fi
 
 .PHONY: clean-all-containers

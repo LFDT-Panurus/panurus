@@ -108,6 +108,12 @@ integration-tests-dlog-fabric-t12:
 integration-tests-dlog-fabric-t13:
 	make integration-tests-dlog-fabric TEST_FILTER="T13"
 
+# T12 and T13 share one network per infrastructure type (see the "Multisig and Redeem to
+# yourself" container in integration/token/fungible/dlog), so CI runs them in one job.
+.PHONY: integration-tests-dlog-fabric-t12-t13
+integration-tests-dlog-fabric-t12-t13:
+	make integration-tests-dlog-fabric TEST_FILTER="T12 || T13"
+
 .PHONY: integration-tests-dlog-fabric-t14
 integration-tests-dlog-fabric-t14:
 	make integration-tests-dlog-fabric TEST_FILTER="T14"
@@ -119,6 +125,37 @@ integration-tests-dlog-fabric-t15:
 .PHONY: integration-tests-dlog-fabric-t17
 integration-tests-dlog-fabric-t17:
 	make integration-tests-dlog-fabric TEST_FILTER="T17"
+
+# T1, T17, T4, T5, T3, T2.1 and T2 share one network per infrastructure type (see the
+# "T1 Fungible with Auditor ne Issuer and extras" container in
+# integration/token/fungible/dlog), and T6 and T7 another one (the "Fungible with
+# Auditor = Issuer" container), so CI runs each group as one job per infrastructure type.
+DLOG_FABRIC_ARIES_FILTER = (T1 || T2 || T2.1 || T3 || T4 || T5 || T17)
+DLOG_FABRIC_T6_T7_FILTER = (T6 || T7)
+
+.PHONY: integration-tests-dlog-fabric-aries-websocket
+integration-tests-dlog-fabric-aries-websocket:
+	make integration-tests-dlog-fabric TEST_FILTER="$(DLOG_FABRIC_ARIES_FILTER) && websocket"
+
+.PHONY: integration-tests-dlog-fabric-aries-libp2p
+integration-tests-dlog-fabric-aries-libp2p:
+	make integration-tests-dlog-fabric TEST_FILTER="$(DLOG_FABRIC_ARIES_FILTER) && libp2p"
+
+.PHONY: integration-tests-dlog-fabric-aries-replicas
+integration-tests-dlog-fabric-aries-replicas:
+	make integration-tests-dlog-fabric TEST_FILTER="$(DLOG_FABRIC_ARIES_FILTER) && replicas"
+
+.PHONY: integration-tests-dlog-fabric-t6-t7-websocket
+integration-tests-dlog-fabric-t6-t7-websocket:
+	make integration-tests-dlog-fabric TEST_FILTER="$(DLOG_FABRIC_T6_T7_FILTER) && websocket"
+
+.PHONY: integration-tests-dlog-fabric-t6-t7-libp2p
+integration-tests-dlog-fabric-t6-t7-libp2p:
+	make integration-tests-dlog-fabric TEST_FILTER="$(DLOG_FABRIC_T6_T7_FILTER) && libp2p"
+
+.PHONY: integration-tests-dlog-fabric-t6-t7-replicas
+integration-tests-dlog-fabric-t6-t7-replicas:
+	make integration-tests-dlog-fabric TEST_FILTER="$(DLOG_FABRIC_T6_T7_FILTER) && replicas"
 
 .PHONY: integration-tests-dlog-fabric
 integration-tests-dlog-fabric:
@@ -202,6 +239,23 @@ integration-tests-fabtoken-fabric-t5:
 .PHONY: integration-tests-fabtoken-fabric-t17
 integration-tests-fabtoken-fabric-t17:
 	make integration-tests-fabtoken-fabric TEST_FILTER="T17"
+
+# T1, T17, T4, T5, T3 and T2 share one network per infrastructure type (see the "Fungible"
+# container in integration/token/fungible/fabtoken), so CI runs them as one job per
+# infrastructure type.
+FABTOKEN_FABRIC_ALL_FILTER = (T1 || T2 || T3 || T4 || T5 || T17)
+
+.PHONY: integration-tests-fabtoken-fabric-all-websocket
+integration-tests-fabtoken-fabric-all-websocket:
+	make integration-tests-fabtoken-fabric TEST_FILTER="$(FABTOKEN_FABRIC_ALL_FILTER) && websocket"
+
+.PHONY: integration-tests-fabtoken-fabric-all-libp2p
+integration-tests-fabtoken-fabric-all-libp2p:
+	make integration-tests-fabtoken-fabric TEST_FILTER="$(FABTOKEN_FABRIC_ALL_FILTER) && libp2p"
+
+.PHONY: integration-tests-fabtoken-fabric-all-replicas
+integration-tests-fabtoken-fabric-all-replicas:
+	make integration-tests-fabtoken-fabric TEST_FILTER="$(FABTOKEN_FABRIC_ALL_FILTER) && replicas"
 
 .PHONY: integration-tests-fabtoken-fabric
 integration-tests-fabtoken-fabric:

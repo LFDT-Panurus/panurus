@@ -88,7 +88,7 @@ func (s *QueryServiceEndorserSelector) SelectEndorsers(ctx context.Context, tmsI
 // namespacePolicy fetches, via the FabricX query service's GetNamespacePolicies RPC, the
 // endorsement policy in effect for tmsID.Namespace.
 func (s *QueryServiceEndorserSelector) namespacePolicy(ctx context.Context, tmsID token2.TMSID) (*applicationpb.NamespacePolicy, error) {
-	cc, err := s.grpcClientProvider.QueryServiceClient(tmsID.Network)
+	cc, err := s.grpcClientProvider.QueryServiceClient(tmsID.Network, "")
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to get query service client for [%s]", tmsID.Network)
 	}

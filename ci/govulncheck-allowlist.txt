@@ -13,14 +13,6 @@
 # to code that chooses to import that package. Allow-list it here only after
 # confirming nothing in Panurus imports it, and say so in the entry.
 
-# GO-2024-3218: Content Censorship in IPFS via Kademlia DHT abuse, in
-# github.com/libp2p/go-libp2p-kad-dht. No fix is published upstream. Reached
-# only through fabric-smart-client's libp2p-based peer discovery, used here
-# for FSC-node-to-node communication in a permissioned Fabric network — not
-# exposed to the public IPFS DHT this advisory concerns. Re-review when FSC's
-# go-libp2p-kad-dht dependency is upgraded past this advisory.
-GO-2024-3218
-
 # GO-2026-5932: golang.org/x/crypto/openpgp is unmaintained ("deprecated; do not
 # use", introduced at 0 with no fixed version, so no upgrade ever clears it).
 # Panurus imports no openpgp code, and the golangci-lint depguard rule forbids

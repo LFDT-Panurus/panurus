@@ -5,7 +5,7 @@ Automatic hierarchical call tracing and performance profiling for Go tests and b
 ## Quick Start
 
 ```bash
-cd tools/profiler
+cd cmd/profiler
 ./profile.sh BenchmarkValidatorTransfer
 ```
 
@@ -92,7 +92,7 @@ The `profile.sh` script automatically instruments your code. However, you can al
 ### In Benchmarks
 
 ```go
-import "github.com/LFDT-Panurus/panurus/tools/profiler/tracer"
+import "github.com/LFDT-Panurus/panurus/cmd/profiler/tracer"
 
 func BenchmarkValidatorTransfer(b *testing.B) {
     // Enable tracer

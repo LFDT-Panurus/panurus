@@ -4,6 +4,12 @@ The **Identity Service** (`token/services/identity`) is an **internal infrastruc
 
 This independence ensures that token-related cryptographic material (such as Idemix pseudonyms or X.509 certificates used for token ownership) is managed according to the specific privacy and security requirements of the Token Drivers, regardless of the underlying DLT platform.
 
+## Key Handling
+
+Private key material (X.509 signing keys, Idemix long-term user keys and pseudonym keys) **must not be cached** in signers, key managers, closures, or globals.
+Keys are loaded from the keystore only when needed, i.e. at sign time, and released right after use, so they stay in memory for the shortest time possible.
+Performance work on the sign/verify path must not resolve a key once and hold it; optimize allocations, hashing, or lookups of non-secret data instead.
+
 ## Overview
 
 The Identity Service abstracts the complexity of different cryptographic schemes, allowing Panurus to support multiple identity types (e.g., X.509, Idemix) and different storage backends seamlessly. 
@@ -175,7 +181,10 @@ The `LocalMembership` component (`token/services/identity/membership`) plays a p
     Stored configurations are resolved concurrently — `KeyManagerProvider.Get` must support concurrent calls for distinct configurations, and
     each returned `KeyManager` must either be independently owned by the caller or safe for concurrent `EnrollmentID` calls — and the results
     are committed to the in-memory indices sequentially in the original store order, so identity ordering (e.g. fallback default selection,
-    same-name tie-breaks) is deterministic.
+    same-name tie-breaks) is deterministic. A stored configuration with the same `(ID, URL)` as a configured one is skipped.
+*   **Same-name resolution**: identities sharing a name are kept ordered by priority, and a lookup by that name returns the first one. An
+    identity matching one of the `Load` target identities gets the highest priority (`MaxPriority`); otherwise the priority is the index of
+    the `KeyManagerProvider` that loaded it. Among equal priorities the identity registered first wins.
 *   **Reloading replaces, it does not merge**: `Load` may be called more than once on the same `LocalMembership`, and each call is a full
     replacement of the in-memory view. It resets **all four** indices — `localIdentities`, `localIdentitiesByName`,
     `localIdentitiesByConfig` and `localIdentitiesByIdentity` — plus the cached default identifier, so an identity that was present only in an
@@ -227,6 +236,18 @@ func (d *Base) NewWalletService(...) (*wallet.Service, error) {
     ), nil
 }
 ```
+
+### Signer cache size
+
+`Provider` keeps resolved signers in a bounded in-memory cache keyed by the identity's `UniqueID()`.
+Its size defaults to `identity.DefaultSignerCacheSize` (50 entries) and is set per TMS with
+`token.tms.<tms>.wallets.signerCacheSize` (see [configuration](../configuration.md)), which the drivers
+pass to `NewProvider` via `identity.WithSignerCacheSize`; a value of 0 or less selects the default.
+
+Each typed identity takes **two** slots — the outer typed bytes and the bare inner identity are both
+lookup keys — so the default holds about 25 typed identities. A node that signs with more distinct
+identities than that in rotation evicts them and re-deserializes (for Idemix, re-running the
+sign+verify probe) on every `GetSigner`; size the cache to at least twice that working set.
 
 ### SignerRouter (conf_id-pinned fast path)
 

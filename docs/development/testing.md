@@ -192,6 +192,116 @@ To run the `dlog-fabric-t1` test:
 make integration-tests-dlog-fabric-t1
 ```
 
+### Sharing One Network Across Specs
+
+Most suites build a whole network for every spec with `BeforeEach(ts.Setup)` /
+`AfterEach(ts.TearDown)`. Specs that leave the network healthy can instead share one network
+by calling `token.ShareNetwork` (`integration/token/test_utils.go`) inside an
+`Ordered, ContinueOnFailure` container, the Panurus counterpart of FSC's
+`faultrecovery.ShareNetwork`:
+
+```go
+Describe("Multisig and Redeem to yourself", Ordered, ContinueOnFailure, t.Label, func() {
+	ts, selector := newTestSuite(...)
+	token2.ShareNetwork(ts)
+	It("Multisig succeeded", Label("T12"), func() { fungible.TestMultiSig(ts.II, selector) })
+	It("Test redeem", Label("T13"), func() { fungible.TestRedeem(ts.II, selector, "default") })
+})
+```
+
+The lifecycle is:
+
+- **Initial build**: the network is built in `BeforeAll`, before the first selected spec. The
+  `DeferCleanup` that tears it down is registered *before* the build starts, so a network whose
+  build failed part-way is still torn down and does not hold the ports that later containers of
+  the suite reuse. If the initial build fails, Ginkgo fails that spec and skips the rest of the
+  container.
+- **Rebuild after a failure**: a spec that fails, including in a `DeferCleanup` it registered
+  itself, may leave the network broken, so the network is torn down and rebuilt before the next
+  spec runs. If that rebuild fails, the spec it was run for fails before its body runs (it is
+  not skipped, so the run stays red), and every later spec of the container is skipped rather
+  than retrying the rebuild.
+- **Final teardown**: the network is torn down after the last spec of the container, after that
+  spec's own cleanups. Under `--fail-fast`, Ginkgo skips every spec after the first failure and
+  never runs that final cleanup, so the network is torn down right after the spec that failed.
+- **Suite timeout**: if the Ginkgo suite timeout (default 1h) expires, the network of the
+  timed-out container is not torn down, as with FSC's `faultrecovery.ShareNetwork`. A CI runner
+  is discarded anyway; locally, run `make clean-all-containers`.
+
+Because of this, the suite passed to `token.ShareNetwork` must implement `token.Network`
+with a `TearDown` that is safe to call on a network whose `Setup` failed part-way (or never
+ran) and that is idempotent. `token.TestSuite` does so; a suite embedding FSC's
+`*integration.TestSuite` must override `TearDown`, for example with `token.StopInfrastructure`
+(see the `testSuite` of `integration/token/fungible/dlogx`). `TearDown` clears `II` only once
+`Stop` returns, so if `Stop` panics part-way the final cleanup retries it once. It does not stop
+the build server or remove the test directory of an infrastructure whose `Generate` never ran;
+those hold no ports in the start range and are cleaned up by `CleanupBuildArtifacts` and
+`DeleteOnStart`.
+
+Labels stay on the specs, so a label filter that selects one spec still runs it on a network of
+its own; a CI job gains only when its filter selects several specs of the container
+(e.g. `make integration-tests-dlog-fabric-t12-t13`).
+
+Only group specs that:
+
+- leave every node running and the public parameters and node configuration unchanged
+  (a spec that updates the public parameters or revokes an identity may only run after every
+  spec it would affect, see below);
+- do not assert absolute balances, holdings or issued totals on a wallet and token type that an
+  earlier spec of the container also touched, and stay together within the issuer's USD quota
+  (241, enforced by the test issuer view).
+
+#### Sharing a network with `TestAll`
+
+`fungible.TestAll` asserts the whole audited and accepted transaction history, the issuer's
+history and the issuer's USD quota, so it only passes on a fresh network. The dlog suite
+(`integration/token/fungible/dlog`) still shares its network with the cheaper specs of the same
+topology, in the containers "T1 Fungible with Auditor ne Issuer and extras" (T1, T17, T4, T5,
+T3, T2.1, T2) and "Fungible with Auditor = Issuer" (T6, T7); the fabtoken suite does the same in
+its "Fungible" container (T1, T17, T4, T5, T3, T2). The rules are:
+
+- **`TestAll` runs first.** It checks this itself: it fails at once, with "TestAll must run on a
+  fresh network (first spec of a ShareNetwork container)", if the auditor has already audited a
+  transaction. The check only looks at that auditor's audit history; its point is a clear error,
+  since `TestAll`'s own first history assertions would fail anyway.
+- **Every later spec uses its own token type**, with `fungible.WithTokenType`, accepted by
+  `TestRedeemUnauthorizedIssuer`, `TestRemoteOwnerWallet(WithWMP)`, `TestRevokeIdentity` and
+  `TestPublicParamsUpdate` (the default stays `"USD"`; `TestPublicParamsUpdate` also takes
+  `fungible.WithRestartAfterUpdate`). Balances, holdings, spending
+  and the auditor's limits are per type, and the USD quota applies to the exact type `"USD"`
+  only, so a spec with its own type does not see what `TestAll` left behind. Two specs that
+  assert absolute balances of the same wallets (T4 and T5) need different types from each other
+  too. The type must not contain `.`: the sherdlock selector keys its cache by wallet ID and type
+  joined by `.`, and wallet IDs are dotted (`alice.id1`). The suites use `USDt17`, `USDt4`, and
+  so on.
+- **Specs that change the network for good go last**, ordered so that no change affects a spec
+  that runs after it: T3 revokes bob, so it runs after T4 and T5, which move tokens to bob; T2.1
+  and T2 change the public parameters, so they close the container.
+- **Re-running a setup step must be harmless.** For example, T17 authorizes the issuer for
+  redeem, which `TestAll` already did; that is a KVS overwrite, so it changes nothing. A spec that
+  needs the *absence* of such state (T13 expects no authorized redeem issuer) cannot run after
+  `TestAll`. Likewise T17 relies on `newIssuer` not being in the public parameters, so it runs
+  before T2.1/T2, which add it.
+- **Public parameters updates start from the genesis file.** `PrepareUpdatedPublicParams` reads
+  the public parameters file written at network generation, which `UpdatePublicParams` does not
+  rewrite, so T2.1 and T7 drop the `issuer.ExtraId` issuer that `TestAll` added. No later spec
+  uses it; a spec that needs an earlier update to persist must not follow one.
+
+To pick the order for a new container: start with `TestAll`, then the specs that only add state
+under their own token type, then those that change shared state (revocations), then those that
+change the public parameters, and check each against the ones before it with the rules above.
+The make targets `integration-tests-dlog-fabric-aries-{websocket,libp2p,replicas}`,
+`integration-tests-dlog-fabric-t6-t7-{websocket,libp2p,replicas}` and
+`integration-tests-fabtoken-fabric-all-{websocket,libp2p,replicas}` run each container once per
+infrastructure type; the single-label targets (e.g. `integration-tests-dlog-fabric-t17`) still
+run one spec on a network of its own.
+
+Co-locating `TestAll` with the small specs is a tradeoff: it cuts the dlog jobs for these specs
+from 9 to 3, but each grouped job runs `TestAll` plus every small spec back to back, so the
+`aries-replicas` job becomes the longest of them (estimated 22–28 minutes, well under Ginkgo's
+1h default suite timeout). If it becomes the critical path of the itest workflow, split the
+container into `TestAll` alone plus a shared container for the small specs.
+
 ### Enabling the Token Platform Without a TMS
 
 By default, an FSC node only gets `token: enabled: true` written into its generated

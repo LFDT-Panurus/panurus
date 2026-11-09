@@ -149,16 +149,9 @@ echo -e "${GREEN}Tracer injected${NC}"
 echo -e "${BLUE}Configuring tracer access...${NC}"
 cd "$TEMP_TEST_DIR"
 
-# Create a temporary go.mod for the tracer package (needed for replace directive)
-TEMP_TRACER_DIR="$WORK_DIR/tools/profiler/tracer"
-cat > "$TEMP_TRACER_DIR/go.mod" << EOF
-module github.com/LFDT-Panurus/panurus/tools/profiler/tracer
-
-go 1.27
-EOF
-
-# Add replace directive to point to the tracer in the temp workspace
-go mod edit -replace github.com/LFDT-Panurus/panurus/tools/profiler/tracer="$TEMP_TRACER_DIR"
+# The tracer lives in the cmd/profiler module: point it at the copy in the temporary workspace
+PROFILER_MODULE_DIR="$WORK_DIR/cmd/profiler"
+go mod edit -replace github.com/LFDT-Panurus/panurus/cmd/profiler="$PROFILER_MODULE_DIR"
 if ! go mod tidy 2>&1; then
     echo -e "${RED}Error: go mod tidy failed${NC}"
     exit 1

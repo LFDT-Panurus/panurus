@@ -55,12 +55,15 @@ func (d BaseWalletServiceFactory) newWalletService(
 	}
 	identityMetrics := identity.NewMetrics(metricsProvider)
 	signerRouter := identity.NewSignerRouter(identityMetrics)
-	identityProvider := identity.NewProvider(logger.Named("identity"), identityDB, deserializerManager, binder, NewEIDRHDeserializer(), identityMetrics)
-	identityProvider.SetSignerRouter(signerRouter)
 	identityConfig, err := config.NewIdentityConfig(tmsConfig)
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to create identity config")
 	}
+	identityProvider := identity.NewProvider(
+		logger.Named("identity"), identityDB, deserializerManager, binder, NewEIDRHDeserializer(), identityMetrics,
+		identity.WithSignerCacheSize(identityConfig.SignerCacheSize()),
+	)
+	identityProvider.SetSignerRouter(signerRouter)
 
 	// Prepare roles
 	keyStore := x509.NewKeyStore(baseKeyStore)

@@ -59,6 +59,7 @@ func NewService(lockerProvider LockerProvider, c ConfigProvider, metricsProvider
 		numRetries:           cfg.GetNumRetries(),
 		retryInterval:        cfg.GetRetryInterval(),
 		requestCertification: true,
+		metrics:              NewMetrics(metricsProvider),
 		limiter:              ratelimit.CompileOptions(opts...).Limiter(cfg, metricsProvider),
 	}
 	if loader.limiter != nil {
@@ -114,6 +115,7 @@ type loader struct {
 	numRetries           int
 	retryInterval        time.Duration
 	requestCertification bool
+	metrics              *Metrics
 	// limiter meters selection requests per wallet. It is nil when rate limiting is
 	// disabled, which is the default, and is shared by every manager the loader builds.
 	limiter ratelimit.Limiter
@@ -145,6 +147,7 @@ func (s *loader) newManager(locker Locker, qs QueryService, precision uint64, sc
 		s.retryInterval,
 		s.requestCertification,
 		precision,
+		WithMetrics(s.metrics),
 	)
 
 	// Decorate returns mgr unchanged when no limiter is configured, which is the default.

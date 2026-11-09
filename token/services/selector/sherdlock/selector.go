@@ -120,9 +120,14 @@ func (m *StubbornSelector) Select(ctx context.Context, ownerFilter token.OwnerFi
 			"Token selection aborted, so that other procs can retry. Release tokens and backoff for %v before retrying to select. "+
 				"In the meantime maybe some other process releases token locks or adds tokens.",
 			backoffDuration)
+		backoffStart := time.Now()
+		timer := time.NewTimer(backoffDuration)
 		select {
-		case <-time.After(backoffDuration):
+		case <-timer.C:
+			m.metrics.BackoffDuration.Observe(time.Since(backoffStart).Seconds())
 		case <-ctx.Done():
+			timer.Stop()
+			m.metrics.BackoffDuration.Observe(time.Since(backoffStart).Seconds())
 			if err := m.locker.UnlockAll(ctx); err != nil {
 				m.logger.Errorf("failed to unlock tokens on context cancellation: %s", err)
 			}

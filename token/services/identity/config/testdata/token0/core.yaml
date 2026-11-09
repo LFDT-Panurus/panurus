@@ -9,6 +9,7 @@ token:
       wallets:
         # Default cache size reference that can be used by any wallet that support caching
         defaultCacheSize: 3
+        signerCacheSize: 200
         owners:
           - default: true
             id: owner1
