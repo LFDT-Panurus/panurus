@@ -75,6 +75,7 @@ func newDriver(config driver3.Config, dbProvider fscPostgres.DbProvider, sampler
 		logger.Warnf("failed to load storage config: %v — using defaults", err)
 	}
 	tableNamesConfig := storageConfig.TableNames
+	limits := storageConfig.Limits
 
 	if sampler != nil {
 		dbProvider = &observedDbProvider{inner: dbProvider, sampler: sampler}
@@ -87,20 +88,20 @@ func newDriver(config driver3.Config, dbProvider fscPostgres.DbProvider, sampler
 
 	d.TokenLock = newProviderWithKeyMapper(dbProvider, func(dbs *common.RWDB, tableNames common3.TableNames) (*TokenLockStore, error) {
 		return newTokenLockStoreWithStrategy(dbs, tableNames, storageConfig.LockStrategy)
-	}, "tokenlock", tableNamesConfig)
-	d.Identity = newIdentityStoreProvider(dbProvider, tableNamesConfig)
-	d.Wallet = newWalletStoreProvider(d, dbProvider, tableNamesConfig)
-	d.Token = newTokenStoreProvider(dbProvider, tableNamesConfig)
-	d.AuditTx = newProviderWithKeyMapper(dbProvider, NewAuditTransactionStore, "audittx", tableNamesConfig)
-	d.OwnerTx = newTransactionStoreProvider(dbProvider, tableNamesConfig)
-	d.Endorser = newEndorserStoreProvider(dbProvider, tableNamesConfig)
-	d.KeyStore = newProviderWithKeyMapper(dbProvider, NewKeystoreStore, "keystore", tableNamesConfig)
+	}, "tokenlock", tableNamesConfig, limits)
+	d.Identity = newIdentityStoreProvider(dbProvider, tableNamesConfig, limits)
+	d.Wallet = newWalletStoreProvider(d, dbProvider, tableNamesConfig, limits)
+	d.Token = newTokenStoreProvider(dbProvider, tableNamesConfig, limits)
+	d.AuditTx = newProviderWithKeyMapper(dbProvider, NewAuditTransactionStore, "audittx", tableNamesConfig, limits)
+	d.OwnerTx = newTransactionStoreProvider(dbProvider, tableNamesConfig, limits)
+	d.Endorser = newEndorserStoreProvider(dbProvider, tableNamesConfig, limits)
+	d.KeyStore = newProviderWithKeyMapper(dbProvider, NewKeystoreStore, "keystore", tableNamesConfig, limits)
 
 	return d
 }
 
 // newTokenStoreProvider returns a lazy provider for TokenStore.
-func newTokenStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfig common3.TableNamesConfig) lazy.Provider[fscPostgres.Config, *TokenStore] {
+func newTokenStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfig common3.TableNamesConfig, limits common3.Limits) lazy.Provider[fscPostgres.Config, *TokenStore] {
 	return lazy.NewProviderWithKeyMapper(key, func(o fscPostgres.Config) (*TokenStore, error) {
 		dbs, err := dbProvider.Get(o.Opts())
 		if err != nil {
@@ -125,6 +126,7 @@ func newTokenStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfig c
 		if err != nil {
 			return nil, err
 		}
+		p.ApplyLimits(limits)
 		if !o.SkipCreateTable {
 			if err := p.CreateSchema(); err != nil {
 				return nil, err
@@ -136,7 +138,7 @@ func newTokenStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfig c
 }
 
 // newIdentityStoreProvider returns a lazy provider for IdentityStore.
-func newIdentityStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfig common3.TableNamesConfig) lazy.Provider[fscPostgres.Config, *IdentityStore] {
+func newIdentityStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfig common3.TableNamesConfig, limits common3.Limits) lazy.Provider[fscPostgres.Config, *IdentityStore] {
 	return lazy.NewProviderWithKeyMapper(key, func(o fscPostgres.Config) (*IdentityStore, error) {
 		dbs, err := dbProvider.Get(o.Opts())
 		if err != nil {
@@ -152,6 +154,7 @@ func newIdentityStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfi
 		if err != nil {
 			return nil, err
 		}
+		p.ApplyLimits(limits)
 		if o.SkipCreateTable {
 			p.notifier.skipSchemaManagement()
 		}
@@ -167,7 +170,7 @@ func newIdentityStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfi
 }
 
 // newTransactionStoreProvider returns a lazy provider for TransactionStore with notifier support.
-func newTransactionStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfig common3.TableNamesConfig) lazy.Provider[fscPostgres.Config, *TransactionStore] {
+func newTransactionStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfig common3.TableNamesConfig, limits common3.Limits) lazy.Provider[fscPostgres.Config, *TransactionStore] {
 	return lazy.NewProviderWithKeyMapper(key, func(o fscPostgres.Config) (*TransactionStore, error) {
 		dbs, err := dbProvider.Get(o.Opts())
 		if err != nil {
@@ -192,6 +195,7 @@ func newTransactionStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesCo
 		if err != nil {
 			return nil, err
 		}
+		p.ApplyLimits(limits)
 		if !o.SkipCreateTable {
 			if err := p.CreateSchema(); err != nil {
 				return nil, err
@@ -205,7 +209,7 @@ func newTransactionStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesCo
 // newWalletStoreProvider returns a lazy provider for WalletStore. Wallets carries a hard
 // FOREIGN KEY to IdentityConfigurations (conf_id), so its schema must be created after the
 // Identity store's — lazy providers otherwise offer no ordering guarantee across stores.
-func newWalletStoreProvider(d *Driver, dbProvider fscPostgres.DbProvider, tableNamesConfig common3.TableNamesConfig) lazy.Provider[fscPostgres.Config, *WalletStore] {
+func newWalletStoreProvider(d *Driver, dbProvider fscPostgres.DbProvider, tableNamesConfig common3.TableNamesConfig, limits common3.Limits) lazy.Provider[fscPostgres.Config, *WalletStore] {
 	return lazy.NewProviderWithKeyMapper(key, func(o fscPostgres.Config) (*WalletStore, error) {
 		// Ensure IdentityConfigurations exists before creating Wallets' schema.
 		if _, err := d.Identity.Get(o); err != nil {
@@ -224,6 +228,7 @@ func newWalletStoreProvider(d *Driver, dbProvider fscPostgres.DbProvider, tableN
 		if err != nil {
 			return nil, err
 		}
+		p.ApplyLimits(limits)
 		if !o.SkipCreateTable {
 			if err := p.CreateSchema(); err != nil {
 				return nil, err
@@ -315,7 +320,7 @@ func (d *Driver) NewEndorser(name driver2.PersistenceName, params ...string) (dr
 }
 
 // newEndorserStoreProvider returns a lazy provider for EndorserStore.
-func newEndorserStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfig common3.TableNamesConfig) lazy.Provider[fscPostgres.Config, *EndorserStore] {
+func newEndorserStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfig common3.TableNamesConfig, limits common3.Limits) lazy.Provider[fscPostgres.Config, *EndorserStore] {
 	return lazy.NewProviderWithKeyMapper(key, func(o fscPostgres.Config) (*EndorserStore, error) {
 		dbs, err := dbProvider.Get(o.Opts())
 		if err != nil {
@@ -331,6 +336,8 @@ func newEndorserStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfi
 		if err != nil {
 			return nil, err
 		}
+		// Endorser store has nothing bounded today; applied uniformly anyway.
+		common3.ApplyLimits(p, limits)
 
 		// Create schema if needed
 		if !o.SkipCreateTable {
@@ -368,7 +375,13 @@ func (p *observedDbProvider) Get(opts fscPostgres.Opts) (*common.RWDB, error) {
 }
 
 // newProviderWithKeyMapper returns a lazy provider for a DB object using a common constructor.
-func newProviderWithKeyMapper[V common.DBObject](dbProvider fscPostgres.DbProvider, constructor common3.PersistenceConstructor[V], storeType string, tableNamesConfig common3.TableNamesConfig) lazy.Provider[fscPostgres.Config, V] {
+func newProviderWithKeyMapper[V common.DBObject](
+	dbProvider fscPostgres.DbProvider,
+	constructor common3.PersistenceConstructor[V],
+	storeType string,
+	tableNamesConfig common3.TableNamesConfig,
+	limits common3.Limits,
+) lazy.Provider[fscPostgres.Config, V] {
 	return lazy.NewProviderWithKeyMapper(key, func(o fscPostgres.Config) (V, error) {
 		dbs, err := dbProvider.Get(o.Opts())
 		if err != nil {
@@ -382,6 +395,9 @@ func newProviderWithKeyMapper[V common.DBObject](dbProvider fscPostgres.DbProvid
 		if err != nil {
 			return utils.Zero[V](), err
 		}
+		// KeyStore (bounded Put) implements LimitsConfigurable; TokenLock and
+		// AuditTx do not and this is a no-op for them.
+		common3.ApplyLimits(p, limits)
 		if !o.SkipCreateTable {
 			if err := p.CreateSchema(); err != nil {
 				return utils.Zero[V](), err
