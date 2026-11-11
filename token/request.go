@@ -1467,18 +1467,19 @@ func (r *Request) AuditRecord(ctx context.Context) (*AuditRecord, error) {
 		}
 		in.Quantity = q
 
-		// extractTransferInputs read the owner, enrollment id and revocation
-		// handle off the request's blob: taking the audit info from elsewhere
-		// would leave them paired with a blob they were not read from.
+		// in.EnrollmentID, in.RevocationHandler and in.Owner were read off the blob the
+		// request carries (extractTransferInputs), so the record keeps that same blob.
 		localAuditInfo, err := r.TokenService.tms.WalletService().GetAuditInfo(ctx, toks[i].Owner)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed getting audit info for owner [%s]", toks[i].Owner)
 		}
 		switch {
 		case len(in.OwnerAuditInfo) == 0:
-			// an upgrade input: an issue action records only the token id
+			// only an issue action's inputs: a transfer input carrying none fails GetEIDAndRH
 			in.OwnerAuditInfo = localAuditInfo
 		case len(localAuditInfo) != 0 && !bytes.Equal(localAuditInfo, in.OwnerAuditInfo):
+			// warn, never fail: nothing binds the local copy to this request
+			// (docs/services/auditor.md, "Input Attribution")
 			r.TokenService.logger.Warnf(
 				"input [%v] of request [%s]: the audit info carried for owner [%s] differs from the locally stored one, using the carried one",
 				in.Id, r.Anchor, toks[i].Owner,
