@@ -1,3 +1,3 @@
 module github.com/LFDT-Panurus/panurus/cmd/profiler
 
-go 1.27.3
+go 1.27.4

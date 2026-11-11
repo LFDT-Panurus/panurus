@@ -1,6 +1,6 @@
 module github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs/hashicorp
 
-go 1.27.3
+go 1.27.4
 
 replace (
 	github.com/LFDT-Panurus/panurus => ./../../../../../../
