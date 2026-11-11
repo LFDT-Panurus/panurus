@@ -14,7 +14,7 @@ is merged, the corresponding GitHub team (`panurus-maintainers`) must be updated
 | Arne Rutjes | [arner][arner] | Maintainer | | arner | <arne.rutjesISC@nl.ibm.com> | IBM |
 | Alexandros Filios | [alexandrosfilios][alexandrosfilios] | Maintainer | | lio | <alexandros.filios@alumni.ethz.ch> | Independent |
 | Akram Bitar | [AkramBitar][AkramBitar] | Maintainer | | akrambitar | <akram@il.ibm.com> | IBM |
-| Efrayim Sztokman | [Effi-S][Effi-S] | Maintainer | | | <efrayim.sztokman@ibm.com> | IBM |
+| Efrayim Sztokman | [Effi-S][Effi-S] | Maintainer | effi123 | | <efrayim.sztokman@ibm.com> | IBM |
 
 ## Emeritus Maintainers
 
