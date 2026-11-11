@@ -10,7 +10,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"testing"
 
@@ -40,22 +39,30 @@ func idemixIssuerPK(t *testing.T) []byte {
 	return raw
 }
 
-// newPublicParams returns a fresh generation of public parameters. When generatorsSeed is not
-// empty, the Pedersen generators are replaced by ones derived from that seed, which is exactly
-// what a public parameters regeneration that changes the bases looks like: every token created
-// under the previous generation keeps a format no longer produced by the new one.
-func newPublicParams(t *testing.T, generatorsSeed string) *setup.PublicParams {
+// generationCurves maps a generation name to the curve it is generated on. Generators are derived
+// from a public label, so for a given driver name and version only the curve changes them. A
+// public parameters regeneration that changes the bases therefore looks like a curve change:
+// every token created under the previous generation keeps a format no longer produced by the new one.
+var generationCurves = map[string]math.CurveID{
+	"old-generators":        math.BLS12_381_BBS_GURVY,
+	"even-older-generators": math.BLS12_381_GURVY,
+	"generation-a":          math.BLS12_381_BBS_GURVY,
+	"generation-b":          math.BLS12_381_GURVY,
+	"generation-c":          math.BLS12_377_GURVY,
+}
+
+// newPublicParams returns a fresh generation of public parameters. When generation is not empty,
+// the parameters are generated on a different curve, hence with different (still derived) generators.
+func newPublicParams(t *testing.T, generation string) *setup.PublicParams {
 	t.Helper()
-	pp, err := setup.Setup(testBitLength, idemixIssuerPK(t), math.BN254)
-	require.NoError(t, err)
-	if len(generatorsSeed) != 0 {
-		curve := math.Curves[pp.Curve]
-		generators := make([]*math.G1, len(pp.PedersenGenerators))
-		for i := range generators {
-			generators[i] = curve.HashToG1([]byte(generatorsSeed + "." + strconv.Itoa(i)))
-		}
-		pp.PedersenGenerators = generators
+	curve := math.BN254
+	if len(generation) != 0 {
+		c, ok := generationCurves[generation]
+		require.True(t, ok, "unknown generation %q", generation)
+		curve = c
 	}
+	pp, err := setup.Setup(testBitLength, idemixIssuerPK(t), curve)
+	require.NoError(t, err)
 	require.NoError(t, pp.Validate())
 
 	return pp
