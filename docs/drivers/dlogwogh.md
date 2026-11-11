@@ -162,6 +162,8 @@ The same nothing-up-my-sleeve technique is used for all range-proof generators, 
 
 **Security note**: Because the generators are derived from a public hash, no single party—including the operator who ran `tokengen`—knows the discrete-log relation between $g_0$, $g_1$, and $g_2$ with respect to each other. This is a necessary pre-condition for the binding property of Pedersen commitments (see [Section 12.1](#121-soundness)).
 
+**Validation**: `PublicParams.Validate` does not trust the generators it receives. It re-derives the Pedersen generators, the Bulletproof generators (`P`, `Q`, `L_i`, `R_i`), and the CSP generators (`L_i`, `R_i`) from the label above, using the public parameters' driver name, driver version, and bit length. It rejects any parameters that differ, including `NumberOfRounds` mismatches. A generator set such as $g_1 = g_2^x$ is therefore refused, even though each generator is a valid curve point. `Deserialize` also rejects public parameters whose inner driver name or version differs from the checked identifier, so the label cannot be changed independently of the identifier. Validation costs about 4 ms for 64-bit parameters on BN254 and runs when parameters are loaded. Public parameters generated with other generators must be regenerated.
+
 The public parameters include three Pedersen generators `[g_0, g_1, g_2]` used for commitment schemes:
 - `g_0`: Used for token type commitments
 - `g_1`: Used for token value commitments
