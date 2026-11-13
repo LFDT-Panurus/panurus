@@ -34,9 +34,9 @@ func TestBadgerKVS_PutAndGet(t *testing.T) {
 	key := "test-key"
 	val := []byte("test-value")
 
-	require.False(t, b.Exists(ctx, key))
+	var missing []byte
+	require.ErrorIs(t, b.Get(ctx, key, &missing), ErrKeyNotFound)
 	require.NoError(t, b.Put(ctx, key, val))
-	require.True(t, b.Exists(ctx, key))
 
 	var result []byte
 	require.NoError(t, b.Get(ctx, key, &result))
@@ -49,6 +49,7 @@ func TestBadgerKVS_GetNotFound(t *testing.T) {
 	var result []byte
 	err := b.Get(t.Context(), "missing", &result)
 	require.Error(t, err)
+	require.ErrorIs(t, err, ErrKeyNotFound)
 }
 
 func TestBadgerKVS_PutInvalidValue(t *testing.T) {
@@ -142,6 +143,8 @@ func TestBadgerKVS_GetNotFound_PreservesErrKeyNotFound(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, errors.Is(err, badger.ErrKeyNotFound),
 		"expected error to wrap badger.ErrKeyNotFound, got: %v", err)
+	// Both sentinels stay reachable: the package-level one is what ComputeID classifies on.
+	require.ErrorIs(t, err, ErrKeyNotFound)
 }
 
 func TestNewBadgerKVS_NonExistentPath(t *testing.T) {
@@ -183,7 +186,6 @@ func TestBadgerKVS_ConcurrentReadsAndWrites(t *testing.T) {
 				val := fmt.Appendf(nil, "worker-%d-val-%d", w, i)
 
 				assert.NoError(t, b.Put(ctx, key, val))
-				assert.True(t, b.Exists(ctx, key))
 
 				var got []byte
 				assert.NoError(t, b.Get(ctx, key, &got))
@@ -195,7 +197,9 @@ func TestBadgerKVS_ConcurrentReadsAndWrites(t *testing.T) {
 
 	for w := range workers {
 		for i := range opsPerWorker {
-			require.True(t, b.Exists(ctx, fmt.Sprintf("worker-%d-key-%d", w, i)))
+			var got []byte
+			require.NoError(t, b.Get(ctx, fmt.Sprintf("worker-%d-key-%d", w, i), &got))
+			require.Equal(t, fmt.Appendf(nil, "worker-%d-val-%d", w, i), got)
 		}
 	}
 }

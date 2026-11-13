@@ -38,6 +38,30 @@ graph TD
 ### Guaranteed Uniqueness
 Unlike fungible tokens, each NFT must be unique. The NFTTX Service often utilizes a specific `UniqueID` attribute in the token request. The service ensures that this identifier is correctly generated (e.g., using a UUID or a content-based hash) and validated by the token driver to prevent duplicates on the ledger.
 
+#### The uniqueness service and its salt
+
+`uniqueness.Service.ComputeID` derives an NFT's `UniqueID` from the state's JSON, so the
+same state always yields the same id — that is how an issuer spots a duplicate. It keeps a
+random 32-byte salt in a KVS, sampled once and reused, to stop anyone deriving ids for
+guessable states.
+
+> **Note:** the salt is not yet mixed into the digest, so today the id is a plain
+> `sha256(json(state))` and that protection does not hold. See issue #2683.
+
+Rotating the salt changes every id, so a salt that merely *failed to read* must never be
+replaced. Presence is read with `KVS.Get`; there is deliberately no `Exists`-style probe,
+because a bare `bool` cannot tell an absent key from an unreadable store (issue #2626).
+
+A backend reports a missing key in one of two ways:
+
+| Backend | Missing key |
+|---|---|
+| in-memory, badger | `uniqueness.ErrKeyNotFound` — wrap it (`errors.Wrapf`, or `errors.Join` to keep your own cause) so `errors.Is` still matches |
+| hashicorp vault | a **nil error**, destination untouched |
+
+`ComputeID` therefore treats an **empty** salt as absent, which covers both. Any other
+error means the read failed: it is propagated, and nothing is written.
+
 ### Rich Metadata
 NFTs often carry extensive metadata (e.g., links to digital artwork, serial numbers, or physical asset descriptions). The NFTTX Service provides standardized ways to include this metadata in the token request's metadata fields, ensuring it is properly signed and (if required by the driver) obfuscated on the ledger.
 
