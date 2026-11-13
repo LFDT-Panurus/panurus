@@ -35,6 +35,19 @@ Operations that cannot be attributed to a single identity — `AreMe` over a bat
 instance — are reported with an empty principal and are never throttled. Charging a
 batch to one of its members would let unrelated callers throttle each other.
 
+### Rotating pseudonyms and the principal-key resolver
+
+Some identity schemes rotate: Idemix lets a party present a fresh, unlinkable pseudonym
+on every request. Keyed on the raw identity hash, each such request looks like a brand-new
+principal with a full quota, so pseudonym rotation walks straight around the per-principal
+limit. To close that, the gate keys on a **stable throttle key** when one can be resolved:
+the party's **enrollment ID** (namespaced as `eid:<id>`), derived from locally known audit
+information, so a party's rotating pseudonyms are charged to one quota. An identity whose
+enrollment ID cannot be resolved cheaply from local state — an unregistered pseudonym, or
+any identity scheme without enrollment IDs — falls back to the identity hash, the safe
+default (an over-broad key would let unrelated identities throttle each other). Resolution
+is only attempted when a gate is installed, so an un-gated service pays nothing for it.
+
 ## Where the gate applies
 
 **Instrumentation is installed everywhere. The gate is consulted at exactly one place:
@@ -171,7 +184,10 @@ number of tracked principals *and* the number of token buckets held at once by c
 When the cap is reached the oldest idle `normal` entry is evicted to make room; if only
 throttled entries remain, a new identity is served as `normal` with a full bucket rather
 than displacing a throttled one (which would silently restore its reduced quota). This
-keeps the throttle's own footprint bounded under abuse.
+keeps the throttle's own footprint bounded under abuse. Eviction picks its victim in
+constant time (an intrusive LRU list per level), so a party presenting a fresh pseudonym
+per request — the very traffic the cap exists for — adds no per-request scan of the
+tracked set on the signature path.
 
 ## Handling a denial
 

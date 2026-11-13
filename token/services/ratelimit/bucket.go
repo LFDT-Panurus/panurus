@@ -86,6 +86,17 @@ type BucketSet struct {
 	overrides int
 	buckets   map[string]*bucket
 
+	// lruHead and lruTail are sentinels bracketing a doubly-linked list of the non-overridden
+	// buckets, most-recently-used first: lruHead.next is the MRU bucket and lruTail.prev the LRU.
+	// It lets the eviction paths reach the least-recently-used bucket in O(1) instead of scanning
+	// every bucket on the signature hot path. evictOneUnderPressure drops the tail outright;
+	// evictOneForRoom walks from the tail (oldest first) and takes the first bucket that has
+	// refilled to capacity, which - because a staler bucket has had more time to refill - is the
+	// tail itself in the steady state. Overridden buckets are kept out of the list rather than
+	// skipped during a scan, since they are never evictable; refill-on-access and the eviction
+	// paths keep the list ordered by last-access time (see the lru* helpers).
+	lruHead, lruTail *bucket
+
 	stopOnce sync.Once
 	stopped  chan struct{}
 }
@@ -99,6 +110,46 @@ type bucket struct {
 	rate       float64
 	burst      float64
 	overridden bool
+
+	// key is the map key this bucket is stored under, carried on the bucket so the LRU list can
+	// delete it from the map in O(1) when it evicts the bucket from the tail.
+	key string
+	// prev and next link a non-overridden bucket into the LRU list (see BucketSet.lruHead). They
+	// are nil exactly when the bucket is unlinked: a brand-new transient bucket, an overridden
+	// bucket, or one that has been evicted. A bucket is in the list iff it is in the map and not
+	// overridden.
+	prev, next *bucket
+}
+
+// lruRemove unlinks b from the LRU list if it is linked, and is a no-op otherwise. Callers must
+// hold s.mu.
+func (s *BucketSet) lruRemove(b *bucket) {
+	if b.prev == nil {
+		return
+	}
+	b.prev.next = b.next
+	b.next.prev = b.prev
+	b.prev = nil
+	b.next = nil
+}
+
+// lruPushFront links b at the most-recently-used end of the LRU list. b must be unlinked.
+// Callers must hold s.mu.
+func (s *BucketSet) lruPushFront(b *bucket) {
+	b.prev = s.lruHead
+	b.next = s.lruHead.next
+	s.lruHead.next.prev = b
+	s.lruHead.next = b
+}
+
+// lruTouch makes b the most-recently-used bucket, linking it if it was unlinked. Callers must
+// hold s.mu.
+func (s *BucketSet) lruTouch(b *bucket) {
+	if s.lruHead.next == b {
+		return
+	}
+	s.lruRemove(b)
+	s.lruPushFront(b)
 }
 
 // floorBurst raises a bucket capacity to at least the larger of rate and 1.
@@ -171,6 +222,12 @@ func NewBucketSet(rate, burst float64, idleTTL, cleanupInterval time.Duration, m
 		buckets: make(map[string]*bucket),
 		stopped: make(chan struct{}),
 	}
+	// The LRU sentinels are wired before the early returns below so every path (metered or not)
+	// has a well-formed, empty list.
+	s.lruHead = &bucket{}
+	s.lruTail = &bucket{}
+	s.lruHead.next = s.lruTail
+	s.lruTail.prev = s.lruHead
 	if maxKeys > 0 {
 		// Reserve at least half the slots for non-overridden buckets so evictOneForRoom has a
 		// candidate to evict whenever one has refilled. Integer division keeps maxOverrides <=
@@ -316,6 +373,9 @@ func (s *BucketSet) SetRate(key string, rate, burst float64) bool {
 	b.burst = floorBurst(burst, rate)
 	b.overridden = true
 	b.tokens = math.Min(b.tokens, b.burst)
+	// An overridden bucket is never evicted, so it leaves the LRU list (bucketFor had just linked
+	// it at the front, or touched an existing non-overridden bucket into it).
+	s.lruRemove(b)
 	s.overrides++
 
 	return true
@@ -341,10 +401,10 @@ func (s *BucketSet) ClearRate(key string) {
 		return
 	}
 	// Settle the balance at the current (reduced) rate and advance b.last to now before swapping
-	// in the defaults, exactly as bucketForOverride and the in-place SetRate branch do. Otherwise
-	// the time the key sat idle under the override is left uncredited with b.last stale, and the
-	// next Take refills that whole gap at the new, higher default rate — handing back a full
-	// default bucket, the jump this method's contract says it avoids.
+	// in the defaults, exactly as the in-place SetRate branch does. Otherwise the time the key sat
+	// idle under the override is left uncredited with b.last stale, and the next Take refills that
+	// whole gap at the new, higher default rate — handing back a full default bucket, the jump this
+	// method's contract says it avoids.
 	s.refill(b, s.now())
 	if b.overridden {
 		s.overrides--
@@ -353,6 +413,9 @@ func (s *BucketSet) ClearRate(key string) {
 	b.burst = s.burst
 	b.overridden = false
 	b.tokens = math.Min(b.tokens, s.burst)
+	// The bucket is evictable again: (re)link it at the most-recently-used end, since clearing an
+	// override is itself a fresh touch of the key.
+	s.lruTouch(b)
 }
 
 // Reset discards key's bucket, including any quota override, so its next Take starts from a
@@ -362,9 +425,14 @@ func (s *BucketSet) Reset(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if b, ok := s.buckets[key]; ok && b.overridden {
+	b, ok := s.buckets[key]
+	if !ok {
+		return
+	}
+	if b.overridden {
 		s.overrides--
 	}
+	s.lruRemove(b)
 	delete(s.buckets, key)
 }
 
@@ -412,11 +480,20 @@ func (s *BucketSet) refill(b *bucket, now time.Time) {
 // set is at maxKeys and every bucket is overridden (so none can be displaced); the override budget
 // keeps a non-overridden floor on a bounded set, so that is unreachable there. Callers must hold
 // s.mu.
+//
+// A newly created bucket is linked at the most-recently-used end of the LRU list and an existing
+// non-overridden bucket is touched to the front, so the eviction paths can find the
+// least-recently-used victim off the list tail without scanning the map.
 func (s *BucketSet) bucketFor(key string) *bucket {
 	now := s.now()
 	b, ok := s.buckets[key]
 	if ok {
 		s.refill(b, now)
+		// An access makes a tracked bucket the most-recently-used. An overridden bucket is not in
+		// the list (it is never evicted), so leave it alone.
+		if !b.overridden {
+			s.lruTouch(b)
+		}
 
 		return b
 	}
@@ -451,8 +528,12 @@ func (s *BucketSet) bucketFor(key string) *bucket {
 		}
 	}
 
-	b = &bucket{tokens: tokens, last: now, rate: s.rate, burst: s.burst}
+	// key is carried on the bucket so the eviction paths can delete it from the map in O(1) off
+	// the LRU tail.
+	b = &bucket{tokens: tokens, last: now, rate: s.rate, burst: s.burst, key: key}
 	s.buckets[key] = b
+	// A newly stored bucket is non-overridden and the most recently used.
+	s.lruPushFront(b)
 
 	return b
 }
@@ -464,7 +545,8 @@ func (s *BucketSet) bucketFor(key string) *bucket {
 // Two kinds of bucket are never evicted:
 //
 //   - Overridden buckets carry a reduced quota for a key that is still being throttled, and
-//     evicting one would reset it to a full default bucket.
+//     evicting one would reset it to a full default bucket. They are kept out of the LRU list
+//     entirely, so the walk below never encounters one.
 //   - A bucket that has not refilled to capacity is still metering its key: recreating that key
 //     (bucketFor seeds a new bucket full) would hand a throttled principal a fresh budget, which
 //     is exactly the bypass an attacker gets by interleaving junk keys to force a throttled key
@@ -472,26 +554,24 @@ func (s *BucketSet) bucketFor(key string) *bucket {
 //     refilled to the budget a recreated bucket would be given, so dropping and recreating it is
 //     free. This mirrors evictIdle, which evicts only buckets idle long enough to have refilled.
 //
-// When no bucket qualifies nothing is evicted and false is returned, so the caller fails closed.
+// The LRU list is ordered most-recently-used first, so the walk starts at the tail (the
+// least-recently-used bucket) and takes the first that has refilled to capacity. A staler bucket
+// has had more time to refill, so the tail is almost always the victim and the walk is O(1) in the
+// steady state; it degrades to a scan only when the oldest buckets are still mid-refill, no worse
+// than a full-map scan. When no bucket qualifies nothing is evicted and false is returned, so the
+// caller can fall back to evictOneUnderPressure.
 func (s *BucketSet) evictOneForRoom(now time.Time) bool {
-	var oldestKey string
-	var oldest time.Time
-	found := false
-	for key, b := range s.buckets {
-		if b.overridden || !s.refilledToCapacity(b, now) {
+	for b := s.lruTail.prev; b != s.lruHead; b = b.prev {
+		if !s.refilledToCapacity(b, now) {
 			continue
 		}
-		if !found || b.last.Before(oldest) {
-			oldestKey, oldest, found = key, b.last, true
-		}
+		s.lruRemove(b)
+		delete(s.buckets, b.key)
+
+		return true
 	}
 
-	if !found {
-		return false
-	}
-	delete(s.buckets, oldestKey)
-
-	return true
+	return false
 }
 
 // evictOneUnderPressure deletes the least-recently-used non-overridden bucket regardless of whether
@@ -504,26 +584,17 @@ func (s *BucketSet) evictOneForRoom(now time.Time) bool {
 // drained key as "new" regains an empty bucket, not a fresh burst. Callers must hold s.mu and pass
 // the current time as now.
 //
-// Overridden buckets are still never evicted: they carry a reduced quota for a key being throttled,
-// and the override budget keeps a non-overridden floor so a candidate exists. When every bucket is
-// overridden nothing is evicted and false is returned.
+// Overridden buckets are still never evicted: they are kept out of the LRU list, and the override
+// budget keeps a non-overridden floor so the tail is a valid victim. An empty list means every
+// bucket is overridden, the same condition the previous full-map scan reported as "no victim", and
+// false is returned.
 func (s *BucketSet) evictOneUnderPressure(now time.Time) bool {
-	var oldestKey string
-	var oldest time.Time
-	found := false
-	for key, b := range s.buckets {
-		if b.overridden {
-			continue
-		}
-		if !found || b.last.Before(oldest) {
-			oldestKey, oldest, found = key, b.last, true
-		}
-	}
-
-	if !found {
+	lru := s.lruTail.prev
+	if lru == s.lruHead {
 		return false
 	}
-	delete(s.buckets, oldestKey)
+	s.lruRemove(lru)
+	delete(s.buckets, lru.key)
 
 	return true
 }
@@ -597,6 +668,10 @@ func (s *BucketSet) evictIdle() {
 		if b.overridden {
 			s.overrides--
 		}
+		// Keep the LRU list in step with the map: a non-overridden idle-evicted bucket must also
+		// leave the list, or the eviction paths could later hand back a bucket no longer in the
+		// map. An overridden bucket is not in the list, so this is a no-op for it.
+		s.lruRemove(b)
 		delete(s.buckets, key)
 	}
 }
