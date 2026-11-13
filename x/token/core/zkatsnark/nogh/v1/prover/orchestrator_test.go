@@ -7,6 +7,7 @@ package prover_test
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
@@ -14,6 +15,7 @@ import (
 	"github.com/consensys/gnark/frontend"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/circuit"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
 	"github.com/stretchr/testify/require"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/edwards"
@@ -185,4 +187,21 @@ func TestBuildIssueAction_Valid(t *testing.T) {
 		err = testProverParams.Backend().Verify(vkOutput, output.OutputProof, pw)
 		require.NoError(t, err, "output %d: proof does not verify", j)
 	}
+}
+
+func TestBuildIssueAction_Overflow(t *testing.T) {
+	o := prover.NewOrchestrator(nil, nil)
+	p := pp.DefaultPublicParams()
+	_, _, err := o.BuildIssueAction(
+		context.Background(),
+		[]byte("issuer"),
+		[]prover.OutputRequest{
+			{Value: math.MaxUint64, TokenType: "USD", Recipient: []byte("alice")},
+			{Value: 1, TokenType: "USD", Recipient: []byte("bob")},
+		},
+		"USD",
+		p,
+		nil,
+	)
+	require.EqualError(t, err, "orchestrator: total output value overflows uint64")
 }

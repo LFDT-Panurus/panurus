@@ -9,6 +9,7 @@ package zkatsnark
 import (
 	"bytes"
 	"context"
+	"math"
 
 	"github.com/LFDT-Panurus/panurus/token/core/common"
 	"github.com/LFDT-Panurus/panurus/token/core/common/meta"
@@ -84,8 +85,16 @@ func (s *IssueService) Issue(ctx context.Context, issuerIdentity driver.Identity
 		return nil, nil, errors.Errorf("number of values [%d] does not match number of recipients [%d]", len(values), len(owners))
 	}
 
+	var total uint64
 	outputs := make([]prover.OutputRequest, len(values))
 	for i, v := range values {
+		if v == 0 || v > p.MaxTokenValue() {
+			return nil, nil, errors.Errorf("value [%d] outside valid range [1, %d]", v, p.MaxTokenValue())
+		}
+		if v > math.MaxUint64-total {
+			return nil, nil, errors.New("total issue value overflows uint64")
+		}
+		total += v
 		outputs[i] = prover.OutputRequest{
 			Value:     v,
 			TokenType: string(tokenType),

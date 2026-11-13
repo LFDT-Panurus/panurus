@@ -138,6 +138,9 @@ func (s *TransferService) Transfer(
 		if err != nil {
 			return nil, nil, errors.Wrapf(err, "failed to get value for %dth output", i)
 		}
+		if !q.ToBigInt().IsUint64() || q.ToBigInt().Sign() <= 0 || q.ToBigInt().Uint64() > pp.MaxTokenValue() {
+			return nil, nil, errors.Errorf("quantity [%s] for %dth output outside valid range [1, %d]", output.Quantity, i, pp.MaxTokenValue())
+		}
 
 		outputs[i] = prover.OutputRequest{
 			Value:     q.ToBigInt().Uint64(),

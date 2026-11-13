@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package zkatsnark_test
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -61,4 +62,29 @@ func TestIssueService_ValuesOwnersMismatch(t *testing.T) {
 			require.EqualError(t, err, tc.wantErr)
 		})
 	}
+}
+
+// TestIssueService_ValueValidation checks that Issue rejects zero values,
+// values exceeding MaxTokenValue, and total values that overflow uint64.
+func TestIssueService_ValueValidation(t *testing.T) {
+	s := zkatsnark.NewIssueService(logging.MustGetLogger(), &upgradePPM{pp: pp.DefaultPublicParams()}, nil, nil, nil, nil, nil, nil)
+	issuer := driver.Identity("issuer")
+
+	t.Run("zero value", func(t *testing.T) {
+		_, _, err := s.Issue(t.Context(), issuer, "ABC", []uint64{0}, [][]byte{[]byte("alice")}, nil)
+		require.EqualError(t, err, "value [0] outside valid range [1, 18446744073709551615]")
+	})
+
+	t.Run("value exceeding max token value", func(t *testing.T) {
+		p16 := pp.DefaultPublicParams()
+		p16.MaxBits = 16
+		s16 := zkatsnark.NewIssueService(logging.MustGetLogger(), &upgradePPM{pp: p16}, nil, nil, nil, nil, nil, nil)
+		_, _, err := s16.Issue(t.Context(), issuer, "ABC", []uint64{65536}, [][]byte{[]byte("alice")}, nil)
+		require.EqualError(t, err, "value [65536] outside valid range [1, 65535]")
+	})
+
+	t.Run("overflow total value", func(t *testing.T) {
+		_, _, err := s.Issue(t.Context(), issuer, "ABC", []uint64{math.MaxUint64, 1}, [][]byte{[]byte("alice"), []byte("bob")}, nil)
+		require.EqualError(t, err, "total issue value overflows uint64")
+	})
 }
