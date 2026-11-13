@@ -71,6 +71,12 @@ var (
 	// ErrPublicParamsHashMismatch is returned when stored public parameters do
 	// not hash to the hash they are filed under.
 	ErrPublicParamsHashMismatch = errors.New("stored public parameters do not hash to the requested hash")
+	// ErrAlreadyApproved is returned when an approved validation record is about
+	// to be written for a transaction that already has one. It is the atomic
+	// single-approval backstop on the endorser store: a duplicate approval that
+	// raced past the already-processed check is refused here rather than
+	// producing a second endorsement.
+	ErrAlreadyApproved = errors.New("transaction already has an approved validation record")
 )
 
 // CheckTokenRequestForStorage is the check applied before a token request is
