@@ -14,12 +14,14 @@ import (
 
 // intermediary specific configuration
 
-const IntermediaryRequestTimeout = 10 * time.Second
-const PayerAccessTokenExp = 60 * time.Minute
-const ApplicationJson = "application/json"
-const ApplicationUrlEncoded = "application/x-www-form-urlencoded"
-const HeaderContentType = "Content-Type"
-const HeaderAuthorization = "Authorization"
+const (
+	IntermediaryRequestTimeout = 10 * time.Second
+	PayerAccessTokenExpiry     = 60 * time.Minute
+	ApplicationJson            = "application/json"
+	ApplicationUrlEncoded      = "application/x-www-form-urlencoded"
+	HeaderContentType          = "Content-Type"
+	HeaderAuthorization        = "Authorization"
+)
 
 // Logging levels.
 const (
