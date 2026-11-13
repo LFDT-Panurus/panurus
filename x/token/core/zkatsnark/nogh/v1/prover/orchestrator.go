@@ -7,6 +7,7 @@ package prover
 
 import (
 	"context"
+	"math"
 	"math/big"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
@@ -242,10 +243,16 @@ func (o *Orchestrator) buildIssueAction(
 	}
 
 	var totalValue uint64
+	for _, req := range outputs {
+		if req.Value > math.MaxUint64-totalValue {
+			return nil, nil, nil, errors.New("orchestrator: total output value overflows uint64")
+		}
+		totalValue += req.Value
+	}
+
 	outputCh := make(chan outputOutcome, len(outputs))
 	for j, req := range outputs {
 		go o.proveOutput(j, req, publicParams, typeRandomnessBytes, outputCh)
-		totalValue += req.Value
 	}
 
 	outputOutcomes := make([]outputOutcome, len(outputs))

@@ -282,11 +282,23 @@ func prove(spr *cs.SparseR1CS, pk *ProvingKey, fullWitness witness.Witness, tran
 	pk.Domain[0].FFTInverse(evaluationQkCompleteDomainBigBitReversed[:pk.Domain[0].Cardinality], fft.DIF)
 	utils.BitReverse(evaluationQkCompleteDomainBigBitReversed[:pk.Domain[0].Cardinality])
 
-	evaluationQkCompleteDomainBigBitReversed = fftBigCosetWOBitReverse(evaluationQkCompleteDomainBigBitReversed, &pk.Domain[1])
+	evaluationQkCompleteDomainBigBitReversed, err = fftBigCosetWOBitReverse(evaluationQkCompleteDomainBigBitReversed, &pk.Domain[1])
+	if err != nil {
+		return nil, err
+	}
 
-	evaluationBlindedLDomainBigBitReversed := fftBigCosetWOBitReverse(blindedLCanonical, &pk.Domain[1])
-	evaluationBlindedRDomainBigBitReversed := fftBigCosetWOBitReverse(blindedRCanonical, &pk.Domain[1])
-	evaluationBlindedODomainBigBitReversed := fftBigCosetWOBitReverse(blindedOCanonical, &pk.Domain[1])
+	evaluationBlindedLDomainBigBitReversed, err := fftBigCosetWOBitReverse(blindedLCanonical, &pk.Domain[1])
+	if err != nil {
+		return nil, err
+	}
+	evaluationBlindedRDomainBigBitReversed, err := fftBigCosetWOBitReverse(blindedRCanonical, &pk.Domain[1])
+	if err != nil {
+		return nil, err
+	}
+	evaluationBlindedODomainBigBitReversed, err := fftBigCosetWOBitReverse(blindedOCanonical, &pk.Domain[1])
+	if err != nil {
+		return nil, err
+	}
 
 	evaluationConstraintsDomainBigBitReversed := evalConstraintsInd(
 		pk,
@@ -295,7 +307,10 @@ func prove(spr *cs.SparseR1CS, pk *ProvingKey, fullWitness witness.Witness, tran
 		evaluationBlindedODomainBigBitReversed,
 		evaluationQkCompleteDomainBigBitReversed)
 
-	evaluationBlindedZDomainBigBitReversed := fftBigCosetWOBitReverse(blindedZCanonical, &pk.Domain[1])
+	evaluationBlindedZDomainBigBitReversed, err := fftBigCosetWOBitReverse(blindedZCanonical, &pk.Domain[1])
+	if err != nil {
+		return nil, err
+	}
 
 	evaluationOrderingDomainBigBitReversed := evaluateOrderingDomainBigBitReversed(
 		pk,
@@ -305,12 +320,15 @@ func prove(spr *cs.SparseR1CS, pk *ProvingKey, fullWitness witness.Witness, tran
 		evaluationBlindedODomainBigBitReversed,
 		beta, gamma)
 
-	h1Canonical, h2Canonical, h3Canonical := computeQuotientCanonical(
+	h1Canonical, h2Canonical, h3Canonical, err := computeQuotientCanonical(
 		pk,
 		evaluationConstraintsDomainBigBitReversed,
 		evaluationOrderingDomainBigBitReversed,
 		evaluationBlindedZDomainBigBitReversed,
 		alpha)
+	if err != nil {
+		return nil, err
+	}
 
 	// 6 - commit to h1, h2, h3 (one Merkle tree), derive zeta
 	comHp, err := fri.Commit(h1Canonical, h2Canonical, h3Canonical)
@@ -471,7 +489,7 @@ func evalConstraintsInd(pk *ProvingKey, lsL, lsR, lsO, lsQk []fr.Element) []fr.E
 //
 // Puts the result in res of size n.
 // Warning: result is in bit reversed order, we do a bit reverse operation only once in computeQuotientCanonical
-func fftBigCosetWOBitReverse(poly []fr.Element, domainBig *fft.Domain) []fr.Element {
+func fftBigCosetWOBitReverse(poly []fr.Element, domainBig *fft.Domain) ([]fr.Element, error) {
 
 	res := make([]fr.Element, domainBig.Cardinality)
 
@@ -479,7 +497,7 @@ func fftBigCosetWOBitReverse(poly []fr.Element, domainBig *fft.Domain) []fr.Elem
 	// to avoid FFT scaling on domainBig.Cardinality (res is very sparse)
 	cosetTable, err := domainBig.CosetTable()
 	if err != nil {
-		panic(err)
+		return nil, errors.Wrap(err, "plonkfri: coset table failed")
 	}
 	parallelize(len(poly), func(start, end int) {
 		for i := start; i < end; i++ {
@@ -487,7 +505,7 @@ func fftBigCosetWOBitReverse(poly []fr.Element, domainBig *fft.Domain) []fr.Elem
 		}
 	}, runtime.NumCPU()/2)
 	domainBig.FFT(res, fft.DIF)
-	return res
+	return res, nil
 }
 
 // evaluateXnMinusOneDomainBigCoset evalutes Xᵐ-1 on DomainBig coset
@@ -524,7 +542,7 @@ func evaluateXnMinusOneDomainBigCoset(domainBig, domainSmall *fft.Domain) []fr.E
 //	constraintsInd			    constraintOrdering					startsAtOne
 //
 // constraintInd, constraintOrdering are evaluated on the odd cosets of (Z/8mZ)/(Z/mZ)
-func computeQuotientCanonical(pk *ProvingKey, evaluationConstraintsIndBitReversed, evaluationConstraintOrderingBitReversed, evaluationBlindedZDomainBigBitReversed []fr.Element, alpha fr.Element) ([]fr.Element, []fr.Element, []fr.Element) {
+func computeQuotientCanonical(pk *ProvingKey, evaluationConstraintsIndBitReversed, evaluationConstraintOrderingBitReversed, evaluationBlindedZDomainBigBitReversed []fr.Element, alpha fr.Element) ([]fr.Element, []fr.Element, []fr.Element, error) {
 
 	h := make([]fr.Element, pk.Domain[1].Cardinality)
 
@@ -576,10 +594,10 @@ func computeQuotientCanonical(pk *ProvingKey, evaluationConstraintsIndBitReverse
 	t1, t2 := make([]fr.Element, nbBlindQuotient), make([]fr.Element, nbBlindQuotient)
 	for i := range t1 {
 		if _, err := t1[i].SetRandom(); err != nil {
-			panic(err) // crypto/rand failure
+			return nil, nil, nil, errors.Wrap(err, "plonkfri: random element generation failed")
 		}
 		if _, err := t2[i].SetRandom(); err != nil {
-			panic(err)
+			return nil, nil, nil, errors.Wrap(err, "plonkfri: random element generation failed")
 		}
 	}
 	h1 := make([]fr.Element, k+nbBlindQuotient)
@@ -595,7 +613,7 @@ func computeQuotientCanonical(pk *ProvingKey, evaluationConstraintsIndBitReverse
 		h3[i].Sub(&h3[i], &t2[i])
 	}
 
-	return h1, h2, h3
+	return h1, h2, h3, nil
 
 }
 
