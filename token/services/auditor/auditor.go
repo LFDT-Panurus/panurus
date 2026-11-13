@@ -565,11 +565,11 @@ func rejectMultiOwnerActions(record *token.AuditRecord) error {
 // completeInputsWithEmptyEID fills in missing enrollment ID information for inputs in the audit record
 // by querying the token vault. This is necessary when inputs don't have enrollment IDs explicitly set.
 // Each input is attributed to the enrollment ID resolved from its own token
-// owner and the audit info the input carries — the locally stored audit info
-// of the owner where present, the one carried by the request otherwise (see
-// Request.AuditRecord). An owner the identity layer cannot decode counts as
-// resolving to nothing; any other resolution failure — a storage error, a
-// canceled context — fails the audit. An input of an issue action is an
+// owner and the audit info the input carries — from the request where present,
+// from the local store otherwise (see Request.AuditRecord). An owner the
+// identity layer cannot decode counts as resolving to nothing; any other
+// resolution failure — a storage error, a canceled context — fails the audit.
+// An input of an issue action is an
 // upgrade input, and falls back to the enrollment ID the outputs of that same
 // issue action are issued to; an upgrade issued to a composite owner spanning
 // enrollment IDs fails the audit (see issuedToEIDAndRH). An owner that maps to
