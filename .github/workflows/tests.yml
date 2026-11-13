@@ -235,7 +235,8 @@ jobs:
         # Specs that share one network (token.ShareNetwork) run in a single job per
         # infrastructure type, so that the network is built once per type: e.g.
         # dlog-fabric-aries-* (T1, T17, T4, T5, T3, T2.1, T2), dlog-fabric-t6-t7-*,
-        # dlog-fabric-t12-t13 and fabtoken-fabric-all-* (T1, T17, T4, T5, T3, T2).
+        # dlog-fabric-t12-t13, fabtoken-fabric-all-* (T1, T17, T4, T5, T3, T2);
+        # fabricx-dlog-extras runs all three types in one job.
         tests: [
           dlog-fabric-aries-websocket,
           dlog-fabric-aries-libp2p,
@@ -257,19 +258,14 @@ jobs:
           fabricx-dlog-t1-websocket,
           fabricx-dlog-t1-libp2p,
           fabricx-dlog-t1-replicas,
-#          fabricx-dlog-t2,
-#          fabricx-dlog-t2.1,
-          fabricx-dlog-t3,
-          fabricx-dlog-t4,
-          fabricx-dlog-t5,
+          # fabricx-dlog-extras: see FABRICX_DLOG_EXTRAS_FILTER in fabricx.mk (#1945).
+          fabricx-dlog-extras,
           fabricx-dlog-t6-websocket,
           fabricx-dlog-t6-libp2p,
           fabricx-dlog-t6-replicas,
 #          fabricx-dlog-t7,
 #          fabricx-dlog-t9,
           fabricx-dlog-t11,
-#          fabricx-dlog-t12,
-          fabricx-dlog-t13,
 #          fabricx-dlog-t14,
           fabricx-dlog-t16-websocket,
           fabricx-dlog-t16-libp2p,

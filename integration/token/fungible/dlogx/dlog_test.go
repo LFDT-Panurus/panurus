@@ -55,7 +55,27 @@ var _ = Describe("EndToEnd", func() {
 			})
 		})
 
-		Describe("Extras with websockets", t.Label, func() {
+		// Shared network (token2.ShareNetwork; docs/development/testing.md "Sharing a network
+		// on Fabric-X"). No TestAll: T13 needs no authorized redeem issuer. T3 revokes bob: last.
+		Describe("Extras", Ordered, ContinueOnFailure, t.Label, func() {
+			ts, selector := newTestSuite(t.CommType, Aries|WithEndorsers|WebEnabled, t.ReplicationFactor, "", "alice", "bob", "charlie")
+			token2.ShareNetwork(ts)
+			It("Multisig succeeded", Label("T12"), func() { fungible.TestMultiSig(ts.II, selector) })
+			It("Test redeem", Label("T13"), func() { fungible.TestRedeem(ts.II, selector, "default") })
+			It("Test Remote Wallet (GRPC)", Label("T4"), func() {
+				fungible.TestRemoteOwnerWallet(ts.II, "auditor", selector, false, fungible.WithTokenType("USDt4"))
+			})
+			It("Test Remote Wallet (WebSocket)", Label("T5"), func() {
+				fungible.TestRemoteOwnerWallet(ts.II, "auditor", selector, true, fungible.WithTokenType("USDt5"))
+			})
+			It("Test Identity Revocation", Label("T3"), func() {
+				fungible.TestRevokeIdentity(ts.II, "auditor", selector, fungible.WithTokenType("USDt3"))
+			})
+		})
+
+		// Kept on a network per spec while #1945 is open. Then add T2.1, T2 after T3 in
+		// "Extras" (T2 replaces the issuers: last).
+		Describe("Public params update", t.Label, func() {
 			ts, selector := newTestSuite(t.CommType, Aries|WithEndorsers|WebEnabled, t.ReplicationFactor, "", "alice", "bob", "charlie")
 			BeforeEach(ts.Setup)
 			AfterEach(ts.TearDown)
@@ -85,9 +105,6 @@ var _ = Describe("EndToEnd", func() {
 					fungible.WithRestartAfterUpdate(endorserNode),
 				)
 			})
-			It("Test Identity Revocation", Label("T3"), func() { fungible.TestRevokeIdentity(ts.II, "auditor", selector) })
-			It("Test Remote Wallet (GRPC)", Label("T4"), func() { fungible.TestRemoteOwnerWallet(ts.II, "auditor", selector, false) })
-			It("Test Remote Wallet (WebSocket)", Label("T5"), func() { fungible.TestRemoteOwnerWallet(ts.II, "auditor", selector, true) })
 		})
 
 		Describe("Fungible with Auditor = Issuer", t.Label, func() {
@@ -114,19 +131,6 @@ var _ = Describe("EndToEnd", func() {
 			BeforeEach(ts.Setup)
 			AfterEach(ts.TearDown)
 			It("Malicious Transactions", Label("T9"), func() { fungible.TestMaliciousTransactions(ts.II, selector) })
-		})
-
-		// Multisig and Redeem to yourself share one network, see token2.ShareNetwork. Both
-		// leave the network healthy, and their assertions do not overlap: Multisig moves
-		// USD among alice, bob, charlie and manager, Redeem only among the issuer's own
-		// owner wallet, and together they issue 220 USD, within the issuer's 241 USD quota.
-		// Redeem expects the auditor not to have authorized any redeem issuer yet, which
-		// Multisig does not do. Each label still runs on its own network when filtered alone.
-		Describe("Multisig and Redeem to yourself", Ordered, ContinueOnFailure, t.Label, func() {
-			ts, selector := newTestSuite(t.CommType, Aries|WithEndorsers, t.ReplicationFactor, "", "alice", "bob", "charlie")
-			token2.ShareNetwork(ts)
-			It("Multisig succeeded", Label("T12"), func() { fungible.TestMultiSig(ts.II, selector) })
-			It("Test redeem", Label("T13"), func() { fungible.TestRedeem(ts.II, selector, "default") })
 		})
 
 		Describe("PolicyIdentity", t.Label, func() {
