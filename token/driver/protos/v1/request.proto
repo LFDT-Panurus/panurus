@@ -6,9 +6,9 @@
 
 syntax = "proto3";
 
-package fabric_token_sdk.token.driver.v1;
+package panurus.token.driver.v1;
 
-import "common.proto";
+import "token/driver/protos/v1/common.proto";
 
 option go_package = "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request";
 
@@ -28,7 +28,7 @@ enum ActionType {
 // allowing auditors to verify and track token operations.
 message AuditableIdentity {
   // identity is the serialized identity of the entity
-  fabric_token_sdk.token.driver.v1.Identity identity = 1;
+  panurus.token.driver.v1.Identity identity = 1;
   // audit_info contains encrypted or encoded information for auditors
   bytes audit_info = 2;
 }
@@ -36,7 +36,7 @@ message AuditableIdentity {
 // TransferInputMetadata describes an input token being spent in a transfer.
 message TransferInputMetadata {
   // token_id uniquely identifies the token being transferred
-  fabric_token_sdk.token.driver.v1.TokenID token_id = 1;
+  panurus.token.driver.v1.TokenID token_id = 1;
   // senders are the identities spending this token, with their audit information
   repeated AuditableIdentity senders = 2;
 }
@@ -67,7 +67,7 @@ message TransferMetadata {
 // IssueInputMetadata describes a token being redeemed during issuance.
 message IssueInputMetadata {
   // token_id uniquely identifies the token being consumed by the issuance
-  fabric_token_sdk.token.driver.v1.TokenID token_id = 1;
+  panurus.token.driver.v1.TokenID token_id = 1;
 }
 
 // IssueMetadata contains metadata for an issuance action where new tokens are created.
@@ -158,7 +158,7 @@ message ActionSignature {
 // AuditorSignature pairs an auditor's identity with their signature.
 message AuditorSignature {
   // identity is the serialized identity of the auditor who signed
-  fabric_token_sdk.token.driver.v1.Identity identity = 1;
+  panurus.token.driver.v1.Identity identity = 1;
   // signature is the auditor's cryptographic signature
   Signature signature = 2;
 }

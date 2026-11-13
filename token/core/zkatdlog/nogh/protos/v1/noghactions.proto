@@ -6,11 +6,11 @@
 
 syntax = "proto3";
 
-package fabric_token_sdk.token.zkatdlog.v1;
+package panurus.token.zkatdlog.v1;
 
-import "common.proto";
-import "ftactions.proto";
-import "noghmath.proto";
+import "token/core/fabtoken/protos/v1/ftactions.proto";
+import "token/core/zkatdlog/nogh/protos/v1/noghmath.proto";
+import "token/driver/protos/v1/common.proto";
 
 option go_package = "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/v1/actions";
 
@@ -33,13 +33,13 @@ message TokenMetadata {
   // blinding_factor is the randomness used in the Pedersen commitment
   Zr blinding_factor = 3;
   // issuer is the identity of the token issuer, if applicable
-  fabric_token_sdk.token.driver.v1.Identity issuer = 4;
+  panurus.token.driver.v1.Identity issuer = 4;
 }
 
 // TransferActionInput represents an input token being spent in a privacy-preserving transfer.
 message TransferActionInput {
   // token_id uniquely identifies the token being spent
-  fabric_token_sdk.token.driver.v1.TokenID token_id = 1;
+  panurus.token.driver.v1.TokenID token_id = 1;
   // input is the token being spent
   Token input = 2;
   // upgrade_witness contains data needed when upgrading from cleartext to privacy tokens
@@ -50,7 +50,7 @@ message TransferActionInput {
 // a cleartext fabtoken to a privacy-preserving zkatdlog token.
 message TransferActionInputUpgradeWitness {
   // output is the cleartext token being upgraded
-  fabric_token_sdk.token.fabtoken.v1.Token output = 1;
+  panurus.token.fabtoken.v1.Token output = 1;
   // blinding_factor is the randomness to use in the new commitment
   Zr blinding_factor = 2;
 }
@@ -87,13 +87,13 @@ message TransferAction {
   // metadata contains application-specific data for this transfer
   map<string, bytes> metadata = 5;
   // issuer is the identity that signs the transfer action in redeem scenarios
-  fabric_token_sdk.token.driver.v1.Identity issuer = 6;
+  panurus.token.driver.v1.Identity issuer = 6;
 }
 
 // IssueActionInput represents a token being redeemed (burned) during issuance.
 message IssueActionInput {
   // id is the token identifier of the token being redeemed
-  fabric_token_sdk.token.driver.v1.TokenID id = 1;
+  panurus.token.driver.v1.TokenID id = 1;
   // token is the serialized token being redeemed
   bytes token = 2;
 }
@@ -110,7 +110,7 @@ message IssueAction {
   // version is the protocol version of this issue action
   uint32 version = 1;
   // issuer is the identity of the authorized issuer creating these tokens
-  fabric_token_sdk.token.driver.v1.Identity issuer = 2;
+  panurus.token.driver.v1.Identity issuer = 2;
   // inputs are the tokens being redeemed (if any) during this issuance
   repeated IssueActionInput inputs = 3;
   // outputs are the newly issued tokens
