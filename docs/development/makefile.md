@@ -10,7 +10,7 @@ These targets help you set up your development environment.
 | :--- | :--- |
 | `make install-tools` | Installs necessary Go tools (linters, generators, etc.) defined in `tools/tools.go`. It also installs `golangci-lint`. |
 | `make download-fabric` | Downloads Hyperledger Fabric binaries. You can specify `FABRIC_VERSION` and `FABRIC_CA_VERSION` env vars to control the versions. |
-| `make install-softhsm` | Installs SoftHSM for testing hardware security module integration. |
+| `make install-softhsm` | Installs SoftHSM for testing hardware security module integration. Skips the install if SoftHSM is present. Retries transient network failures up to 3 times. |
 
 ## Testing
 
