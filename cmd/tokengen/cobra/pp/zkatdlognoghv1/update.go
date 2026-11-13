@@ -146,7 +146,7 @@ func Update(args *UpdateArgs) (err error) {
 		args.OutputDir,
 		fileName,
 	)
-	if _, err := os.Stat(path); err == nil {
+	if _, err := os.Stat(path); err == nil { //nolint:gosec // path is the output folder given by the caller joined with a generated file name
 		return errors.Errorf("%s exists in current directory. Specify another output folder with -o", fileName)
 	}
 	if err := os.WriteFile(path, raw, 0755); err != nil { //nolint:gosec
@@ -173,5 +173,5 @@ func driverVersion(raw []byte) (driver.TokenDriverVersion, error) {
 		return 0, errors.Wrapf(err, "invalid driver version in identifier [%s]", container.Identifier)
 	}
 
-	return driver.TokenDriverVersion(ver), nil //nolint:gosec // ParseUint with bitSize 32 bounds ver to uint32
+	return driver.TokenDriverVersion(ver), nil
 }
