@@ -52,6 +52,9 @@ type TokenStore struct {
 	notifier             driver.TokenNotifier
 	cleanupLeaderFactory func(context.Context, WriteDB) (driver.CleanupLeadership, bool, error)
 
+	// limits bounds this store's materialised reads and variadic id inputs; see limits.go.
+	limits Limits
+
 	sttMutex              sync.RWMutex
 	supportedTokenFormats []token.Format
 
@@ -80,6 +83,7 @@ func newTokenStore(readDB *sql.DB, writeDB WriteDB, tables tokenTables, ci commo
 		ci:                   ci,
 		notifier:             notifier,
 		cleanupLeaderFactory: cleanupLeaderFactory,
+		limits:               DefaultLimits(),
 	}
 	ts.unspentTokensStmts = newPreparedStmtHolder[string]()
 	ts.spendableTokensStmts = newPreparedStmtHolder[string]()
@@ -87,6 +91,9 @@ func newTokenStore(readDB *sql.DB, writeDB WriteDB, tables tokenTables, ci commo
 
 	return ts
 }
+
+// ApplyLimits implements LimitsConfigurable; see limits.go.
+func (db *TokenStore) ApplyLimits(l Limits) { db.limits = l }
 
 func NewTokenStoreWithNotifier(readDB *sql.DB, writeDB WriteDB, tables TableNames, ci common3.CondInterpreter, notifier driver.TokenNotifier) (*TokenStore, error) {
 	return newTokenStore(readDB, writeDB, tokenTables{
@@ -155,6 +162,11 @@ func (db *TokenStore) DeleteTokens(ctx context.Context, deletedBy string, ids ..
 	logger.DebugfContext(ctx, "delete tokens [%s][%v]", deletedBy, ids)
 	if len(ids) == 0 {
 		return nil
+	}
+	// Reject oversized batches: this is a mutation, so a LIMIT would silently
+	// leave tokens undeleted. Callers chunk large deletes.
+	if err := db.limits.checkIDCount("DeleteTokens", len(ids)); err != nil {
+		return err
 	}
 
 	query, args := q.Update(db.table.Tokens).
@@ -738,113 +750,14 @@ func (db *TokenStore) ListUnspentTokensBy(ctx context.Context, walletID string, 
 	return &token.UnspentTokens{Tokens: tokens}, nil
 }
 
-// ListUnspentTokens returns the list of unspent tokens
-func (db *TokenStore) ListUnspentTokens(ctx context.Context) (*token.UnspentTokens, error) {
-	logger.DebugfContext(ctx, "list unspent tokens...")
-	it, err := db.UnspentTokensIterator(ctx)
-	if err != nil {
-		return nil, err
-	}
-	tokens, err := iterators.ReadAllPointers(it)
-	if err != nil {
-		return nil, err
-	}
-
-	return &token.UnspentTokens{Tokens: tokens}, nil
-}
-
-// ListUnspentTokensByWallets issues a single SELECT with an IN clause on
-// the owning wallet, then partitions the result rows in Go. This avoids
-// the N round-trip cost of calling ListUnspentTokensBy in a loop when a
-// caller (e.g. a bank-node wallet list endpoint) needs balances for many
-// wallets at once. Empty input returns an empty map without querying.
-func (db *TokenStore) ListUnspentTokensByWallets(ctx context.Context, walletIDs []string, typ token.Type) (map[string]*token.UnspentTokens, error) {
-	if len(walletIDs) == 0 {
-		return map[string]*token.UnspentTokens{}, nil
-	}
-
-	tokenTable, ownershipTable := q.Table(db.table.Tokens), q.Table(db.table.Ownership)
-	// owner_wallet_id lives on Tokens, wallet_id lives on Ownership. The
-	// WHERE condition (HasTokenDetails) matches a row if either column is
-	// in walletIDs, so we project both and bucket each row (below) under
-	// whichever column is actually in the requested set. A single token
-	// can show up through the Ownership join multiple times if it has
-	// multiple wallet owners; that is intentional — each (token, wallet)
-	// pair contributes one row.
-	query, args := q.Select().
-		Fields(
-			ownershipTable.Field("wallet_id"),
-			tokenTable.Field("owner_wallet_id"),
-			tokenTable.Field("tx_id"), tokenTable.Field("idx"), common3.FieldName("owner_raw"),
-			common3.FieldName("token_type"), common3.FieldName("quantity"),
-		).
-		From(tokenTable.Join(ownershipTable, cond.And(
-			cond.Cmp(tokenTable.Field("tx_id"), "=", ownershipTable.Field("tx_id")),
-			cond.Cmp(tokenTable.Field("idx"), "=", ownershipTable.Field("idx"))),
-		)).
-		Where(HasTokenDetails(driver.QueryTokenDetailsParams{
-			WalletIDs: walletIDs,
-			TokenType: typ,
-		}, tokenTable)).
-		Format(db.ci)
-
-	logging.Debug(logger, query, args)
-	rows, err := db.readDB.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer Close(rows)
-
-	// The WHERE clause matches rows where EITHER ownership.wallet_id OR
-	// tokens.owner_wallet_id is in walletIDs, but the two columns are not
-	// constrained to agree (StoreToken writes them independently). Bucket
-	// under whichever column is actually in the requested set, preferring
-	// ownership.wallet_id so a single input id always maps to a single key.
-	walletIDSet := make(map[string]struct{}, len(walletIDs))
-	for _, id := range walletIDs {
-		walletIDSet[id] = struct{}{}
-	}
-
-	result := make(map[string]*token.UnspentTokens, len(walletIDs))
-	for rows.Next() {
-		var walletCol, ownerWalletCol sql.NullString
-		ut := &token.UnspentToken{}
-		if err := rows.Scan(
-			&walletCol,
-			&ownerWalletCol,
-			&ut.Id.TxId, &ut.Id.Index, &ut.Owner, &ut.Type, &ut.Quantity,
-		); err != nil {
-			return nil, err
-		}
-		walletID := ""
-		if walletCol.Valid && walletCol.String != "" {
-			if _, ok := walletIDSet[walletCol.String]; ok {
-				walletID = walletCol.String
-			}
-		}
-		if walletID == "" && ownerWalletCol.Valid && ownerWalletCol.String != "" {
-			if _, ok := walletIDSet[ownerWalletCol.String]; ok {
-				walletID = ownerWalletCol.String
-			}
-		}
-		if walletID == "" {
-			continue
-		}
-		bucket, ok := result[walletID]
-		if !ok {
-			bucket = &token.UnspentTokens{}
-			result[walletID] = bucket
-		}
-		bucket.Tokens = append(bucket.Tokens, ut)
-	}
-
-	return result, rows.Err()
-}
-
 // ListAuditTokens returns the audited tokens associated to the passed ids
 func (db *TokenStore) ListAuditTokens(ctx context.Context, ids ...*token.ID) ([]*token.Token, error) {
 	if len(ids) == 0 {
 		return []*token.Token{}, nil
+	}
+	// Cap the id input; this also bounds the result (one slot per id).
+	if err := db.limits.checkIDCount("ListAuditTokens", len(ids)); err != nil {
+		return nil, err
 	}
 
 	query, args := q.Select().
@@ -968,8 +881,10 @@ func (db *TokenStore) issuerBalance(ctx context.Context, redeemed bool, opts tdr
 	return sum.Int, nil
 }
 
-// ListHistoryIssuedTokens returns the list of issued tokens
-func (db *TokenStore) ListHistoryIssuedTokens(ctx context.Context) (*token.IssuedTokens, error) {
+// ListHistoryIssuedTokens returns an iterator over the issued tokens. It streams
+// rather than materialising the whole result, so the caller consumes it without
+// an in-memory ceiling.
+func (db *TokenStore) ListHistoryIssuedTokens(ctx context.Context) (tdriver.IssuedTokensIterator, error) {
 	query, args := q.Select().
 		FieldsByName("tx_id", "idx", "owner_raw", "token_type", "quantity", "issuer_raw").
 		From(q.Table(db.table.Tokens)).
@@ -982,15 +897,9 @@ func (db *TokenStore) ListHistoryIssuedTokens(ctx context.Context) (*token.Issue
 		return nil, err
 	}
 
-	it := common.NewIterator(rows, func(tok *token.IssuedToken) error {
+	return common.NewIterator(rows, func(tok *token.IssuedToken) error {
 		return rows.Scan(&tok.Id.TxId, &tok.Id.Index, &tok.Owner, &tok.Type, &tok.Quantity, &tok.Issuer)
-	})
-	tokens, err := iterators.ReadAllPointers(it)
-	if err != nil {
-		return nil, err
-	}
-
-	return &token.IssuedTokens{Tokens: tokens}, rows.Err()
+	}), nil
 }
 
 func (db *TokenStore) GetTokenOutputs(ctx context.Context, ids []*token.ID, callback tdriver.QueryCallbackFunc) error {
@@ -1134,6 +1043,10 @@ func (db *TokenStore) GetTokens(ctx context.Context, inputs ...*token.ID) ([]*to
 	if len(inputs) == 0 {
 		return []*token.Token{}, nil
 	}
+	// Cap the id input; this also bounds the result (one slot per id).
+	if err := db.limits.checkIDCount("GetTokens", len(inputs)); err != nil {
+		return nil, err
+	}
 
 	query, args := q.Select().
 		FieldsByName("tx_id", "idx", "owner_raw", "token_type", "quantity").
@@ -1223,10 +1136,11 @@ func (db *TokenStore) HasTokenForIdentity(ctx context.Context, ownerIdentity []b
 	return len(txID) > 0, nil
 }
 
-// QueryTokenDetails returns details about owned tokens, regardless if they have been spent or not.
-// Filters work cumulatively and may be left empty. If a token is owned by two enrollmentIDs and there
-// is no filter on enrollmentID, the token will be returned twice (once for each owner).
-func (db *TokenStore) QueryTokenDetails(ctx context.Context, params driver.QueryTokenDetailsParams) ([]driver.TokenDetails, error) {
+// QueryTokenDetails returns an iterator over details about owned tokens, regardless
+// if they have been spent or not. Filters work cumulatively and may be left empty.
+// If a token is owned by two enrollmentIDs and there is no filter on enrollmentID,
+// the token is returned twice (once for each owner).
+func (db *TokenStore) QueryTokenDetails(ctx context.Context, params driver.QueryTokenDetailsParams) (driver.TokenDetailsIterator, error) {
 	tokenTable, ownershipTable := q.Table(db.table.Tokens), q.Table(db.table.Ownership)
 	query, args := q.Select().
 		Fields(
@@ -1248,7 +1162,7 @@ func (db *TokenStore) QueryTokenDetails(ctx context.Context, params driver.Query
 		return nil, err
 	}
 
-	it := common.NewIterator(rows, func(td *driver.TokenDetails) error {
+	return common.NewIterator(rows, func(td *driver.TokenDetails) error {
 		var amount BigInt
 		if err := rows.Scan(&td.TxID, &td.Index, &td.OwnerIdentity, &td.OwnerType, &td.OwnerEnrollment, &td.Type, &amount, &td.IsSpent, &td.SpentBy, &td.StoredAt); err != nil {
 			return err
@@ -1256,9 +1170,7 @@ func (db *TokenStore) QueryTokenDetails(ctx context.Context, params driver.Query
 		td.Amount = amount.Int
 
 		return nil
-	})
-
-	return iterators.ReadAllValues(it)
+	}), nil
 }
 
 // WhoDeletedTokens returns information about which transaction deleted the passed tokens.

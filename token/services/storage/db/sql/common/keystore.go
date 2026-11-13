@@ -32,6 +32,8 @@ type KeystoreStore struct {
 	errorWrapper driver.SQLErrorWrapper
 	table        keystoreTables
 	ci           qcommon.CondInterpreter
+	// limits bounds the opaque value written by Put, after marshaling; see limits.go.
+	limits Limits
 }
 
 func newKeystoreStore(readDB *sql.DB, writeDB WriteDB, tables keystoreTables, ci qcommon.CondInterpreter, errorWrapper driver.SQLErrorWrapper) *KeystoreStore {
@@ -41,8 +43,12 @@ func newKeystoreStore(readDB *sql.DB, writeDB WriteDB, tables keystoreTables, ci
 		table:        tables,
 		ci:           ci,
 		errorWrapper: errorWrapper,
+		limits:       DefaultLimits(),
 	}
 }
+
+// ApplyLimits implements LimitsConfigurable; see limits.go.
+func (db *KeystoreStore) ApplyLimits(l Limits) { db.limits = l }
 
 func NewKeystoreStore(readDB *sql.DB, writeDB WriteDB, tables TableNames, ci qcommon.CondInterpreter, errorWrapper driver.SQLErrorWrapper) (*KeystoreStore, error) {
 	return newKeystoreStore(
@@ -74,6 +80,10 @@ func (db *KeystoreStore) Put(key string, state any) error {
 	raw, err := json.Marshal(state)
 	if err != nil {
 		return errors.Wrapf(err, "cannot marshal state with key [%s]", key)
+	}
+	// Bound the marshaled size (opaque until now, and outside the guard decorator).
+	if err := db.limits.checkPayloadSize("Keystore.Put", len(raw)); err != nil {
+		return err
 	}
 	query, args := q.InsertInto(db.table.KeyStore).
 		Fields("key", "val").

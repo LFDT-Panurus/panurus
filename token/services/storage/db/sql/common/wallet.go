@@ -33,6 +33,8 @@ type WalletStore struct {
 	writeDB WriteDB
 	table   walletTables
 	ci      common3.CondInterpreter
+	// limits bounds GetWalletIDs; see limits.go.
+	limits Limits
 }
 
 func newWalletStore(readDB *sql.DB, writeDB WriteDB, tables walletTables, ci common3.CondInterpreter) *WalletStore {
@@ -41,8 +43,12 @@ func newWalletStore(readDB *sql.DB, writeDB WriteDB, tables walletTables, ci com
 		writeDB: writeDB,
 		table:   tables,
 		ci:      ci,
+		limits:  DefaultLimits(),
 	}
 }
+
+// ApplyLimits implements LimitsConfigurable; see limits.go.
+func (db *WalletStore) ApplyLimits(l Limits) { db.limits = l }
 
 func NewWalletStore(readDB *sql.DB, writeDB WriteDB, tables TableNames, ci common3.CondInterpreter) (*WalletStore, error) {
 	return newWalletStore(readDB, writeDB, walletTables{
@@ -72,12 +78,20 @@ func (db *WalletStore) GetWalletID(ctx context.Context, identity token.Identity,
 	return result, nil
 }
 
+// GetWalletIDs returns the distinct wallet ids registered for the given role.
+// It materialises the full result, so it is fail-closed at MaxResultRows (see limits.go).
 func (db *WalletStore) GetWalletIDs(ctx context.Context, roleID int) ([]driver.WalletID, error) {
-	query, args := q.SelectDistinct().
+	sel := q.SelectDistinct().
 		FieldsByName("wallet_id").
 		From(q.Table(db.table.Wallets)).
-		Where(cond.Eq("role_id", roleID)).
-		Format(db.ci)
+		Where(cond.Eq("role_id", roleID))
+	var query string
+	var args []any
+	if rowCap := db.limits.resultRowCap(); rowCap > 0 {
+		query, args = sel.Limit(rowCap).Format(db.ci)
+	} else {
+		query, args = sel.Format(db.ci)
+	}
 	logging.Debug(logger, query)
 	rows, err := db.readDB.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -85,8 +99,15 @@ func (db *WalletStore) GetWalletIDs(ctx context.Context, roleID int) ([]driver.W
 	}
 
 	it := common.NewIterator(rows, func(walletID *driver.WalletID) error { return rows.Scan(walletID) })
+	ids, err := iterators.ReadAllValues(it)
+	if err != nil {
+		return nil, err
+	}
+	if err := db.limits.checkResultRows("GetWalletIDs", len(ids)); err != nil {
+		return nil, err
+	}
 
-	return iterators.ReadAllValues(it)
+	return ids, nil
 }
 
 func (db *WalletStore) StoreIdentity(ctx context.Context, identity token.Identity, eID string, wID driver.WalletID, roleID int, meta []byte, confID string) error {

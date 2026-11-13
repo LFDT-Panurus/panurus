@@ -98,6 +98,9 @@ type TransactionStore struct {
 	// getTokenRequestStmt caches the single prepared statement for
 	// GetTokenRequest, same single-shape reasoning as getStatusStmt.
 	getTokenRequestStmt PreparedStmtHolder[string]
+
+	// limits bounds GetTokenRequests; see limits.go.
+	limits Limits
 }
 
 func newTransactionStore(
@@ -121,12 +124,16 @@ func newTransactionStore(
 		pi:                    pi,
 		notifier:              notifier,
 		recoveryLeaderFactory: recoveryLeaderFactory,
+		limits:                DefaultLimits(),
 	}
 	ts.getStatusStmt = newPreparedStmtHolder[string]()
 	ts.getTokenRequestStmt = newPreparedStmtHolder[string]()
 
 	return ts
 }
+
+// ApplyLimits implements LimitsConfigurable; see limits.go.
+func (db *TransactionStore) ApplyLimits(l Limits) { db.limits = l }
 
 // PrefixedTableName returns the formatted table name for the given logical name.
 // It falls back to the unformatted name if the prefix or the table parameters
@@ -218,6 +225,10 @@ func (db *TransactionStore) GetTokenRequest(ctx context.Context, txID string) ([
 func (db *TransactionStore) GetTokenRequests(ctx context.Context, txIDs []string) (map[string][]byte, error) {
 	if len(txIDs) == 0 {
 		return map[string][]byte{}, nil
+	}
+	// Cap the id input; this also bounds the result (keyed by tx id).
+	if err := db.limits.checkIDCount("GetTokenRequests", len(txIDs)); err != nil {
+		return nil, err
 	}
 	query, args := q.Select().
 		FieldsByName("tx_id", "request").
