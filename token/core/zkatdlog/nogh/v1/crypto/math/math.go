@@ -32,6 +32,13 @@ func CheckElements[E Element](elements []E, curveID mathlib.CurveID, length uint
 	if uint64(len(elements)) != length {
 		return errors.Errorf("length of elements does not match length of curveID")
 	}
+
+	return CheckEachElement[E](elements, curveID)
+}
+
+// CheckEachElement validates every element of a slice against a curve ID.
+// Use CheckElements when the expected length must be checked too.
+func CheckEachElement[E Element](elements []E, curveID mathlib.CurveID) error {
 	for _, g1 := range elements {
 		if err := CheckElement[E](g1, curveID); err != nil {
 			return err
@@ -69,7 +76,7 @@ func CheckElement[E Element](element E, curveID mathlib.CurveID) (err error) {
 		return errors.Errorf("element is nil")
 	}
 	if element.CurveID() != curveID {
-		return errors.Errorf("element curve must equal curve ID")
+		return errors.Errorf("element curve must equal curve ID: got [%d], expected [%d]", element.CurveID(), curveID)
 	}
 	if element.IsInfinity() {
 		return errors.New("element is infinity")
@@ -91,7 +98,7 @@ func CheckBaseElement[E BaseElement](element E, curveID mathlib.CurveID) (err er
 		return errors.Errorf("element is nil")
 	}
 	if element.CurveID() != curveID {
-		return errors.Errorf("element curve must equal curve ID")
+		return errors.Errorf("element curve must equal curve ID: got [%d], expected [%d]", element.CurveID(), curveID)
 	}
 
 	return nil

@@ -694,10 +694,11 @@ func TestToken_ToClear_Extra(t *testing.T) {
 		Value:          nil,
 		BlindingFactor: c.NewRandomZr(rand),
 	}
+	// The opening is checked before commit runs, so a nil scalar reports
+	// ErrInvalidMetadataElement rather than commit's ErrNilCommitElement.
 	_, err = tok.ToClear(meta, pp)
 	require.Error(t, err)
-	assert.True(t, errors.HasCause(err, ErrNilCommitElement))
-	assert.Contains(t, err.Error(), "cannot retrieve token in the clear: failed to check token data")
+	assert.True(t, errors.HasCause(err, ErrInvalidMetadataElement))
 
 	// Nil BlindingFactor
 	meta = &Metadata{
@@ -707,7 +708,7 @@ func TestToken_ToClear_Extra(t *testing.T) {
 	}
 	_, err = tok.ToClear(meta, pp)
 	require.Error(t, err)
-	assert.True(t, errors.HasCause(err, ErrNilCommitElement))
+	assert.True(t, errors.HasCause(err, ErrInvalidMetadataElement))
 }
 
 func TestTokensService_New_Extra(t *testing.T) {
