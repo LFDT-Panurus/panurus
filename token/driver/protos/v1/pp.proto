@@ -6,7 +6,7 @@
 
 syntax = "proto3";
 
-package fabric_token_sdk.token.driver.v1;
+package panurus.token.driver.v1;
 
 option go_package = "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/pp";
 

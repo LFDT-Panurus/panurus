@@ -4,7 +4,7 @@
 
 syntax = "proto3";
 
-package fabric_token_sdk.identity.x509.v1;
+package panurus.identity.x509.v1;
 
 option go_package = "github.com/LFDT-Panurus/panurus/token/services/identity/x509/crypto/protos-go/v1/config";
 

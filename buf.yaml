@@ -1,10 +1,8 @@
 version: v2
 modules:
-  - path: token/core/fabtoken/protos/v1
-  - path: token/core/zkatdlog/nogh/protos/v1
-  - path: token/driver/protos/v1
-  - path: token/services/identity/x509/crypto/protos/v1
-  - path: token/services/identity/idemix/crypto/protos
+  - path: .
+    excludes:
+      - .claude
 lint:
   use:
     - STANDARD
@@ -17,8 +15,6 @@ lint:
   except:
     - PACKAGE_DIRECTORY_MATCH
     - PACKAGE_SAME_GO_PACKAGE
-  ignore:
-    - token/services/identity/idemix/crypto/protos/idemix_config.proto
 breaking:
   use:
     - FILE
