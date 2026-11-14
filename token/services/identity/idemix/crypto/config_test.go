@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	idemixmsp "github.com/IBM/idemix/msp"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto/protos-go/config"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
 	"github.com/stretchr/testify/assert"
@@ -60,6 +61,20 @@ func TestNewConfigFromRaw(t *testing.T) {
 		assert.Equal(t, issuerPublicKey, result.Ipk)
 	})
 
+	t.Run("Preserves revocation public key", func(t *testing.T) {
+		revocationPK := []byte("revocation-public-key")
+		configRaw, err := proto.Marshal(&config.IdemixConfig{
+			Version:      ProtobufProtocolVersionV1,
+			Ipk:          issuerPublicKey,
+			RevocationPk: revocationPK,
+		})
+		require.NoError(t, err)
+
+		result, err := NewConfigFromRaw(issuerPublicKey, configRaw)
+		require.NoError(t, err)
+		assert.Equal(t, revocationPK, result.RevocationPk)
+	})
+
 	// Test creating a new config from an invalid raw (marshaled) config
 	t.Run("Invalid protobuf", func(t *testing.T) {
 		_, err := NewConfigFromRaw(issuerPublicKey, []byte("invalid protobuf"))
@@ -104,7 +119,7 @@ func TestAssembleConfig(t *testing.T) {
 	issuerPublicKey := []byte("test-issuer-public-key")
 
 	t.Run("Without signer", func(t *testing.T) {
-		result, err := assembleConfig(issuerPublicKey, nil)
+		result, err := assembleConfig(issuerPublicKey, nil, nil)
 		require.NoError(t, err)
 		assert.NotNil(t, result)
 		assert.Equal(t, ProtobufProtocolVersionV1, result.Version)
@@ -121,12 +136,20 @@ func TestAssembleConfig(t *testing.T) {
 			EnrollmentId:                 "user1",
 		}
 
-		result, err := assembleConfig(issuerPublicKey, signer)
+		result, err := assembleConfig(issuerPublicKey, signer, nil)
 		require.NoError(t, err)
 		assert.NotNil(t, result)
 		assert.Equal(t, ProtobufProtocolVersionV1, result.Version)
 		assert.Equal(t, issuerPublicKey, result.Ipk)
 		assert.Equal(t, signer, result.Signer)
+		assert.Nil(t, result.RevocationPk)
+	})
+
+	t.Run("With revocation public key", func(t *testing.T) {
+		revocationPK := []byte("revocation-public-key")
+		result, err := assembleConfig(issuerPublicKey, nil, revocationPK)
+		require.NoError(t, err)
+		assert.Equal(t, revocationPK, result.RevocationPk)
 	})
 }
 
@@ -501,4 +524,91 @@ func TestNewConfigWithIPK_DirectPathFails(t *testing.T) {
 		err = os.Chmod(signerFile, 0600)
 		require.NoError(t, err)
 	})
+}
+
+// Test that the revocation public key is loaded from both the idemixgen and Fabric-CA layouts
+func TestConfigLoadsRevocationPublicKey(t *testing.T) {
+	const (
+		idemixgenDir = "../testdata/bls12_381_bbs/idemix"
+		fabricCADir  = "../testdata/fp256bn_amcl/charlie.ExtraId2"
+	)
+
+	t.Run("idemixgen layout", func(t *testing.T) {
+		expected, err := os.ReadFile(filepath.Join(idemixgenDir, idemixmsp.IdemixConfigDirMsp, idemixmsp.IdemixConfigFileRevocationPublicKey))
+		require.NoError(t, err)
+
+		result, err := NewConfig(idemixgenDir)
+		require.NoError(t, err)
+		assert.Equal(t, expected, result.RevocationPk)
+	})
+
+	t.Run("Fabric-CA layout", func(t *testing.T) {
+		ipk, err := os.ReadFile(filepath.Join(fabricCADir, idemixmsp.IdemixConfigFileIssuerPublicKey))
+		require.NoError(t, err)
+		expected, err := os.ReadFile(filepath.Join(fabricCADir, ConfigFileFabricCARevocationPublicKey))
+		require.NoError(t, err)
+
+		result, err := NewConfigWithIPK(ipk, fabricCADir, true)
+		require.NoError(t, err)
+		assert.Equal(t, expected, result.RevocationPk)
+	})
+
+	t.Run("Fabric-CA layout resolved via extra msp path element", func(t *testing.T) {
+		parent := t.TempDir()
+		dir := filepath.Join(parent, ExtraPathElement)
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, ConfigDirUser), 0750))
+		// a JSON signer forces the Fabric-CA loader
+		require.NoError(t, os.WriteFile(filepath.Join(dir, ConfigDirUser, ConfigFileSigner), []byte(`{"enrollment_id":"user1"}`), 0600))
+		revocationPK := []byte("revocation-public-key")
+		require.NoError(t, os.WriteFile(filepath.Join(dir, ConfigFileFabricCARevocationPublicKey), revocationPK, 0600))
+		// make the direct attempt fail in both loaders
+		require.NoError(t, os.MkdirAll(filepath.Join(parent, ConfigDirUser), 0750))
+		require.NoError(t, os.WriteFile(filepath.Join(parent, ConfigDirUser, ConfigFileSigner), []byte("invalid json {{{"), 0600))
+
+		result, err := NewConfigWithIPK([]byte("ipk"), parent, false)
+		require.NoError(t, err)
+		assert.Equal(t, "user1", result.Signer.EnrollmentId)
+		assert.Equal(t, revocationPK, result.RevocationPk)
+	})
+
+	t.Run("Absent revocation public key", func(t *testing.T) {
+		dir := t.TempDir()
+		result, err := NewIdemixConfig([]byte("ipk"), dir, false)
+		require.NoError(t, err)
+		assert.Nil(t, result.RevocationPk)
+
+		result, err = NewFabricCAIdemixConfig([]byte("ipk"), dir)
+		require.NoError(t, err)
+		assert.Nil(t, result.RevocationPk)
+	})
+
+	t.Run("Unreadable revocation public key", func(t *testing.T) {
+		dir := t.TempDir()
+		// a directory in place of the file yields a non-NotExist read error
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, idemixmsp.IdemixConfigDirMsp, idemixmsp.IdemixConfigFileRevocationPublicKey), 0750))
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, ConfigFileFabricCARevocationPublicKey), 0750))
+
+		_, err := NewIdemixConfig([]byte("ipk"), dir, false)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to read revocation public key")
+
+		_, err = NewFabricCAIdemixConfig([]byte("ipk"), dir)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to read revocation public key")
+	})
+}
+
+// Test that NewConfigWithIPK reports the errors of both the direct and the extra path attempts
+func TestNewConfigWithIPK_JoinsErrors(t *testing.T) {
+	dir := t.TempDir()
+	// unreadable revocation keys in both <dir> and <dir>/msp
+	for _, d := range []string{dir, filepath.Join(dir, ExtraPathElement)} {
+		require.NoError(t, os.MkdirAll(filepath.Join(d, idemixmsp.IdemixConfigDirMsp, idemixmsp.IdemixConfigFileRevocationPublicKey), 0750))
+		require.NoError(t, os.MkdirAll(filepath.Join(d, ConfigFileFabricCARevocationPublicKey), 0750))
+	}
+
+	_, err := NewConfigWithIPK([]byte("ipk"), dir, false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), filepath.Join(dir, ConfigFileFabricCARevocationPublicKey))
+	assert.Contains(t, err.Error(), filepath.Join(dir, ExtraPathElement, ConfigFileFabricCARevocationPublicKey))
 }
