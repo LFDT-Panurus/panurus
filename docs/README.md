@@ -46,6 +46,10 @@ If you are developing *using* Panurus or contributing *to* Panurus, check out th
     [Grafana dashboards](monitoring/grafana/README.md)
 *   [Test & Benchmark Profiler](../cmd/profiler/README.md)
 
+## Proposals
+
+Proposals under discussion with the maintainers live in [Proposals](proposals/README.md).
+
 ## Evolution
 
 *   [**Evolution Summary (v0.4.0 -> Present)**](evolution_summary.md): A summary of how the functionalities provided by Panurus have evolved since tag v0.4.0 when it was still called `token-sdk`.
