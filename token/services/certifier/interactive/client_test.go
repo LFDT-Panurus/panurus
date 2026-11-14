@@ -431,3 +431,123 @@ func (e *fakeTokenEvent) Message() any {
 }
 
 var _ events.Event = (*fakeTokenEvent)(nil)
+
+// recordingViewManager records the certifier each request targets. It fails the first
+// failures requests and serves the following ones.
+type recordingViewManager struct {
+	mu         sync.Mutex
+	failures   int
+	certifiers []string
+}
+
+func (r *recordingViewManager) InitiateView(v view.View) (any, error) {
+	crv, ok := v.(*interactive.CertificationRequestView)
+	if !ok {
+		return nil, errors.Errorf("unexpected view type %T", v)
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.certifiers = append(r.certifiers, string(interactive.CRVCertifier(crv)))
+	if len(r.certifiers) <= r.failures {
+		return nil, errors.New("certifier unavailable")
+	}
+
+	result := make(map[*token.ID][]byte, len(interactive.CRVIDs(crv)))
+	for _, id := range interactive.CRVIDs(crv) {
+		result[id] = []byte("cert:" + id.TxId)
+	}
+
+	return result, nil
+}
+
+func (r *recordingViewManager) contacted() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return append([]string(nil), r.certifiers...)
+}
+
+func newRetryTestClient(vm interactive.ViewManager, storage interactive.CertificationStorage, maxAttempts int, waitTime time.Duration, certifiers ...string) *interactive.CertificationClient {
+	ids := make([]view.Identity, 0, len(certifiers))
+	for _, c := range certifiers {
+		ids = append(ids, view.Identity(c))
+	}
+
+	return interactive.NewCertificationClient(
+		context.Background(),
+		"test-network",
+		"test-channel",
+		"test-ns",
+		&fakeQueryEngine{},
+		storage,
+		vm,
+		ids,
+		nil,
+		maxAttempts,
+		waitTime,
+		10,
+		1000,
+		time.Hour,
+		1,
+		interactive.DefaultResponseTimeout,
+		&disabled.Provider{},
+	)
+}
+
+// TestCertificationClient_RequestCertification_RotatesCertifiers verifies that a retry
+// targets the next configured certifier, wrapping around, instead of the first one again.
+func TestCertificationClient_RequestCertification_RotatesCertifiers(t *testing.T) {
+	t.Run("failover to the next certifier", func(t *testing.T) {
+		vm := &recordingViewManager{failures: 1}
+		storage := newFakeCertificationStorage()
+		cc := newRetryTestClient(vm, storage, 3, time.Millisecond, "certifier-1", "certifier-2")
+		defer cc.Stop()
+
+		id := &token.ID{TxId: "tx", Index: 0}
+		require.NoError(t, cc.RequestCertification(t.Context(), id))
+		assert.Equal(t, []string{"certifier-1", "certifier-2"}, vm.contacted())
+		assert.True(t, cc.IsCertified(t.Context(), id))
+	})
+
+	t.Run("wrap around when attempts exceed certifiers", func(t *testing.T) {
+		vm := &recordingViewManager{failures: 3}
+		cc := newRetryTestClient(vm, newFakeCertificationStorage(), 3, time.Millisecond, "certifier-1", "certifier-2")
+		defer cc.Stop()
+
+		require.Error(t, cc.RequestCertification(t.Context(), &token.ID{TxId: "tx", Index: 0}))
+		assert.Equal(t, []string{"certifier-1", "certifier-2", "certifier-1"}, vm.contacted())
+	})
+
+	t.Run("single certifier is retried", func(t *testing.T) {
+		vm := &recordingViewManager{failures: 1}
+		cc := newRetryTestClient(vm, newFakeCertificationStorage(), 2, time.Millisecond, "certifier-1")
+		defer cc.Stop()
+
+		require.NoError(t, cc.RequestCertification(t.Context(), &token.ID{TxId: "tx", Index: 0}))
+		assert.Equal(t, []string{"certifier-1", "certifier-1"}, vm.contacted())
+	})
+}
+
+// TestCertificationClient_RequestCertification_NoWaitAfterLastAttempt verifies that the
+// client reports the failure right after the last attempt, without waiting waitTime again.
+func TestCertificationClient_RequestCertification_NoWaitAfterLastAttempt(t *testing.T) {
+	// with one attempt there is nothing to wait for, so a long waitTime must not be observed
+	vm := &recordingViewManager{failures: 1}
+	cc := newRetryTestClient(vm, newFakeCertificationStorage(), 1, time.Hour, "certifier-1")
+	defer cc.Stop()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cc.RequestCertification(context.Background(), &token.ID{TxId: "tx", Index: 0})
+	}()
+
+	select {
+	case err := <-done:
+		require.Error(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("RequestCertification waited after the last failed attempt")
+	}
+	assert.Equal(t, []string{"certifier-1"}, vm.contacted())
+}

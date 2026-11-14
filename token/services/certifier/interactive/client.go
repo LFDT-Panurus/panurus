@@ -154,13 +154,22 @@ func (cc *CertificationClient) RequestCertification(ctx context.Context, ids ...
 
 	start := time.Now()
 	for i := range cc.maxAttempts {
-		view := NewCertificationRequestView(cc.network, cc.channel, cc.namespace, cc.certifiers[0], toBeCertified...)
+		// rotate over the configured certifiers, so that a retry reaches another certifier
+		// when the previous one is unavailable
+		certifier := cc.certifiers[i%len(cc.certifiers)]
+		view := NewCertificationRequestView(cc.network, cc.channel, cc.namespace, certifier, toBeCertified...)
 		view.responseTimeout = cc.responseTimeout
 		resultBoxed, err = cc.viewManager.InitiateView(view)
 		if err == nil {
 			break
 		}
 		cc.metrics.Errors.With(labels...).Add(1)
+		if i == cc.maxAttempts-1 {
+			// no more attempts, don't wait before reporting the failure
+			logger.Errorf("failed to request certification [%s], giving up after [%d] attempts", err, cc.maxAttempts)
+
+			break
+		}
 		logger.Errorf("failed to request certification [%s], try again [%d] after [%s]...", err, i, cc.waitTime)
 		select {
 		case <-time.After(cc.waitTime):
