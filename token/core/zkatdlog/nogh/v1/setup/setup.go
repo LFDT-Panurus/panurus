@@ -493,6 +493,10 @@ func (p *PublicParams) Deserialize(raw []byte) error {
 
 	p.DriverName = driver.TokenDriverName(publicParams.TokenDriverName)
 	p.DriverVersion = driver.TokenDriverVersion(publicParams.TokenDriverVersion)
+	// The generator label is derived from the inner name and version: they must match the checked identifier.
+	if got := string(core.DriverIdentifier(p.DriverName, p.DriverVersion)); got != expectedID {
+		return errors.Errorf("invalid driver name or version, expecting identifier [%s], got [%s]", expectedID, got)
+	}
 	if publicParams.CurveId == nil {
 		return errors.Errorf("invalid curve id, expecting curve id, got nil")
 	}
@@ -558,57 +562,87 @@ func (p *PublicParams) Deserialize(raw []byte) error {
 	return nil
 }
 
-func (p *PublicParams) GeneratePedersenParameters() error {
-	curve := mathlib.Curves[p.Curve]
-	p.PedersenGenerators = make([]*mathlib.G1, 3)
+// generatorLabel returns the public domain-separation prefix used to derive all generators.
+func (p *PublicParams) generatorLabel() string {
+	return "lfdt-panurus." + string(p.DriverName) + "." + strconv.Itoa(int(p.DriverVersion)) + "."
+}
 
-	for i := 0; i < len(p.PedersenGenerators); i++ {
-		p.PedersenGenerators[i] = curve.HashToG1([]byte("lfdt-panurus." + string(p.DriverName) + "." + strconv.Itoa(int(p.DriverVersion)) + ".PedersenGenerators." + strconv.Itoa(i)))
+func (p *PublicParams) derivePedersenGenerators() []*mathlib.G1 {
+	curve := mathlib.Curves[p.Curve]
+	gens := make([]*mathlib.G1, 3)
+	for i := range gens {
+		gens[i] = curve.HashToG1([]byte(p.generatorLabel() + "PedersenGenerators." + strconv.Itoa(i)))
 	}
+
+	return gens
+}
+
+func (p *PublicParams) deriveRangeProofParams(bitLength uint64) *RangeProofParams {
+	curve := mathlib.Curves[p.Curve]
+	label := p.generatorLabel()
+	rpp := &RangeProofParams{
+		P:               curve.HashToG1([]byte(label + "RangeProof.P")),
+		Q:               curve.HashToG1([]byte(label + "RangeProof.Q")),
+		BitLength:       bitLength,
+		NumberOfRounds:  log2(bitLength),
+		LeftGenerators:  make([]*mathlib.G1, bitLength),
+		RightGenerators: make([]*mathlib.G1, bitLength),
+	}
+	for i := range bitLength {
+		rpp.LeftGenerators[i] = curve.HashToG1([]byte(label + "RangeProof.L." + strconv.FormatUint(i, 10)))
+		rpp.RightGenerators[i] = curve.HashToG1([]byte(label + "RangeProof.R." + strconv.FormatUint(i, 10)))
+	}
+
+	return rpp
+}
+
+func (p *PublicParams) deriveCSPRangeProofParams(bitLength uint64) *CSPRangeProofParams {
+	curve := mathlib.Curves[p.Curve]
+	label := p.generatorLabel()
+	rpp := &CSPRangeProofParams{
+		BitLength:       bitLength,
+		LeftGenerators:  make([]*mathlib.G1, bitLength+1),
+		RightGenerators: make([]*mathlib.G1, bitLength+1),
+	}
+	for i := range bitLength + 1 {
+		rpp.LeftGenerators[i] = curve.HashToG1([]byte(label + "CSPRangeProof.L." + strconv.FormatUint(i, 10)))
+		rpp.RightGenerators[i] = curve.HashToG1([]byte(label + "CSPRangeProof.R." + strconv.FormatUint(i, 10)))
+	}
+
+	return rpp
+}
+
+func equalG1Slices(got, want []*mathlib.G1) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] == nil || !got[i].Equals(want[i]) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func (p *PublicParams) GeneratePedersenParameters() error {
+	p.PedersenGenerators = p.derivePedersenGenerators()
 
 	return nil
 }
 
 func (p *PublicParams) GenerateRangeProofParameters(bitLength uint64) error {
-	curve := mathlib.Curves[p.Curve]
-
-	domainPrefix := "lfdt-panurus." + string(p.DriverName) + "." + strconv.Itoa(int(p.DriverVersion)) + "."
-	p.RangeProofParams = &RangeProofParams{
-		P:              curve.HashToG1([]byte(domainPrefix + "RangeProof.P")),
-		Q:              curve.HashToG1([]byte(domainPrefix + "RangeProof.Q")),
-		BitLength:      bitLength,
-		NumberOfRounds: log2(bitLength),
-	}
-	p.RangeProofParams.LeftGenerators = make([]*mathlib.G1, bitLength)
-	p.RangeProofParams.RightGenerators = make([]*mathlib.G1, bitLength)
-
-	for i := range bitLength {
-		p.RangeProofParams.LeftGenerators[i] = curve.HashToG1([]byte(domainPrefix + "RangeProof.L." + strconv.FormatUint(i, 10)))
-		p.RangeProofParams.RightGenerators[i] = curve.HashToG1([]byte(domainPrefix + "RangeProof.R." + strconv.FormatUint(i, 10)))
-	}
+	p.RangeProofParams = p.deriveRangeProofParams(bitLength)
 
 	return nil
 }
 
 func (p *PublicParams) GenerateCSPRangeProofParameters(bitLength uint64) error {
-	curve := mathlib.Curves[p.Curve]
-
-	domainPrefix := "lfdt-panurus." + string(p.DriverName) + "." + strconv.Itoa(int(p.DriverVersion)) + "."
-	p.CSPRangeProofParams = &CSPRangeProofParams{
-		BitLength: bitLength,
-	}
-	p.CSPRangeProofParams.LeftGenerators = make([]*mathlib.G1, bitLength+1)
-	p.CSPRangeProofParams.RightGenerators = make([]*mathlib.G1, bitLength+1)
-
-	for i := range bitLength + 1 {
-		p.CSPRangeProofParams.LeftGenerators[i] = curve.HashToG1([]byte(domainPrefix + "CSPRangeProof.L." + strconv.FormatUint(i, 10)))
-		p.CSPRangeProofParams.RightGenerators[i] = curve.HashToG1([]byte(domainPrefix + "CSPRangeProof.R." + strconv.FormatUint(i, 10)))
-	}
+	p.CSPRangeProofParams = p.deriveCSPRangeProofParams(bitLength)
 
 	// Populate RPTranscriptHeader immediately rather than leaving it for the next
 	// Validate() call: a caller that generates CSP params and then proves/verifies
-	// without an intervening Validate() would otherwise see a nil header. initCSPTranscriptHeader
-	// is idempotent and cheap, so calling it here as well as from NewWith/Validate is safe.
+	// without an intervening Validate() would otherwise see a nil header.
 	p.initCSPTranscriptHeader()
 
 	return nil
@@ -727,6 +761,10 @@ func (p *PublicParams) Validate() error {
 	if err := math.CheckElements(p.PedersenGenerators, p.Curve, 3); err != nil {
 		return errors.Wrapf(err, "invalid pedersen generators")
 	}
+	// The generators must be the publicly derived ones: no party may know a discrete-log relation among them.
+	if !equalG1Slices(p.PedersenGenerators, p.derivePedersenGenerators()) {
+		return errors.New("invalid pedersen generators: they do not match the publicly derived generators")
+	}
 
 	if p.RangeProofParams == nil && p.CSPRangeProofParams == nil {
 		return errors.New("invalid public parameters: nil range proof parameters")
@@ -741,6 +779,9 @@ func (p *PublicParams) Validate() error {
 		err := p.RangeProofParams.Validate(p.Curve)
 		if err != nil {
 			return errors.Wrap(err, "invalid public parameters")
+		}
+		if err := p.checkRangeProofGenerators(); err != nil {
+			return err
 		}
 		if p.QuantityPrecision != p.RangeProofParams.BitLength {
 			return errors.Errorf("invalid public parameters: quantity precision should be [%d] instead it is [%d]", p.RangeProofParams.BitLength, p.QuantityPrecision)
@@ -757,6 +798,11 @@ func (p *PublicParams) Validate() error {
 		if err != nil {
 			return errors.Wrap(err, "invalid public parameters")
 		}
+		want := p.deriveCSPRangeProofParams(bitLength)
+		if !equalG1Slices(p.CSPRangeProofParams.LeftGenerators, want.LeftGenerators) ||
+			!equalG1Slices(p.CSPRangeProofParams.RightGenerators, want.RightGenerators) {
+			return errors.New("invalid csp range proof generators: they do not match the publicly derived generators")
+		}
 		if p.QuantityPrecision != p.CSPRangeProofParams.BitLength {
 			return errors.Errorf("invalid public parameters: quantity precision should be [%d] instead it is [%d]", p.CSPRangeProofParams.BitLength, p.QuantityPrecision)
 		}
@@ -766,6 +812,20 @@ func (p *PublicParams) Validate() error {
 	maxToken := p.ComputeMaxTokenValue()
 	if maxToken != p.MaxToken {
 		return errors.Errorf("invalid max token, [%d]!=[%d]", maxToken, p.MaxToken)
+	}
+
+	return nil
+}
+
+func (p *PublicParams) checkRangeProofGenerators() error {
+	got := p.RangeProofParams
+	want := p.deriveRangeProofParams(got.BitLength)
+	if got.NumberOfRounds != want.NumberOfRounds ||
+		got.P == nil || !got.P.Equals(want.P) ||
+		got.Q == nil || !got.Q.Equals(want.Q) ||
+		!equalG1Slices(got.LeftGenerators, want.LeftGenerators) ||
+		!equalG1Slices(got.RightGenerators, want.RightGenerators) {
+		return errors.New("invalid range proof generators: they do not match the publicly derived generators")
 	}
 
 	return nil
