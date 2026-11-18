@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 
 // Package evmdlog composes the Token SDK with the EVM network driver and the zkatdlog token driver,
-// mirroring fdlog (fabric) and fxdlog (fabricx).
+// mirroring fdlog (fabric) and fxdlog (chaguar).
 //
 // It lives in the integration module rather than in the EVM driver's own module on purpose. Wiring
 // needs token/sdk/dig, which pulls in core's fabric and idemix dependency graph; the EVM driver is a

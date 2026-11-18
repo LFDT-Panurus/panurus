@@ -230,13 +230,13 @@ jobs:
         # one job would push it towards Ginkgo's default 1h suite timeout (the
         # Makefile's GINKGO_TEST_OPTS sets no --timeout), so they are split into one
         # job per infrastructure type here. Coverage is unchanged: all three
-        # configurations still run, just in parallel. See fungible.mk / fabricx.mk
+        # configurations still run, just in parallel. See fungible.mk / chaguar.mk
         # for the matching targets.
         # Specs that share one network (token.ShareNetwork) run in a single job per
         # infrastructure type, so that the network is built once per type: e.g.
         # dlog-fabric-aries-* (T1, T17, T4, T5, T3, T2.1, T2), dlog-fabric-t6-t7-*,
         # dlog-fabric-t12-t13, fabtoken-fabric-all-* (T1, T17, T4, T5, T3, T2);
-        # fabricx-dlog-extras runs all three types in one job.
+        # chaguar-dlog-extras runs all three types in one job.
         tests: [
           dlog-fabric-aries-websocket,
           dlog-fabric-aries-libp2p,
@@ -255,21 +255,21 @@ jobs:
           dlog-fabric-t12-t13,
 #          dlog-fabric-t14,
           dlog-fabric-t15,
-          fabricx-dlog-t1-websocket,
-          fabricx-dlog-t1-libp2p,
-          fabricx-dlog-t1-replicas,
-          # fabricx-dlog-extras: see FABRICX_DLOG_EXTRAS_FILTER in fabricx.mk (#1945).
-          fabricx-dlog-extras,
-          fabricx-dlog-t6-websocket,
-          fabricx-dlog-t6-libp2p,
-          fabricx-dlog-t6-replicas,
-#          fabricx-dlog-t7,
-#          fabricx-dlog-t9,
-          fabricx-dlog-t11,
-#          fabricx-dlog-t14,
-          fabricx-dlog-t16-websocket,
-          fabricx-dlog-t16-libp2p,
-          fabricx-dlog-t16-replicas,
+          chaguar-dlog-t1-websocket,
+          chaguar-dlog-t1-libp2p,
+          chaguar-dlog-t1-replicas,
+          # chaguar-dlog-extras: see CHAGUAR_DLOG_EXTRAS_FILTER in chaguar.mk (#1945).
+          chaguar-dlog-extras,
+          chaguar-dlog-t6-websocket,
+          chaguar-dlog-t6-libp2p,
+          chaguar-dlog-t6-replicas,
+#          chaguar-dlog-t7,
+#          chaguar-dlog-t9,
+          chaguar-dlog-t11,
+#          chaguar-dlog-t14,
+          chaguar-dlog-t16-websocket,
+          chaguar-dlog-t16-libp2p,
+          chaguar-dlog-t16-replicas,
           fabtoken-dlog-fabric,
           dloghsm-fabric-t1-websocket,
           dloghsm-fabric-t1-libp2p,
@@ -366,10 +366,10 @@ jobs:
       - name: Docker
         run: make docker-images
 
-      - name: Fabric-x setup
-        if: startsWith(matrix.tests, 'fabricx')
+      - name: Chaguar setup
+        if: startsWith(matrix.tests, 'chaguar')
         run: |
-          make fxconfig configtxgen fabricx-docker-images
+          make fxconfig configtxgen chaguar-docker-images
 
       - name: Run ${{ matrix.tests }}
 

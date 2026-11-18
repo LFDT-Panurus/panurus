@@ -29,17 +29,17 @@ Combine them to pin a scenario to one infrastructure type:
 
 ```bash
 make integration-tests-dlog-fabric TEST_FILTER="T1 && websocket"
-make integration-tests-fabricx-dlog TEST_FILTER="T6 && libp2p"
+make integration-tests-chaguar-dlog TEST_FILTER="T6 && libp2p"
 ```
 
-`fungible.mk` and `fabricx.mk` already expose make targets for the common
+`fungible.mk` and `chaguar.mk` already expose make targets for the common
 combos, e.g. `integration-tests-dlog-fabric-t1-websocket`, `-t1-libp2p`,
 `-t1-replicas`. CI runs the three infra configurations as parallel jobs: for
 the specs that share one network (`token.ShareNetwork`) it uses the grouped
 targets `integration-tests-dlog-fabric-aries-*` (T1, T17, T4, T5, T3, T2.1,
 T2), `integration-tests-dlog-fabric-t6-t7-*` and
-`integration-tests-fabtoken-fabric-all-*` (T1, T17, T4, T5, T3, T2); fabricx
-uses `integration-tests-fabricx-dlog-extras` (T13, T4, T5, T3 of the dlogx
+`integration-tests-fabtoken-fabric-all-*` (T1, T17, T4, T5, T3, T2); chaguar
+uses `integration-tests-chaguar-dlog-extras` (T13, T4, T5, T3 of the dlogx
 "Extras" container, all three infra types in one job; `-extras-websocket`,
 `-extras-libp2p` and `-extras-replicas` run one type each) and the per-infra
 `-t1-*`, `-t6-*` and `-t16-*` targets for its `TestAll` specs. The plain `-tN`
@@ -61,11 +61,11 @@ are already covered by CI's parallel per-infra jobs.
   It saves one cleaned, timestamp-stripped log file per failed job under
   `pr_<PR_NUMBER>_failed_logs/`.
 
-## Public Parameters Setup Failures (fabricx)
+## Public Parameters Setup Failures (chaguar)
 
-On a fabricx network the token public parameters are installed by invoking the
+On a chaguar network the token public parameters are installed by invoking the
 `SetupPublicParams` view on the `issuer` FSC node
-(`integration/nwo/token/fabricx/factory.go`). Three things about how that failure is
+(`integration/nwo/token/chaguar/factory.go`). Three things about how that failure is
 reported are worth knowing when a suite goes red:
 
 - **Installation is deferred, and `PostRun` must not wait for it.**

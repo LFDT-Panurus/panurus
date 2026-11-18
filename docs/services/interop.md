@@ -46,7 +46,7 @@ sequenceDiagram
 
 ### Hashed Timelock Contracts (HTLCs)
 The service provides the `htlc` sub-package, which includes:
-*   **Script Generation**: Building the specific scripts (e.g., Fabric chaincode or FabricX script) that implement the HTLC logic.
+*   **Script Generation**: Building the specific scripts (e.g., Fabric chaincode or Chaguar script) that implement the HTLC logic.
 *   **HTLC Deserialization**: Correctly parsing and verifying HTLC scripts from the ledger.
 *   **Signature Verification**: Ensuring that the party releasing the tokens provides a valid signature *and* the correct hash preimage.
 

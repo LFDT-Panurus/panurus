@@ -68,13 +68,13 @@ they must be kept on the same tag as core. So:
 
 ### 3. Align pinned infra versions with FSC's Makefile
 
-FSC's own `Makefile` pins the Fabric/Fabric-X versions its integration-test tooling
+FSC's own `Makefile` pins the Fabric/Chaguar versions its integration-test tooling
 (binaries, Docker images) is built and tested against — currently `FABRIC_VERSION`,
 `FABRIC_TWO_DIGIT_VERSION` (derived from it), `FABRIC_X_TOOLS_VERSION`, and
 `FABRIC_X_COMMITTER_VERSION`, declared near the top under `# pinned versions`.
-Panurus's root `Makefile` (lines 1-7) and `fabricx.mk` mirror these same variables
+Panurus's root `Makefile` (lines 1-7) and `chaguar.mk` mirror these same variables
 independently — they are **not** inherited from the Go module, so a bump can silently
-leave Panurus testing against a stale Fabric/Fabric-X version even though the code
+leave Panurus testing against a stale Fabric/Chaguar version even though the code
 compiles fine. This matters specifically for integration tests, which are what
 actually exercise the pinned binaries/images.
 
@@ -82,7 +82,7 @@ actually exercise the pinned binaries/images.
 GOMODCACHE=$(go env GOMODCACHE)
 FSC_MK="$GOMODCACHE/github.com/hyperledger-labs/fabric-smart-client@$(cd . && go list -m -f '{{.Version}}' github.com/hyperledger-labs/fabric-smart-client)/Makefile"
 grep -n "^FABRIC_VERSION\|^FABRIC_CA_VERSION\|^FABRIC_TWO_DIGIT_VERSION\|^FABRIC_X_TOOLS_VERSION\|^FABRIC_X_COMMITTER_VERSION" "$FSC_MK"
-grep -n "^FABRIC_VERSION\|^FABRIC_CA_VERSION\|^FABRIC_TWO_DIGIT_VERSION\|^FABRIC_X_TOOLS_VERSION\|^FABRIC_X_COMMITTER_VERSION" Makefile fabricx.mk
+grep -n "^FABRIC_VERSION\|^FABRIC_CA_VERSION\|^FABRIC_TWO_DIGIT_VERSION\|^FABRIC_X_TOOLS_VERSION\|^FABRIC_X_COMMITTER_VERSION" Makefile chaguar.mk
 ```
 
 For each variable present in both files, bump Panurus's value to match FSC's if they
@@ -93,8 +93,8 @@ Also diff the Docker image references FSC's Makefile pulls for these same
 versions (`fabric-baseos`, `fabric-ccenv`, `fabric-x-committer-test-node` targets) —
 registry host (e.g. `ghcr.io/hyperledger/...` vs. plain `hyperledger/...` on Docker
 Hub) and image names can change independently of the version numbers. Compare against
-Panurus's `fabric-docker-images` target in `Makefile` and `fabricx-docker-images` in
-`fabricx.mk`, and update the `docker pull`/`docker tag` lines to match FSC's source if
+Panurus's `fabric-docker-images` target in `Makefile` and `chaguar-docker-images` in
+`chaguar.mk`, and update the `docker pull`/`docker tag` lines to match FSC's source if
 they've drifted.
 
 ### 4. Detect API breakage

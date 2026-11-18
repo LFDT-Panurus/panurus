@@ -58,7 +58,7 @@ Two consequences are worth internalising before writing a query or a dashboard:
   matches nothing — this is what made the first attempt at this documentation unusable.
 - **Some names stutter**, because the metric name repeats its package: hence
   `panurus_services_auditor_auditor_audit_duration_seconds` and
-  `panurus_services_network_fabricx_finality_queue_finality_queue_pending_events`. They are correct as
+  `panurus_services_network_chaguar_finality_queue_finality_queue_pending_events`. They are correct as
   listed; see [Metric hygiene](#metric-hygiene) for why they are not renamed here.
 
 ### The TMS-scoped provider changes the prefix
@@ -400,9 +400,9 @@ store a sweep covers; `outcome` is `completed`, `not_leader`, `canceled` or `fai
 
 Source: `token/services/storage/services/checks/metrics.go`.
 
-## Fabric-X finality queue
+## Chaguar finality queue
 
-Recorded by the Fabric-X event queue that dispatches finality notifications to workers.
+Recorded by the Chaguar event queue that dispatches finality notifications to workers.
 `pending_events` is the backlog gauge: it counts events accepted by the queue and not yet taken by a
 worker. A caller blocked in `EnqueueBlocking` on a full buffer is counted as soon as it starts waiting, so
 the gauge can exceed the configured queue size (`token.finality.notification.queueSize`); a value above it
@@ -411,12 +411,12 @@ and an event was discarded, which means a lost finality notification.
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
-| `panurus_services_network_fabricx_finality_queue_finality_queue_pending_events` | gauge | — | Number of finality events waiting for a worker, including EnqueueBlocking callers blocked on a full buffer, so it can exceed the queue size |
-| `panurus_services_network_fabricx_finality_queue_finality_queue_enqueue_drops_total` | counter | — | Total number of finality events dropped because the queue was full |
-| `panurus_services_network_fabricx_finality_queue_finality_queue_processing_errors_total` | counter | — | Total number of errors returned by event.Process in worker goroutines |
-| `panurus_services_network_fabricx_finality_queue_finality_queue_processing_duration_seconds` | histogram | — | Histogram of successful event processing time in worker goroutines (seconds) |
+| `panurus_services_network_chaguar_finality_queue_finality_queue_pending_events` | gauge | — | Number of finality events waiting for a worker, including EnqueueBlocking callers blocked on a full buffer, so it can exceed the queue size |
+| `panurus_services_network_chaguar_finality_queue_finality_queue_enqueue_drops_total` | counter | — | Total number of finality events dropped because the queue was full |
+| `panurus_services_network_chaguar_finality_queue_finality_queue_processing_errors_total` | counter | — | Total number of errors returned by event.Process in worker goroutines |
+| `panurus_services_network_chaguar_finality_queue_finality_queue_processing_duration_seconds` | histogram | — | Histogram of successful event processing time in worker goroutines (seconds) |
 
-Source: `token/services/network/fabricx/finality/queue/metrics.go`.
+Source: `token/services/network/chaguar/finality/queue/metrics.go`.
 
 ## Storage connection pool
 
@@ -522,13 +522,13 @@ Integrity and loss alerts — any increase is worth paging on:
 
 ```promql
 increase(panurus_services_ttx_finality_finality_listener_hash_mismatch_total[10m]) > 0
-increase(panurus_services_network_fabricx_finality_queue_finality_queue_enqueue_drops_total[10m]) > 0
+increase(panurus_services_network_chaguar_finality_queue_finality_queue_enqueue_drops_total[10m]) > 0
 ```
 
 Finality backlog:
 
 ```promql
-panurus_services_network_fabricx_finality_queue_finality_queue_pending_events
+panurus_services_network_chaguar_finality_queue_finality_queue_pending_events
 ```
 
 ## Not covered here
@@ -587,7 +587,7 @@ policy and format failures.
 
 ### 4. Standard Fabric network path
 
-The Fabric-X finality queue is instrumented; the standard Fabric network driver
+The Chaguar finality queue is instrumented; the standard Fabric network driver
 (`token/services/network/fabric/`) has no equivalent, and the approval path — `EndorserService` in
 `token/services/network/fabric/endorsement/provider.go` — is not timed. On Fabric deployments the
 approval round trip is therefore invisible.
@@ -637,9 +637,9 @@ Smaller consistency issues, worth fixing together since each one changes exporte
   choosing a stable, explicit name up front.
 - **Stuttering names.** `panurus_services_auditor_auditor_*`,
   `panurus_services_ttx_finality_finality_listener_*` and
-  `panurus_services_network_fabricx_finality_queue_finality_queue_*` repeat their package in the metric
+  `panurus_services_network_chaguar_finality_queue_finality_queue_*` repeat their package in the metric
   name.
-- **Missing TMS labels.** The auditor, finality-listener, sherdlock and Fabric-X queue families carry no
+- **Missing TMS labels.** The auditor, finality-listener, sherdlock and Chaguar queue families carry no
   `network`/`channel`/`namespace` labels, so on a node hosting several TMSs their values are aggregated
   and cannot be attributed. The certification client metrics carry `channel` and `namespace` but not
   `network`.

@@ -29,7 +29,7 @@ const namespacePolicy2of3 = "OutOf(2, 'Org1MSP.member', 'Org2MSP.member', 'Org3M
 
 var namespacePolicyOrgs = []string{"Org1", "Org2", "Org3"}
 
-// endorserNode is the single FSC endorser the FabricX topology deploys.
+// endorserNode is the single FSC endorser the Chaguar topology deploys.
 const endorserNode = "endorser-1"
 
 const None = 0
@@ -56,7 +56,7 @@ var _ = Describe("EndToEnd", func() {
 		})
 
 		// Shared network (token2.ShareNetwork; docs/development/testing.md "Sharing a network
-		// on Fabric-X"). No TestAll: T13 needs no authorized redeem issuer. T3 revokes bob: last.
+		// on Chaguar"). No TestAll: T13 needs no authorized redeem issuer. T3 revokes bob: last.
 		Describe("Extras", Ordered, ContinueOnFailure, t.Label, func() {
 			ts, selector := newTestSuite(t.CommType, Aries|WithEndorsers|WebEnabled, t.ReplicationFactor, "", "alice", "bob", "charlie")
 			token2.ShareNetwork(ts)
@@ -170,7 +170,7 @@ type publicParamsInstaller interface {
 }
 
 // testSuite starts the network as the embedded suite does, and then installs the public parameters
-// of the fabricx backend, which requires the FSC nodes to be up.
+// of the chaguar backend, which requires the FSC nodes to be up.
 type testSuite struct {
 	*integration.TestSuite
 	installer publicParamsInstaller
@@ -203,7 +203,7 @@ func (s *testSuite) TearDown() {
 func newTestSuite(commType fsc.P2PCommunicationType, mask int, factor int, tokenSelector string, names ...string) (*testSuite, *token2.ReplicaSelector) {
 	opts, selector := token2.NewReplicationOptions(factor, names...)
 	tmsOpts := common.Opts{
-		Backend:  fabricx.PlatformName, // select fabricx platform for NWO
+		Backend:  fabricx.PlatformName, // select chaguar platform for NWO
 		CommType: commType,
 		DefaultTMSOpts: common.TMSOpts{
 			TokenSDKDriver: zkatdlognoghv1.DriverIdentifier,
@@ -213,7 +213,7 @@ func newTestSuite(commType fsc.P2PCommunicationType, mask int, factor int, token
 		AuditorAsIssuer:     mask&AuditorAsIssuer > 0,
 		HSM:                 mask&HSM > 0,
 		WebEnabled:          mask&WebEnabled > 0,
-		SDKs:                []node.SDK{&fxdlog.SDK{}}, // add fabricx SDK
+		SDKs:                []node.SDK{&fxdlog.SDK{}}, // add chaguar SDK
 		Monitoring:          false,
 		ReplicationOpts:     opts,
 		FSCBasedEndorsement: mask&WithEndorsers > 0,

@@ -169,8 +169,8 @@ linters:
         # package named "driver".
         - github.com/LFDT-Panurus/panurus/token/services/utils/session.Session
         - github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs.KVS
-        - github.com/LFDT-Panurus/panurus/token/services/network/fabricx/tms.DeployerService
-        - github.com/LFDT-Panurus/panurus/token/services/network/fabricx/finality/queue.Event
+        - github.com/LFDT-Panurus/panurus/token/services/network/chaguar/tms.DeployerService
+        - github.com/LFDT-Panurus/panurus/token/services/network/chaguar/finality/queue.Event
         - github.com/LFDT-Panurus/panurus/token/services/network/fabric/tcc.PublicParameters
         - github.com/LFDT-Panurus/panurus/token/services/interop/encoding.EncodingFunc
         - github.com/LFDT-Panurus/panurus/token/services/identity/x509/crypto.KeyStore
@@ -190,7 +190,7 @@ linters:
         - github.com/LFDT-Panurus/panurus/x/token/services/network/evm/abi.Value
         # The integration module (separate go.mod) has the same swappable-backend shape for its
         # test topology: one platform/CA/client abstraction per network technology (fabric,
-        # fabricx, EVM, ...).
+        # chaguar, EVM, ...).
         - github.com/LFDT-Panurus/panurus/integration/nwo/runner.viewClient
         - github.com/LFDT-Panurus/panurus/integration/nwo/token/common.CA
         - github.com/LFDT-Panurus/panurus/integration/nwo/token/fabric/cc.fabricPlatform

@@ -39,25 +39,25 @@ func TestResolveBesuImage(t *testing.T) {
 }
 
 // TestResolveGatewayImage mirrors TestResolveBesuImage for the fabric-x-evm gateway backend and
-// FABRICX_EVM_IMAGE.
+// CHAGUAR_EVM_IMAGE.
 func TestResolveGatewayImage(t *testing.T) {
 	t.Run("the environment wins over a configured image", func(t *testing.T) {
-		t.Setenv(fabricxEVMImageEnvVar, "from-env:latest")
-		assert.Equal(t, "from-env:latest", resolveImage("configured:latest", fabricxEVMImageEnvVar, defaultGatewayImage))
+		t.Setenv(chaguarEVMImageEnvVar, "from-env:latest")
+		assert.Equal(t, "from-env:latest", resolveImage("configured:latest", chaguarEVMImageEnvVar, defaultGatewayImage))
 	})
 
 	t.Run("a configured image is used when the environment is unset", func(t *testing.T) {
-		t.Setenv(fabricxEVMImageEnvVar, "")
-		assert.Equal(t, "configured:latest", resolveImage("configured:latest", fabricxEVMImageEnvVar, defaultGatewayImage))
+		t.Setenv(chaguarEVMImageEnvVar, "")
+		assert.Equal(t, "configured:latest", resolveImage("configured:latest", chaguarEVMImageEnvVar, defaultGatewayImage))
 	})
 
-	t.Run("falls back to FABRICX_EVM_IMAGE when nothing is configured", func(t *testing.T) {
-		t.Setenv(fabricxEVMImageEnvVar, "from-env:latest")
-		assert.Equal(t, "from-env:latest", resolveImage("", fabricxEVMImageEnvVar, defaultGatewayImage))
+	t.Run("falls back to CHAGUAR_EVM_IMAGE when nothing is configured", func(t *testing.T) {
+		t.Setenv(chaguarEVMImageEnvVar, "from-env:latest")
+		assert.Equal(t, "from-env:latest", resolveImage("", chaguarEVMImageEnvVar, defaultGatewayImage))
 	})
 
 	t.Run("falls back to the hardcoded default when neither is set", func(t *testing.T) {
-		t.Setenv(fabricxEVMImageEnvVar, "")
-		assert.Equal(t, defaultGatewayImage, resolveImage("", fabricxEVMImageEnvVar, defaultGatewayImage))
+		t.Setenv(chaguarEVMImageEnvVar, "")
+		assert.Equal(t, defaultGatewayImage, resolveImage("", chaguarEVMImageEnvVar, defaultGatewayImage))
 	})
 }

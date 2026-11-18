@@ -26,10 +26,10 @@ import (
 // defaultGatewayImage is the published fabric-x-evm image booted when none is configured.
 const defaultGatewayImage = "ghcr.io/hyperledger/fabric-x-evm:0.1.3"
 
-// fabricxEVMImageEnvVar is the environment variable the Makefile's FABRICX_EVM_IMAGE override is
+// chaguarEVMImageEnvVar is the environment variable the Makefile's CHAGUAR_EVM_IMAGE override is
 // passed through as (see besuImageEnvVar's doc comment in besu.go for why this has to be an env var
 // rather than a NetworkHandler field set by the topology).
-const fabricxEVMImageEnvVar = "FABRICX_EVM_IMAGE"
+const chaguarEVMImageEnvVar = "CHAGUAR_EVM_IMAGE"
 
 // defaultGatewayChainID is the chain id the gateway runs when none is configured; it mirrors the testnode default.
 const defaultGatewayChainID int64 = 31337
@@ -76,7 +76,7 @@ func (g *Gateway) ChainID() int64 { return g.cfg.ChainID }
 func startGatewayNode(ctx context.Context, image string, chainID int64, port int) (*Gateway, error) {
 	cfg := gatewayConfig{
 		Image:        image,
-		Name:         "fabricx-evm-" + strconv.Itoa(port),
+		Name:         "chaguar-evm-" + strconv.Itoa(port),
 		Port:         port,
 		ChainID:      chainID,
 		StartTimeout: gatewayStartTimeout,
@@ -152,7 +152,7 @@ func startGatewayNode(ctx context.Context, image string, chainID int64, port int
 		return nil, errors.Wrap(err, "evm nwo: failed to start the fabric-x-evm container")
 	}
 
-	if err := docker.StartLogs(cli, resp.ID, "fabricx-evm."+resp.ID[:8]); err != nil {
+	if err := docker.StartLogs(cli, resp.ID, "chaguar-evm."+resp.ID[:8]); err != nil {
 		// Logs are diagnostics; losing them must not fail the network.
 		logger.Warnf("could not stream fabric-x-evm logs: %v", err)
 	}

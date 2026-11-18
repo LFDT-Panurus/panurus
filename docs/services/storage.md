@@ -259,7 +259,7 @@ For detailed documentation on the recovery service architecture, configuration, 
 
 ### Architecture
 
-The recovery service is instantiated by the **Network Service** (both Fabric and FabricX implementations) and operates on either the `TTXDB` (for regular transactions) or `AuditDB` (for auditor nodes). 
+The recovery service is instantiated by the **Network Service** (both Fabric and Chaguar implementations) and operates on either the `TTXDB` (for regular transactions) or `AuditDB` (for auditor nodes). 
 It provides a generic recovery mechanism that is independent of the specific network backend.
 
 ### Recovery Manager
@@ -268,7 +268,7 @@ The recovery manager runs in the background and periodically scans for pending t
 It uses a distributed locking mechanism (PostgreSQL advisory locks) to ensure only one replica in a multi-instance deployment performs recovery at a time.
 
 **Key Features:**
-- **Backend-Agnostic**: The recovery service is part of the storage layer and works with any network backend (Fabric, FabricX)
+- **Backend-Agnostic**: The recovery service is part of the storage layer and works with any network backend (Fabric, Chaguar)
 - **Database-Driven**: Operates on `TTXDB` for regular nodes and `AuditDB` for auditor nodes
 - **Multi-Database Support**:
   - **PostgreSQL**: Recommended for production multi-instance deployments. Uses advisory locks for distributed coordination and leader election
@@ -292,7 +292,7 @@ The recovery service follows this workflow:
 
 ### Integration with Network Service
 
-The Network Service (Fabric and FabricX implementations) instantiates the recovery service during initialization:
+The Network Service (Fabric and Chaguar implementations) instantiates the recovery service during initialization:
 - Creates a recovery manager with the appropriate transaction database (TTXDB or AuditDB)
 - Configures the recovery handler with network-specific transaction status query capabilities
 - Starts the background recovery process

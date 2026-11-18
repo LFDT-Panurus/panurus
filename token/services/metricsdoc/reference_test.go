@@ -31,7 +31,7 @@ import (
 	idemixcache "github.com/LFDT-Panurus/panurus/token/services/identity/idemix/cache"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/role"
 	_ "github.com/LFDT-Panurus/panurus/token/services/logging" // registers the "panurus" metric namespace replacer
-	fabricxqueue "github.com/LFDT-Panurus/panurus/token/services/network/fabricx/finality/queue"
+	chaguarqueue "github.com/LFDT-Panurus/panurus/token/services/network/chaguar/finality/queue"
 	"github.com/LFDT-Panurus/panurus/token/services/observability"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/ratelimit"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock"
@@ -338,13 +338,13 @@ var groups = []group{
 		build: func(p metrics.Provider) { interactive.NewClientMetrics(p) },
 	},
 	{
-		subsystem: "Fabric-X finality queue",
-		source:    "token/services/network/fabricx/finality/queue/metrics.go",
+		subsystem: "Chaguar finality queue",
+		source:    "token/services/network/chaguar/finality/queue/metrics.go",
 		scope:     direct,
 		wiring: []wiringSite{
-			{file: "token/services/network/fabricx/finality/queue/queue.go", call: "newMetrics(cfg.MetricsProvider)"},
+			{file: "token/services/network/chaguar/finality/queue/queue.go", call: "newMetrics(cfg.MetricsProvider)"},
 		},
-		build: func(p metrics.Provider) { fabricxqueue.NewMetrics(p) },
+		build: func(p metrics.Provider) { chaguarqueue.NewMetrics(p) },
 	},
 	{
 		subsystem: "Storage connection pool",

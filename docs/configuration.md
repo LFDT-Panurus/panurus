@@ -127,8 +127,8 @@ token:
       # Set it to 0 to disable the timeout and wait forever for the transaction (as is done for the 'committer' type).
       # An unset or negative value falls back to the default (10s).
       listenerTimeout: 10s
-    # Only applicable for fabricx networks
-    # notification: The manager is notified about finality events via a notification service (e.g. for FabricX).
+    # Only applicable for chaguar networks
+    # notification: The manager is notified about finality events via a notification service (e.g. for Chaguar).
     #   When a new notification arrives, an event is added to a queue for asynchronous processing.
     #   When a client subscribes to the manager for a specific transaction, the transaction joins a pending set
     #   that the shared poller sweeps with batched status queries (see poller below).
@@ -137,7 +137,7 @@ token:
       workers: 10
       # queueSize is the size of the event buffer. Defaults to 1000.
       queueSize: 1000
-    # Only applicable for fabricx networks
+    # Only applicable for chaguar networks
     # poller: resolves the status of pending transactions with periodic batched committer queries.
     poller:
       # interval is how often the poller sweeps the pending set. Defaults to 1s.
@@ -148,8 +148,8 @@ token:
       # It should exceed the longest caller finality timeout. Defaults to 10m.
       pendingTTL: 10m
   
-  # fabricx configuration for FabricX-specific settings
-  fabricx:
+  # chaguar configuration for Chaguar-specific settings
+  chaguar:
     # lookup configuration for the lookup service
     lookup:
       # permanent lookup configuration
@@ -263,7 +263,7 @@ token:
               #   - `all`: contact all the endorsers listed below.
               #   - `namespace`: fetch the real endorsement policy of the token namespace and contact a
               #     random subset of the endorsers below that satisfies it. On Fabric, the policy is
-              #     obtained via service discovery; on FabricX, via the query service. A policy requiring
+              #     obtained via service discovery; on Chaguar, via the query service. A policy requiring
               #     several signers from the same MSP is satisfied with that many *distinct* endorsers of
               #     that MSP, never the same endorser twice. Endorsement fails if the endorsers below
               #     cannot satisfy the namespace's policy.
@@ -759,13 +759,13 @@ See [Token Chaincode Query Limits](security/tcc_query_limits.md).
 
 ---
 
-### Optional: token.fabricx.lookup
+### Optional: token.chaguar.lookup
 
 If not specified, the default configuration is:
 
 ```yaml
 token:
-  fabricx:
+  chaguar:
     lookup:
       permanent:
         interval: 1m

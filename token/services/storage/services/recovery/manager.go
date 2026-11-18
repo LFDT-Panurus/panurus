@@ -1023,7 +1023,7 @@ func (m *Manager) finishRecovery(ctx context.Context, txID string, storedAt time
 //	  - "not found in index"      — committer's gRPC status desc field
 //	  - "tx not found"            — FSC finality.TxNotFound sentinel appended
 //	  - "no such transaction ID"  — direct return from fabric in common/ledger/blkstorage/blockindex.go
-//	    by fabric-x ledger.GetTransactionByID
+//	    by chaguar ledger.GetTransactionByID
 //	    (fabric-smart-client/platform/fabricx/core/ledger/ledger.go:64).
 //	    Stable across committer error format changes since the sentinel
 //	    is wrapped at the FSC layer, above the committer's gRPC text.

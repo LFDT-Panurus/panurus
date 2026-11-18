@@ -18,7 +18,7 @@ type Topology struct {
 }
 
 // DefaultNetworkName is the name of the network an unnamed EVM topology stands up. It is the name
-// the fabric and fabricx topologies give theirs too, and the suites address networks by it, so an
+// the fabric and chaguar topologies give theirs too, and the suites address networks by it, so an
 // EVM-backed network answering to a different one would be invisible to them.
 const DefaultNetworkName = "default"
 

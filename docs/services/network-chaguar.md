@@ -1,0 +1,591 @@
+# Network Service - Chaguar Implementation
+
+The Chaguar network implementation ([`chaguar.Network`](../../token/services/network/chaguar/network.go)) is an optimized variant of Hyperledger Fabric where **FSC (Fabric Smart Client) nodes act as endorsers**, eliminating the need for traditional chaincode deployment on peers. This architecture provides higher performance and more flexible endorsement policies.
+
+## Architecture Overview
+
+Unlike traditional Fabric, Chaguar uses FSC nodes as endorsers instead of relying on chaincode running on Fabric peers. This fundamental architectural difference enables more efficient transaction processing and greater flexibility in endorsement logic.
+
+```mermaid
+graph TB
+    subgraph "Application Node running FSC/Panurus stack"
+        App[Application/TTX]
+        NetI[Chaguar Network Service]
+    end
+
+    subgraph "Endorser FSC Node 1"
+        NetE1[Chaguar Network Service]
+        Val1[Token Validator]
+    end
+
+    subgraph "Endorser FSC Node 2"
+        NetE2[Chaguar Network Service]
+        Val2[Token Validator]
+    end
+
+    subgraph "Fabric Network"
+        Orderer[Ordering Service]
+        Ledger[Committer]
+    end
+
+    App -->|1. Request Approval| NetI
+    NetI -->|2. Request Endorsement| NetE1
+    NetI -->|2. Request Endorsement| NetE2
+    NetE1 -->|3. Validate| Val1
+    NetE2 -->|3. Validate| Val2
+    Val1 -->|4. Validation Result| NetE1
+    Val2 -->|4. Validation Result| NetE2
+    NetE1 -->|5. Endorsement| NetI
+    NetE2 -->|5. Endorsement| NetI
+    NetI -->|6. Broadcast Tx| Orderer
+    Orderer -->|7. Order & Distribute| Ledger
+    Ledger -->|8. Finality Event| NetI
+    NetI -->|9. Notify| App
+```
+
+### Key Architectural Differences from Fabric
+
+| Aspect | Traditional Fabric | Chaguar                          |
+|--------|-------------------|----------------------------------|
+| **Endorsers** | Fabric peers with chaincode | FSC nodes with validation logic  |
+| **Chaincode** | Required on all peers | Not required                     |
+| **Endorsement Protocol** | Fabric proposal/response | FSC view-based protocol          |
+| **Flexibility** | Limited by chaincode | Highly flexible orchestration    |
+| **Performance** | Chaincode execution overhead | Direct validation, lower latency |
+
+## FSC Node as Endorser
+
+In Chaguar, FSC nodes take on the role of endorsers, performing validation and signing operations that would traditionally be done by chaincode on Fabric peers.
+
+### Endorser Node Architecture
+
+```mermaid
+graph TB
+    subgraph "FSC Endorser Node"
+        Responder[Request Approval<br/>Responder View]
+        ES[Endorser Service]
+        Val[Token Validator]
+        TMS[TMS Provider]
+        RWS[RWSet Translator]
+        Signer[Identity Signer]
+        Storage[(Local Storage)]
+    end
+
+    Initiator[Initiator Node<br/> Request Approval View] -->|Request| Responder
+    Responder -->|1. Extract Request| ES
+    ES -->|2. Get TMS| TMS
+    TMS -->|3. Validate| Val
+    Val -->|4. Generate RWSet| RWS
+    RWS -->|5. Sign| Signer
+    Signer -->|6. Store| Storage
+    Storage -->|7. Return| Responder
+    Responder -->|Endorsement| Initiator
+```
+
+### Endorser Configuration
+
+FSC nodes must be configured to act as endorsers:
+
+```yaml
+# Endorser node configuration
+token:
+  tms:
+    my-chaguar-tms:
+      network: chaguar-network
+      channel: my-channel
+      namespace: my-namespace
+      
+# Mark this node as an endorser
+services:
+  network:
+    fabric:
+      fsc_endorsement:
+        endorser: true  # This node will endorse transactions
+```
+
+### Initiator Configuration
+
+Initiator nodes must know which FSC nodes to contact for endorsement:
+
+```yaml
+# Initiator node configuration
+services:
+  network:
+    fabric:
+      fsc_endorsement:
+        endorsers:
+          - endorser1.example.com  # FSC endorser node 1
+          - endorser2.example.com  # FSC endorser node 2
+        policy:
+          type: all  # "all" or "1outn"
+```
+
+## Transaction Flow Example
+
+Here's a complete end-to-end flow for a token transfer:
+
+```mermaid
+sequenceDiagram
+    participant App as Application
+    participant TTX as TTX Service
+    participant Net as Chaguar Network
+    participant E1 as FSC Endorser 1
+    participant E2 as FSC Endorser 2
+    participant Ord as Orderer
+    participant Ledger as Committer
+
+    Note over App,Ledger: PHASE 1: PREPARE
+    App->>TTX: Transfer(100 tokens, Bob)
+    TTX->>TTX: Create transfer request
+    TTX->>TTX: Select input tokens
+    TTX->>Net: RequestApproval(request)
+    Net->>Net: Create transaction proposal
+    Net->>Net: Self-endorse proposal
+    
+    Note over App,Ledger: PHASE 2: ENDORSE
+    par Collect Endorsements
+        Net->>E1: Request endorsement
+        E1->>E1: Validate request
+        E1->>E1: Generate RWSet
+        E1->>E1: Sign endorsement
+        E1-->>Net: Endorsement 1
+    and
+        Net->>E2: Request endorsement
+        E2->>E2: Validate request
+        E2->>E2: Generate RWSet
+        E2->>E2: Sign endorsement
+        E2-->>Net: Endorsement 2
+    end
+    Net->>Net: Assemble envelope
+    
+    Note over App,Ledger: PHASE 3: ORDER
+    Net->>Ord: Broadcast(envelope)
+    Ord->>Ord: Order transaction
+    Ord->>Ord: Create block
+    
+    Note over App,Ledger: PHASE 4: VALIDATE & COMMIT
+    Ord->>Ledger: Deliver block
+    Ledger->>Ledger: Validate transaction
+    Ledger->>Ledger: Check endorsements
+    Ledger->>Ledger: Apply state changes
+    Ledger->>Ledger: Commit block
+    
+    Note over App,Ledger: FINALITY
+    Ledger-->>Net: Finality event (VALID)
+    Net-->>TTX: OnStatus(VALID)
+    TTX-->>App: Transfer complete
+```
+
+## FSC Endorsement Service
+
+The FSC Endorsement Service ([`fsc.EndorsementService`](../../token/services/network/fabric/endorsement/fsc/service.go)) manages the endorsement process for Chaguar.
+
+### Endorsement Policies
+
+Chaguar supports flexible endorsement policies:
+
+#### All Policy
+Requires endorsements from all configured endorsers:
+
+```yaml
+services:
+  network:
+    fabric:
+      fsc_endorsement:
+        policy:
+          type: all
+        endorsers:
+          - endorser1.example.com
+          - endorser2.example.com
+          - endorser3.example.com
+```
+
+All three endorsers must sign the transaction.
+
+#### 1-out-of-N Policy
+Requires endorsement from any one of the configured endorsers:
+
+```yaml
+services:
+  network:
+    fabric:
+      fsc_endorsement:
+        policy:
+          type: 1outn
+        endorsers:
+          - endorser1.example.com
+          - endorser2.example.com
+          - endorser3.example.com
+```
+
+Only one endorser (randomly selected) will be contacted.
+
+#### Namespace Policy
+Derives the set of endorsers to contact from the *real* endorsement policy of the
+token namespace, instead of a static rule:
+
+```yaml
+services:
+  network:
+    fabric:
+      fsc_endorsement:
+        policy:
+          type: namespace
+        endorsers:
+          - endorser1.example.com
+          - endorser2.example.com
+          - endorser3.example.com
+```
+
+On Chaguar, the namespace's endorsement policy is fetched via the query service's
+`GetNamespacePolicies` RPC, and endorser selection depends on which rule the policy uses:
+
+- **`msp_rule`** (an identity/MSP-based `SignaturePolicyEnvelope`): the policy is mapped
+  onto MSP IDs, and a random subset of the configured `endorsers` that jointly satisfies
+  it is selected — for example, given an `OR(Org1MSP, Org2MSP)` policy, either a
+  configured Org1 endorser or a configured Org2 endorser is contacted, chosen at random.
+  A policy may require *several* signers from the same MSP (e.g.
+  `AND(Org1MSP.member, Org1MSP.member)`, meant to protect against a single misbehaving
+  endorser within that organization): each such signer slot is filled with a *distinct*
+  configured endorser of that MSP, so the policy's guarantee is never collapsed onto one
+  endorser signing twice. Duplicate entries in `endorsers` denote the same endorser and
+  count once.
+- **`threshold_rule`** (a single raw public key + signature scheme, *not* a k-of-n
+  group despite the name): there is no MSP principal to satisfy, so the policy instead
+  names one specific signer directly by key. The configured `endorsers` are searched for
+  the one whose own MSP/X.509 identity carries that same public key, and only that
+  endorser is contacted. Only the `ECDSA` scheme is supported, since FSC endorser
+  identities are X.509/ECDSA-based — this also matches FSC's own pre-broadcast
+  endorsement verification, which checks every endorsement against the endorser's
+  MSP/X.509 key regardless of the namespace's on-chain policy, so a signature can only
+  pass both checks if the two keys are the same key. `BLS`/`EdDSA` `threshold_rule`
+  namespaces cannot be endorsed through the current FSC signing path.
+
+The following are treated as hard errors, since correctness takes priority over
+availability:
+- for `msp_rule`: none of the configured `endorsers` can satisfy the namespace's policy
+  (e.g. no configured endorser belongs to a required MSP, or an MSP has fewer distinct
+  configured endorsers than the number of signers the policy requires from it);
+- for `threshold_rule`: the scheme is not `ECDSA`; the public key cannot be parsed; zero
+  configured endorsers' identities carry the policy's key; or more than one *distinct*
+  configured identity does (a duplicate entry for the same endorser is not an error; two
+  different endorsers sharing a private key is a misconfiguration).
+
+### Endorsement Flow
+
+```mermaid
+graph TB
+    Start[Start Endorsement] --> Policy{Policy Type?}
+    
+    Policy -->|all| SelectAll[Select All Endorsers]
+    Policy -->|1outn| SelectOne[Select Random Endorser]
+    Policy -->|namespace| SelectByPolicy[Fetch Namespace Policy via<br/>Query Service, Select<br/>Satisfying Endorser Subset]
+    
+    SelectAll --> CreateView[Create RequestApprovalView]
+    SelectOne --> CreateView
+    SelectByPolicy --> CreateView
+    
+    CreateView --> SetTxID[Set Transaction ID]
+    SetTxID --> SetRequest[Set Token Request]
+    SetRequest --> SetEndorsers[Set Target Endorsers]
+    
+    SetEndorsers --> Initiate[Initiate View]
+    Initiate --> Collect[Collect Endorsements]
+    
+    Collect --> Verify{All Required<br/>Endorsements?}
+    Verify -->|No| Error[Return Error]
+    Verify -->|Yes| Assemble[Assemble Envelope]
+    
+    Assemble --> Return[Return Envelope]
+    Error --> End[End]
+    Return --> End
+```
+
+## Finality Processing
+
+Chaguar uses asynchronous finality processing with an event queue for high performance.
+
+### Async Event Queue Architecture
+
+```mermaid
+graph LR
+    subgraph "Finality Processing"
+        Ledger[Ledger Events] --> Queue[Event Queue]
+        Queue --> W1[Worker 1]
+        Queue --> W2[Worker 2]
+        Queue --> W3[Worker N]
+        
+        W1 --> Process1[Process Event]
+        W2 --> Process2[Process Event]
+        W3 --> Process3[Process Event]
+        
+        Process1 --> Notify1[Notify Listeners]
+        Process2 --> Notify2[Notify Listeners]
+        Process3 --> Notify3[Notify Listeners]
+    end
+    
+    Notify1 --> App[Application]
+    Notify2 --> App
+    Notify3 --> App
+```
+
+### Submit-Path Finality Wait
+
+Besides the async queue above, the submitter
+(`token/services/network/chaguar/tms`) also waits for finality inline on
+broadcast. Polling starts before the ordering call, so a transaction committing
+early is not missed, and is cancelled if the broadcast fails.
+
+Only `io.EOF` is retried (block 0 not yet committed, typical at startup):
+`finalityEOFRetries` (5) attempts, `finalityRetryDuration` (2s) apart. Any other
+error returns immediately.
+
+### Finality Configuration
+
+```yaml
+token:
+  finality:
+    type: notification  # Chaguar uses notification mode
+    notification:
+      workers: 10       # Number of parallel workers
+      queueSize: 1000   # Event queue capacity
+```
+
+## Public Parameters Management
+
+On Chaguar the public parameters live on the ledger under two keys written together
+by every setup transaction: the setup key (the raw parameters) and the setup *hash*
+key (their SHA256 digest). Every token transaction an endorser translates carries a
+**versioned read dependency** on the setup hash key
+([`RWSetWrapper.StateMustExist`](../../token/services/network/chaguar/endorsement/rwset.go)),
+so the committer rejects the transaction with `ABORTED_MVCC_CONFLICT` unless the
+version the endorser attached is the version that key currently has on the ledger.
+This is what binds a transaction to the parameters it was validated against.
+
+[`pp.VersionKeeper`](../../token/services/network/chaguar/pp/versionkeeper.go) is the
+component that knows that version. It holds an **absolute read of the on-chain row
+version of the setup hash key**, obtained through the query service
+(`PublicParametersService.FetchSetupHashVersion`), and never a count of the updates
+the local process happened to witness. That distinction matters: a node that starts
+after the parameters have already been updated must attach exactly the same version
+as a node that has been running since genesis.
+
+```mermaid
+sequenceDiagram
+    participant End as Endorser
+    participant VK as Version Keeper
+    participant QS as Query Service
+    participant SL as Setup Listener
+    participant TMS as TMS Provider
+
+    Note over End,TMS: First use (including after a restart)
+    End->>VK: GetVersion()
+    VK->>QS: Row version of the setup hash key
+    QS-->>VK: Version N
+    VK-->>End: N
+    Note right of VK: cached; later reads need no round-trip
+
+    Note over End,TMS: Public parameters updated on-chain
+    loop Every lookup interval
+        SL->>QS: Read the setup key
+        QS-->>SL: Parameters (changed)
+        SL->>TMS: Update parameters
+        SL->>VK: UpdateVersion()
+        VK->>QS: Row version of the setup hash key
+        QS-->>VK: Version N+1
+        Note right of VK: absolute re-read, not an increment
+    end
+```
+
+Two consequences of reading the version rather than counting notifications:
+
+- **Restart safety**: a restarted endorser reads the current version straight from
+  the ledger, so it keeps endorsing transactions that commit. Before
+  [#2255](https://github.com/LFDT-Panurus/panurus/issues/2255) the keeper treated
+  its first observation as "initialization" and stayed behind by exactly the number
+  of updates it had not witnessed, which permanently broke any endorser restarted
+  after a parameters update. The Chaguar fungible suite
+  (`integration/token/fungible/dlogx`) has specs for this end to end: its
+  public-parameters-update specs (T2, T2.1, T7) restart the endorser after the
+  update and then transact against the new parameters. They are not run in CI yet
+  ([#1945](https://github.com/LFDT-Panurus/panurus/issues/1945)); run them locally
+  with e.g. `make integration-tests-chaguar-dlog TEST_FILTER="(T2.1 || T2) && websocket"`.
+- **No drift**: a missed or coalesced notification, or a version that jumps by more
+  than one, cannot desynchronize the keeper, because each update re-reads the real
+  version.
+
+If the read fails, or the parameters are not on the ledger yet, the keeper stays
+unsynchronized: `GetVersion` returns the error to the caller (so the endorsement
+fails loudly instead of producing a transaction that is silently rejected later)
+and retries on the next call.
+
+### Deploying the Public Parameters
+
+The first setup transaction on a namespace is written by
+[`tms.DeployerService`](../../token/services/network/chaguar/tms/deployer.go).
+`DeployTMSs` and `DeployTMS` read the parameters from the file at each TMS's
+`publicParameters.path`, not from the ledger, which holds nothing yet on a namespace
+that was never initialized. `DeployTMSWithPP` deploys the bytes it is given instead.
+All three refuse empty parameters: committing an empty setup key would leave the
+namespace unusable for every later token operation.
+
+```yaml
+token:
+  tms:
+    mytms:
+      network: mynet
+      channel: ""
+      namespace: token
+      publicParameters:
+        path: /path/to/zkatdlognoghv1_pp.json
+```
+
+### Version Keeper Configuration
+
+The keeper itself has no configuration; it follows the lookup listener that watches
+the setup key:
+
+```yaml
+token:
+  chaguar:
+    lookup:
+      permanent:
+        interval: 1m      # Periodic check interval
+      once:
+        deadline: 5m      # Startup lookup deadline
+        interval: 2s      # Startup check interval
+```
+
+## State Queries
+
+Chaguar provides an optimized ledger implementation with advanced query capabilities.
+
+### Query Executor
+
+The Chaguar ledger uses a specialized query executor ([`qe.QueryStatesExecutor`](../../token/services/network/chaguar/qe/)) for efficient state access:
+
+```mermaid
+sequenceDiagram
+    participant App as Application
+    participant Net as Chaguar Network
+    participant Ledger as Chaguar Ledger
+    participant QE as Query Executor
+    participant State as Committer
+
+    App->>Net: QueryTokens(tokenIDs)
+    Net->>Ledger: GetStates(namespace, keys)
+    Ledger->>QE: ExecuteQuery(keys)
+    QE->>State: Batch GetState
+    State-->>QE: State values
+    QE->>QE: Process results
+    QE-->>Ledger: Processed values
+    Ledger-->>Net: Token data
+    Net-->>App: Token data
+```
+
+## Performance Optimizations
+
+### 1. Parallel Endorsement Collection
+
+Chaguar collects endorsements in parallel, reducing latency:
+
+```go
+// Simplified parallel endorsement
+err := endorserService.CollectEndorsements(
+    ctx, 
+    tx, 
+    2*time.Minute,  // Timeout
+    endorsers...     // All endorsers contacted in parallel
+)
+```
+
+### 2. Async Finality Processing
+
+Event queue decouples finality processing from the main event loop:
+
+- **Non-blocking**: Main loop continues processing new events
+- **Parallel Workers**: Multiple workers process events concurrently
+- **Buffered Queue**: Handles bursts of finality events
+
+### 3. Optimized State Queries
+
+Chaguar ledger implementation provides:
+
+- **Batch Queries**: Multiple keys fetched in single operation
+- **Efficient Serialization**: Optimized data encoding/decoding
+- **Direct State Access**: Bypasses chaincode invocation overhead
+
+## Configuration Examples
+
+### Complete Chaguar Configuration
+
+```yaml
+# FSC Network Configuration
+fsc:
+  networks:
+    chaguar-network:
+      default: true
+      driver: fabricx
+      # Fabric network connection details
+      
+# Panurus Configuration
+token:
+  enabled: true
+   # Finality Configuration
+  finality:
+     type: notification
+     notification:
+        workers: 10
+        queueSize: 1000
+
+   # Chaguar-specific Configuration
+  chaguar:
+     lookup:
+        permanent:
+           interval: 1m
+        once:
+           deadline: 5m
+           interval: 2s
+
+  # Token Management System
+  tms:
+    my-chaguar-tms:
+      network: chaguar-network
+      channel: my-channel
+      namespace: my-namespace      
+      # FSC Endorsement Configuration, per TMS
+      services:
+        network:
+          fabric:
+            fsc_endorsement:
+              # For endorser nodes
+              endorser: true
+              
+              # For initiator nodes
+              endorsers:
+                - endorser1.example.com
+                - endorser2.example.com
+              policy:
+                type: all  # or "1outn"
+```
+
+## Comparison: Fabric vs Chaguar
+
+| Feature | Fabric | Chaguar |
+|---------|--------|---------|
+| **Endorsers** | Fabric peers | FSC nodes |
+| **Chaincode** | Required | Not required |
+| **Endorsement Latency** | Higher (chaincode execution) | Lower (direct validation) |
+| **Flexibility** | Limited by chaincode | Highly flexible |
+| **Deployment** | Complex (chaincode lifecycle) | Simpler (FSC configuration) |
+| **Scalability** | Limited by peer capacity | Better horizontal scaling |
+| **Use Case** | Standard Fabric deployments | High-performance scenarios |
+
+## See Also
+
+- [Token Transaction Finality](./finality.md) - Deep-dive into finality detection and storage effects, including the query-service polling architecture behind the async finality processing above
+- [Network Service Overview](./network.md) - Generic network service concepts
+- [Fabric Implementation](./network-fabric.md) - Traditional chaincode-based approach
+- [FSC Endorsement Service](../../token/services/network/fabric/endorsement/fsc/) - Implementation details
+- [TTX Service](./ttx.md) - Token transaction orchestration
+- [Public Parameters](../public_parameters.md) - Cryptographic setup management

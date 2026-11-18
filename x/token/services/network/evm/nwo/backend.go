@@ -44,7 +44,7 @@ type Deployment struct {
 // Backend stands up and maintains the EVM on-chain state a TMS needs during integration tests. It is
 // the driver-owned NWO surface: a test harness deploys the contracts through Deploy and seeds or
 // updates public parameters through UpdatePublicParams. Standing up the node itself (Besu vs the
-// fabricx+EVM gateway) is the concrete backend's concern and is not part of this contract, so the two
+// chaguar+EVM gateway) is the concrete backend's concern and is not part of this contract, so the two
 // backends share this shape and differ only in how the node is provisioned underneath.
 type Backend interface {
 	// Deploy deploys the EndorsementVerifier and a per-TMS TokenState clone for spec.TMS, seeding the

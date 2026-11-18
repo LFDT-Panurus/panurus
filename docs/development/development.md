@@ -4,7 +4,7 @@ This page contains link to the development guidelines and more.
 
 - [General Guidelines](./general.md)
 - [Writing idiomatic, effective, and clean Go code](./idiomatic.md)
-- [Testing Guide](./testing.md): How to run the unit, fuzz, integration and Fabric-X tests.
+- [Testing Guide](./testing.md): How to run the unit, fuzz, integration and Chaguar tests.
 - [Debugging Integration Tests](./debug-integration-tests.md): Runbook for diagnosing failing integration tests (log locations, Docker and network inspection, Ginkgo focus and skip).
 - [Best Practices for Versioning Go Projects](./versioning.md)
 - [Development Tools](./tools.md)

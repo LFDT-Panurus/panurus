@@ -123,7 +123,7 @@ var _ = Describe("EndToEnd", func() {
 	})
 
 	// No PolicyIdentity spec. T14 is not green on any backend: it is commented out of the CI matrix
-	// for both dlog-fabric and fabricx-dlog (.github/workflows/tests.yml), and has been since those
+	// for both dlog-fabric and chaguar-dlog (.github/workflows/tests.yml), and has been since those
 	// entries were added, so the make targets exist but nothing calls them.
 	//
 	// It fails here the same way it would elsewhere. After alice locks under "$0 OR $1" the auditor

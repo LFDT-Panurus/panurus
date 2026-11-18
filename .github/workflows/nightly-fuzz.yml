@@ -126,8 +126,8 @@ jobs:
           - name: zkatdlog-upgrade-process-comm-token
             pkg: ./token/core/zkatdlog/nogh/v1/crypto/upgrade
             func: FuzzProcessCommTokenNoPanic
-          - name: fabricx-endorser-for-threshold-rule
-            pkg: ./token/services/network/fabricx/endorsement
+          - name: chaguar-endorser-for-threshold-rule
+            pkg: ./token/services/network/chaguar/endorsement
             func: FuzzEndorserForThresholdRuleNoPanic
           - name: fabtoken-owner-verifier
             pkg: ./token/core/fabtoken/v1/driver

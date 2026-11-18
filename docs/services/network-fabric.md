@@ -71,7 +71,7 @@ it.
 
 A well-formed id for a token that does not exist on the ledger is not an error: `queryTokens`
 returns a successful response whose array carries a `null` entry at that id's position, the
-same convention `translator.QueryTokens` and the fabricx executor already use internally.
+same convention `translator.QueryTokens` and the chaguar executor already use internally.
 This lets a caller distinguish "missing" from "the query itself failed" (the ledger drift
 checks' background sweep depends on this). A caller that requires every requested token to
 actually exist — certification, for one — must check for nulls itself; `GetTokenView` does.
@@ -284,8 +284,8 @@ The set of endorsers to contact is selected by `fsc_endorsement.policy.type`:
   error rather than falling back to a weaker policy. Where the policy requires more than
   one signer from the same MSP, each of those signer slots is filled with a *distinct*
   configured endorser, never the same endorser twice. See
-  [FabricX FSC Endorsement Service](network-fabricx.md#fsc-endorsement-service) for
-  the equivalent (query-service-based) mechanism on FabricX.
+  [Chaguar FSC Endorsement Service](network-chaguar.md#fsc-endorsement-service) for
+  the equivalent (query-service-based) mechanism on Chaguar.
 
 ### Public Parameters Setup/Update via FSC
 
@@ -675,7 +675,7 @@ func (n *Network) ComputeTxID(id *driver.TxID) string {
 
 - [Token Transaction Finality](./finality.md) - Deep-dive into finality detection and storage effects, including the delivery-based listener manager and the ledger-height retry above
 - [Network Service Overview](./network.md) - Generic network service concepts
-- [FabricX Implementation](./network-fabricx.md) - FSC-based endorsement
+- [Chaguar Implementation](./network-chaguar.md) - FSC-based endorsement
 - [Token Chaincode](../../token/services/network/fabric/tcc/) - Chaincode implementation
 - [TTX Service](./ttx.md) - Token transaction orchestration
 - [Public Parameters](../public_parameters.md) - Cryptographic setup

@@ -27,7 +27,7 @@ tokengen gen zkatdlognogh.v1 --curve bls12_381_bbs --idemix-issuer-pk ./msp/idem
 
 ## Publication and Management
 
-The publication mechanism varies depending on the network driver being used (Fabric vs. FabricX).
+The publication mechanism varies depending on the network driver being used (Fabric vs. Chaguar).
 
 ### Fabric (Standard)
 In a standard Hyperledger Fabric network, public parameters are managed by the **Token Chaincode (TCC)**.
@@ -35,12 +35,12 @@ In a standard Hyperledger Fabric network, public parameters are managed by the *
 2.  **Ledger State**: The TCC writes the parameters to a specific "Setup Key" in its world state.
 3.  **Validation**: The TCC uses these parameters to validate all incoming token requests.
 
-### FabricX
-In FabricX, public parameters are managed through a dedicated **Public Parameters Service** and the **Vault**.
+### Chaguar
+In Chaguar, public parameters are managed through a dedicated **Public Parameters Service** and the **Vault**.
 1.  **Publication**: Parameters are written to the ledger under a well-known setup key within the token namespace. When deploying public parameters via `DeployTMSWithPP`:
     - The deployer dynamically queries the current namespace policy version (`NsVersion`) from the ledger via `qs.GetState(committerpb.MetaNamespaceID, namespace)` (the `_meta` system namespace) using protobuf varint decoding, ensuring the deployment transaction is validated against the active policy epoch.
     - If the namespace has no `_meta` entry on the ledger (e.g., initial deployment of a new namespace before any endorsement policy updates), it defaults cleanly to initial version 0.
-2.  **Query Service**: FSC nodes use the `FabricX` Query Service to fetch these parameters directly from the vault's world state.
+2.  **Query Service**: FSC nodes use the `Chaguar` Query Service to fetch these parameters directly from the vault's world state.
 
 ---
 
@@ -100,6 +100,6 @@ The **Network Service** is responsible for monitoring the ledger for changes to 
 | Stage | Tool/Component | Responsibility |
 | :--- | :--- | :--- |
 | **Generation** | [`tokengen`](../cmd/tokengen/README.md) | Creates the cryptographic blob for a specific driver version. |
-| **Publication** | `tcc` (Fabric) / Vault (FabricX) | Persists the blob to the ledger's world state. |
+| **Publication** | `tcc` (Fabric) / Vault (Chaguar) | Persists the blob to the ledger's world state. |
 | **Monitoring** | **Network Service** | Listens for ledger events on the Setup Key. |
 | **Synchronization** | `TMSProvider` | Hot-swaps the driver instance in the FSC node upon update. |

@@ -216,7 +216,7 @@ Two consequences worth knowing before you debug one of them:
 
 Recovery for transactions left `Pending` across a restart is not configured under `evm` at all: settings
 load from `services.network.recovery`, the shared, network-agnostic key every driver reads (the Fabric and
-FabricX drivers read the same key), with the SDK's defaults (enabled, 30s TTL, 5s scan interval) applying
+Chaguar drivers read the same key), with the SDK's defaults (enabled, 30s TTL, 5s scan interval) applying
 when a TMS sets none. This key was formerly `services.network.fabric.recovery`, which is no longer read.
 See "Transaction recovery
 across restarts" in the [implementation guide](./network-ethereum.md#transaction-recovery-across-restarts)
@@ -230,7 +230,7 @@ Four suites exercise this runbook, against two different backends:
   shared fungible suite against a plain Besu node. They need `besu-docker-images`, docker and forge, and
   need no `FAB_BINS`.
 - `make integration-tests-evm-gateway` and `make integration-tests-evm-gateway-fabtoken` run the same
-  suite against a fabric-x-evm gateway instead, which need `fabricx-evm-docker-images`. The gateway
+  suite against a fabric-x-evm gateway instead, which need `chaguar-evm-docker-images`. The gateway
   exposes its own pending/in-progress/committed lifecycle as a faster finality signal (see "How finality
   resolves" in the [implementation guide](./network-ethereum.md#how-finality-resolves)); the driver is
   built and accepted against the plain-node path first, so run those suites too when changing anything

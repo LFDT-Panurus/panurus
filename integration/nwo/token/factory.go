@@ -7,10 +7,10 @@ SPDX-License-Identifier: Apache-2.0
 package token
 
 import (
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/chaguar"
 	tevm "github.com/LFDT-Panurus/panurus/integration/nwo/token/evm"
 	tfabric "github.com/LFDT-Panurus/panurus/integration/nwo/token/fabric"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/fabric/cc"
-	fabricx2 "github.com/LFDT-Panurus/panurus/integration/nwo/token/fabricx"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabricx"
@@ -18,13 +18,13 @@ import (
 )
 
 type platformFactory struct {
-	ClientProvider fabricx2.ClientProvider
+	ClientProvider chaguar.ClientProvider
 
-	// fabricxBackends collects the fabricx backends created by New
-	fabricxBackends []*fabricx2.Backend
+	// chaguarBackends collects the chaguar backends created by New
+	chaguarBackends []*chaguar.Backend
 }
 
-func NewPlatformFactory(clientProvider fabricx2.ClientProvider) *platformFactory {
+func NewPlatformFactory(clientProvider chaguar.ClientProvider) *platformFactory {
 	return &platformFactory{ClientProvider: clientProvider}
 }
 
@@ -33,12 +33,12 @@ func (p *platformFactory) Name() string {
 }
 
 func (p *platformFactory) New(ctx api.Context, t api.Topology, builder api.Builder) api.Platform {
-	fabricxBackend := &fabricx2.Backend{ClientProvider: p.ClientProvider}
-	p.fabricxBackends = append(p.fabricxBackends, fabricxBackend)
+	chaguarBackend := &chaguar.Backend{ClientProvider: p.ClientProvider}
+	p.chaguarBackends = append(p.chaguarBackends, chaguarBackend)
 
 	tp := NewPlatform(ctx, t, builder)
 	tp.AddNetworkHandler(fabric.TopologyName, tfabric.NewNetworkHandler(tp, builder, cc.NewDefaultGenericBackend(tp)))
-	tp.AddNetworkHandler(fabricx.PlatformName, tfabric.NewNetworkHandler(tp, builder, fabricxBackend))
+	tp.AddNetworkHandler(fabricx.PlatformName, tfabric.NewNetworkHandler(tp, builder, chaguarBackend))
 	tp.AddNetworkHandler(tevm.TopologyName, tevm.NewNetworkHandler(tp, builder))
 
 	// The gateway backend reuses the EVM handler; NodeKind makes startNode boot the gateway, not Besu.
@@ -49,11 +49,11 @@ func (p *platformFactory) New(ctx api.Context, t api.Topology, builder api.Build
 	return tp
 }
 
-// InstallPendingPublicParams installs the public parameters that the fabricx backends recorded
+// InstallPendingPublicParams installs the public parameters that the chaguar backends recorded
 // while the network was starting. It must be called once the network is fully up, from the same
 // goroutine that started it, and it is a no-op for the backends that recorded nothing.
 func (p *platformFactory) InstallPendingPublicParams() {
-	for _, backend := range p.fabricxBackends {
+	for _, backend := range p.chaguarBackends {
 		err := backend.InstallPendingPublicParams()
 		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "failed installing the pending public params")
 	}
