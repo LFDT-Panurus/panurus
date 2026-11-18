@@ -979,6 +979,41 @@ the reasoning, including why movement/balance queries are never row-capped.
 
 ---
 
+### Optional: token.storage.maxResultRows
+
+Row ceiling for the remaining *materialised* reads that load their whole result into
+memory and cannot be paged (`ConfigurationsByID`, `GetWalletIDs`). Each runs with
+`LIMIT maxResultRows+1` and errors if the result would exceed the ceiling —
+**fail-closed, never a silent truncation**, since every consumer treats the result as
+complete. Set far higher than `maxPageSize`. `0` disables; default 100000.
+
+```yaml
+token:
+  storage:
+    maxResultRows: 100000
+```
+
+---
+
+### Optional: token.storage.maxQueryIDs
+
+Ceiling on the id count in a variadic id-list input (`DeleteTokens`, `GetTokens`,
+`ListAuditTokens`, `GetTokenRequests`, `GetExistingSignerInfo`). A longer list is
+rejected before it expands into an `IN (...)` clause; callers chunk and merge. `0`
+disables; default 1000.
+
+```yaml
+token:
+  storage:
+    maxQueryIDs: 1000
+```
+
+The opaque value written by `Keystore.Put` is bounded by the existing
+[`token.storage.maxPayloadSize`](#optional-tokenstoragemaxpayloadsize) limit, checked
+after marshaling.
+
+---
+
 ### Optional: token.tms.<name>.services.storage.cleanup
 
 If not specified, the default configuration is:

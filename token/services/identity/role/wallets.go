@@ -120,7 +120,7 @@ func (w *AuditorWallet) GetSigner(ctx context.Context, identity Identity) (Signe
 //
 //go:generate counterfeiter -o mock/itv.go -fake-name IssuerTokenVault . IssuerTokenVault
 type IssuerTokenVault interface {
-	ListHistoryIssuedTokens(context.Context) (*token.IssuedTokens, error)
+	ListHistoryIssuedTokens(context.Context) (driver.IssuedTokensIterator, error)
 	// IssuedBalance returns the sum of the amounts of the tokens issued by this node, filtered by the passed options.
 	IssuedBalance(ctx context.Context, opts driver.IssuerBalanceQuery) (*big.Int, error)
 	// RedeemedBalance returns the sum of the amounts of the tokens redeemed against an issuer known to this node.
@@ -195,27 +195,33 @@ func (w *IssuerWallet) GetSigner(ctx context.Context, identity Identity) (Signer
 // that tokens belong to this wallet's issuer identity.
 func (w *IssuerWallet) HistoryTokens(ctx context.Context, opts *driver.ListTokensOptions) (*token.IssuedTokens, error) {
 	w.Logger.DebugfContext(ctx, "issuer wallet [%s]: history tokens, type [%d]", w.ID(), opts.TokenType)
-	source, err := w.TokenVault.ListHistoryIssuedTokens(ctx)
+	it, err := w.TokenVault.ListHistoryIssuedTokens(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "token selection failed")
 	}
 
+	// Stream the issued tokens and filter in place, so the full history is never
+	// materialised; only the matching subset is kept.
 	unspentTokens := &token.IssuedTokens{}
-	for _, t := range source.Tokens {
+	if err := iterators.ForEach(it, func(t *token.IssuedToken) error {
 		if len(opts.TokenType) != 0 && t.Type != opts.TokenType {
 			w.Logger.DebugfContext(ctx, "issuer wallet [%s]: discarding token of type [%s]!=[%s]", w.ID(), t.Type, opts.TokenType)
 
-			continue
+			return nil
 		}
 
 		if !w.Contains(ctx, t.Issuer) {
 			w.Logger.DebugfContext(ctx, "issuer wallet [%s]: discarding token, issuer does not belong to wallet", w.ID())
 
-			continue
+			return nil
 		}
 
 		w.Logger.DebugfContext(ctx, "issuer wallet [%s]: adding token of type [%s], quantity [%s]", w.ID(), t.Type, t.Quantity)
 		unspentTokens.Tokens = append(unspentTokens.Tokens, t)
+
+		return nil
+	}); err != nil {
+		return nil, errors.Wrap(err, "token selection failed")
 	}
 	w.Logger.DebugfContext(ctx, "issuer wallet [%s]: history tokens done, found [%d] issued tokens", w.ID(), len(unspentTokens.Tokens))
 

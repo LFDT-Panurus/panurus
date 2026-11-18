@@ -19,6 +19,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/assert"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 )
 
@@ -117,7 +118,12 @@ func (l *ListVaultUnspentTokensView) Call(context view.Context) (any, error) {
 	assert.NoError(err, "failed getting management service")
 	assert.NotNil(net, "cannot find tms [%s]", l.TMSID)
 
-	return net.Vault().NewQueryEngine().ListUnspentTokens(context.Context())
+	it, err := net.Vault().NewQueryEngine().UnspentTokensIterator(context.Context())
+	assert.NoError(err, "failed getting unspent tokens iterator")
+	tokens, err := iterators.ReadAllPointers(it)
+	assert.NoError(err, "failed reading unspent tokens")
+
+	return &token2.UnspentTokens{Tokens: tokens}, nil
 }
 
 type ListVaultUnspentTokensViewFactory struct{}

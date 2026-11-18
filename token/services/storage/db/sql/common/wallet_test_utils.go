@@ -67,9 +67,13 @@ func TestGetWalletIDs(t *testing.T, store walletStoreConstructor) {
 
 	roleID := 5
 	output := driver.WalletID("my wallet")
+	// GetWalletIDs materialises its result, so it is fail-closed at the
+	// MaxResultRows ceiling: the query carries LIMIT MaxResultRows+1 and $2 is
+	// that bound (DefaultLimits() applies, the store being built with no
+	// override). See limits.go.
 	mockDB.
-		ExpectQuery("SELECT DISTINCT wallet_id FROM WALLETS WHERE role_id = \\$1").
-		WithArgs(roleID).
+		ExpectQuery("SELECT DISTINCT wallet_id FROM WALLETS WHERE role_id = \\$1 LIMIT \\$2").
+		WithArgs(roleID, DefaultMaxResultRows+1).
 		WillReturnRows(mockDB.NewRows([]string{"wallet_id"}).AddRow(output))
 
 	actualWalletIDs, err := store(db).GetWalletIDs(t.Context(), roleID)

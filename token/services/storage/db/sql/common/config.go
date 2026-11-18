@@ -120,6 +120,9 @@ type StorageConfig struct {
 	// (*sql.DB).Stats(). Defaults to DefaultPoolMetricsInterval; 0 disables
 	// the sampler. Only acted upon by the Postgres driver.
 	PoolMetricsInterval time.Duration
+	// Limits holds the store-level resource limits applied inside the concrete
+	// SQL stores; see limits.go.
+	Limits Limits
 }
 
 // LoadTableNamesConfig reads the table name overrides from cfg.
@@ -147,25 +150,25 @@ func LoadTableNamesConfig(cfg driver2.Config) (TableNamesConfig, error) {
 func LoadStorageConfig(cfg driver2.Config) (StorageConfig, error) {
 	tableNames, err := LoadTableNamesConfig(cfg)
 	if err != nil {
-		return StorageConfig{}, err
+		return StorageConfig{Limits: DefaultLimits()}, err
 	}
 
 	var skipPrefix bool
 	if cfg != nil && cfg.IsSet(ConfigKeySkipPrefix) {
 		if err := cfg.UnmarshalKey(ConfigKeySkipPrefix, &skipPrefix); err != nil {
-			return StorageConfig{TableNames: tableNames}, err
+			return StorageConfig{TableNames: tableNames, Limits: DefaultLimits()}, err
 		}
 	}
 
 	lockStrategy := LockStrategyInsert
 	if cfg != nil && cfg.IsSet(ConfigKeyLockStrategy) {
 		if err := cfg.UnmarshalKey(ConfigKeyLockStrategy, &lockStrategy); err != nil {
-			return StorageConfig{TableNames: tableNames, SkipPrefix: skipPrefix, LockStrategy: LockStrategyInsert, PoolMetricsInterval: DefaultPoolMetricsInterval}, err
+			return StorageConfig{TableNames: tableNames, SkipPrefix: skipPrefix, LockStrategy: LockStrategyInsert, PoolMetricsInterval: DefaultPoolMetricsInterval, Limits: DefaultLimits()}, err
 		}
 		switch lockStrategy {
 		case LockStrategyInsert, LockStrategyOnConflict, LockStrategySkipLocked:
 		default:
-			return StorageConfig{TableNames: tableNames, SkipPrefix: skipPrefix, LockStrategy: LockStrategyInsert, PoolMetricsInterval: DefaultPoolMetricsInterval}, errors.Errorf(
+			return StorageConfig{TableNames: tableNames, SkipPrefix: skipPrefix, LockStrategy: LockStrategyInsert, PoolMetricsInterval: DefaultPoolMetricsInterval, Limits: DefaultLimits()}, errors.Errorf(
 				"invalid value [%s] for [%s]: must be one of [%s, %s, %s]",
 				lockStrategy, ConfigKeyLockStrategy, LockStrategyInsert, LockStrategyOnConflict, LockStrategySkipLocked,
 			)
@@ -176,20 +179,31 @@ func LoadStorageConfig(cfg driver2.Config) (StorageConfig, error) {
 	if cfg != nil && cfg.IsSet(ConfigKeyPoolMetricsInterval) {
 		raw := DefaultPoolMetricsInterval.String()
 		if err := cfg.UnmarshalKey(ConfigKeyPoolMetricsInterval, &raw); err != nil {
-			return StorageConfig{TableNames: tableNames, SkipPrefix: skipPrefix, LockStrategy: lockStrategy, PoolMetricsInterval: DefaultPoolMetricsInterval}, err
+			return StorageConfig{TableNames: tableNames, SkipPrefix: skipPrefix, LockStrategy: lockStrategy, PoolMetricsInterval: DefaultPoolMetricsInterval, Limits: DefaultLimits()}, err
 		}
 		parsed, err := time.ParseDuration(raw)
 		if err != nil {
-			return StorageConfig{TableNames: tableNames, SkipPrefix: skipPrefix, LockStrategy: lockStrategy, PoolMetricsInterval: DefaultPoolMetricsInterval}, errors.Wrapf(
+			return StorageConfig{TableNames: tableNames, SkipPrefix: skipPrefix, LockStrategy: lockStrategy, PoolMetricsInterval: DefaultPoolMetricsInterval, Limits: DefaultLimits()}, errors.Wrapf(
 				err, "invalid value [%s] for [%s]: must be a Go duration", raw, ConfigKeyPoolMetricsInterval,
 			)
 		}
 		if parsed < 0 {
-			return StorageConfig{TableNames: tableNames, SkipPrefix: skipPrefix, LockStrategy: lockStrategy, PoolMetricsInterval: DefaultPoolMetricsInterval}, errors.Errorf(
+			return StorageConfig{TableNames: tableNames, SkipPrefix: skipPrefix, LockStrategy: lockStrategy, PoolMetricsInterval: DefaultPoolMetricsInterval, Limits: DefaultLimits()}, errors.Errorf(
 				"invalid value [%s] for [%s]: must not be negative", raw, ConfigKeyPoolMetricsInterval,
 			)
 		}
 		poolMetricsInterval = parsed
+	}
+
+	limits, err := LoadLimits(cfg)
+	if err != nil {
+		return StorageConfig{
+			TableNames:          tableNames,
+			SkipPrefix:          skipPrefix,
+			LockStrategy:        lockStrategy,
+			PoolMetricsInterval: poolMetricsInterval,
+			Limits:              DefaultLimits(),
+		}, err
 	}
 
 	return StorageConfig{
@@ -197,5 +211,6 @@ func LoadStorageConfig(cfg driver2.Config) (StorageConfig, error) {
 		SkipPrefix:          skipPrefix,
 		LockStrategy:        lockStrategy,
 		PoolMetricsInterval: poolMetricsInterval,
+		Limits:              limits,
 	}, nil
 }

@@ -67,6 +67,9 @@ type IdentityStore struct {
 	signerInfoCache cache[bool]
 	auditInfoCache  cache[[]byte]
 	errorWrapper    driver2.SQLErrorWrapper
+
+	// limits bounds ConfigurationsByID and GetExistingSignerInfo; see limits.go.
+	limits Limits
 }
 
 func newIdentityStore(
@@ -88,8 +91,12 @@ func newIdentityStore(
 		ci:              ci,
 		errorWrapper:    errorWrapper,
 		notifier:        notifier,
+		limits:          DefaultLimits(),
 	}
 }
+
+// ApplyLimits implements LimitsConfigurable; see limits.go.
+func (db *IdentityStore) ApplyLimits(l Limits) { db.limits = l }
 
 func NewCachedIdentityStore(
 	readDB *sql.DB,
@@ -249,12 +256,19 @@ func (db *IdentityStore) GetConfigurationID(ctx context.Context, id, typ, url st
 }
 
 // ConfigurationsByID returns all configurations with the given id and type, regardless of their url.
+// It materialises the full result, so it is fail-closed at MaxResultRows (see limits.go).
 func (db *IdentityStore) ConfigurationsByID(ctx context.Context, id, configurationType string) ([]driver.IdentityConfiguration, error) {
-	query, args := q.Select().
+	sel := q.Select().
 		FieldsByName("id", "type", "url", "conf", "raw").
 		From(q.Table(db.table.IdentityConfigurations)).
-		Where(cond.And(cond.Eq("id", id), cond.Eq("type", configurationType))).
-		Format(db.ci)
+		Where(cond.And(cond.Eq("id", id), cond.Eq("type", configurationType)))
+	var query string
+	var args []any
+	if rowCap := db.limits.resultRowCap(); rowCap > 0 {
+		query, args = sel.Limit(rowCap).Format(db.ci)
+	} else {
+		query, args = sel.Format(db.ci)
+	}
 	logging.Debug(logger, query, args)
 	rows, err := db.readDB.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -270,8 +284,14 @@ func (db *IdentityStore) ConfigurationsByID(ctx context.Context, id, configurati
 		}
 		res = append(res, c)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := db.limits.checkResultRows("ConfigurationsByID", len(res)); err != nil {
+		return nil, err
+	}
 
-	return res, rows.Err()
+	return res, nil
 }
 
 // IteratorConfigurations returns an iterator to all configurations of the given type.
@@ -450,6 +470,11 @@ func (db *IdentityStore) StoreSignerInfo(ctx context.Context, id tdriver.Identit
 // simply not an identity signer info can exist for, and failing the batch would
 // also lose the answer for the caller's other identities.
 func (db *IdentityStore) GetExistingSignerInfo(ctx context.Context, ids ...tdriver.Identity) ([]string, error) {
+	// Cap the id input (before empty ids are filtered); this also bounds the
+	// result (at most len(ids)).
+	if err := db.limits.checkIDCount("GetExistingSignerInfo", len(ids)); err != nil {
+		return nil, err
+	}
 	idHashes := make([]string, 0, len(ids))
 	for _, id := range ids {
 		if err := integrity.CheckIdentity(id); err != nil {

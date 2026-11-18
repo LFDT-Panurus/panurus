@@ -23,6 +23,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -344,11 +345,15 @@ func NewEnhancedManager(t *testing.T, manager token2.SelectorManager, tokenDB dr
 }
 
 func (m *enhancedManager) TokenSum() (token.Quantity, error) {
-	unspent, err := m.tokenDB.ListUnspentTokens(context.Background())
+	it, err := m.tokenDB.UnspentTokensIterator(context.Background())
 	if err != nil {
 		return nil, err
 	}
-	sum := unspent.Sum(TokenQuantityPrecision)
+	unspent, err := iterators.ReadAllPointers(it)
+	if err != nil {
+		return nil, err
+	}
+	sum := (&token.UnspentTokens{Tokens: unspent}).Sum(TokenQuantityPrecision)
 
 	return sum, nil
 }
