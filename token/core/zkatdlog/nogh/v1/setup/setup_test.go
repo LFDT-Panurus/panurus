@@ -12,8 +12,11 @@ import (
 	"testing"
 
 	math3 "github.com/IBM/mathlib"
+	pp3 "github.com/LFDT-Panurus/panurus/token/core/common/encoding/pp"
+	ppproto "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/v1/pp"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
 	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -439,11 +442,10 @@ func TestWithVersion(t *testing.T) {
 
 func TestSerializationEdgeCases(t *testing.T) {
 	issuerPK := testingHelper(t)
-	pp, err := Setup(32, issuerPK, math3.BN254)
-	require.NoError(t, err)
 
 	// Test invalid driver identifier
-	pp.DriverName = "invalid"
+	pp, err := NewWith(SetupParams{DriverName: "invalid", DriverVersion: ProtocolV1, BitLength: 32, IdemixIssuerPK: issuerPK, CurveID: math3.BN254, ProofType: rp.RangeProofType})
+	require.NoError(t, err)
 	raw, err := pp.Serialize()
 	require.NoError(t, err)
 	_, err = NewPublicParamsFromBytes(raw, DLogNoGHDriverName, ProtocolV1)
@@ -962,4 +964,134 @@ func TestCSPRangeProofParamsValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateRejectsNonDerivedGenerators(t *testing.T) {
+	issuerPK := testingHelper(t)
+	curve := math3.Curves[math3.BN254]
+
+	newPP := func(t *testing.T, proofType rp.ProofType) *PublicParams {
+		t.Helper()
+		pp, err := WithVersionAndProofType(32, issuerPK, math3.BN254, ProtocolV1, proofType)
+		require.NoError(t, err)
+		require.NoError(t, pp.Validate())
+
+		return pp
+	}
+	rnd, err := curve.Rand()
+	require.NoError(t, err)
+
+	tests := []struct {
+		name      string
+		proofType rp.ProofType
+		tamper    func(pp *PublicParams)
+		wantErr   string
+	}{
+		{
+			name:      "trapdoored pedersen g1 = g2^x",
+			proofType: rp.RangeProofType,
+			tamper: func(pp *PublicParams) {
+				pp.PedersenGenerators[1] = pp.PedersenGenerators[2].Mul(curve.NewRandomZr(rnd))
+			},
+			wantErr: "invalid pedersen generators",
+		},
+		{
+			name:      "pedersen generator replaced by generator point",
+			proofType: rp.RangeProofType,
+			tamper:    func(pp *PublicParams) { pp.PedersenGenerators[0] = curve.GenG1 },
+			wantErr:   "invalid pedersen generators",
+		},
+		{
+			name:      "range proof P trapdoored",
+			proofType: rp.RangeProofType,
+			tamper: func(pp *PublicParams) {
+				pp.RangeProofParams.P = pp.RangeProofParams.Q.Mul(curve.NewRandomZr(rnd))
+			},
+			wantErr: "invalid range proof generators",
+		},
+		{
+			name:      "range proof left generator trapdoored",
+			proofType: rp.RangeProofType,
+			tamper: func(pp *PublicParams) {
+				pp.RangeProofParams.LeftGenerators[3] = pp.RangeProofParams.LeftGenerators[2].Mul(curve.NewRandomZr(rnd))
+			},
+			wantErr: "invalid range proof generators",
+		},
+		{
+			name:      "csp right generator trapdoored",
+			proofType: rp.CSPRangeProofType,
+			tamper: func(pp *PublicParams) {
+				pp.CSPRangeProofParams.RightGenerators[5] = pp.CSPRangeProofParams.RightGenerators[4].Mul(curve.NewRandomZr(rnd))
+			},
+			wantErr: "invalid csp range proof generators",
+		},
+		{
+			name:      "range proof Q trapdoored",
+			proofType: rp.RangeProofType,
+			tamper: func(pp *PublicParams) {
+				pp.RangeProofParams.Q = pp.RangeProofParams.P.Mul(curve.NewRandomZr(rnd))
+			},
+			wantErr: "invalid range proof generators",
+		},
+		{
+			name:      "range proof right generator swapped",
+			proofType: rp.RangeProofType,
+			tamper: func(pp *PublicParams) {
+				r := pp.RangeProofParams.RightGenerators
+				r[0], r[1] = r[1], r[0]
+			},
+			wantErr: "invalid range proof generators",
+		},
+		{
+			name:      "csp left generator trapdoored",
+			proofType: rp.CSPRangeProofType,
+			tamper: func(pp *PublicParams) {
+				pp.CSPRangeProofParams.LeftGenerators[2] = pp.CSPRangeProofParams.LeftGenerators[1].Mul(curve.NewRandomZr(rnd))
+			},
+			wantErr: "invalid csp range proof generators",
+		},
+		{
+			name:      "pedersen generator is nil",
+			proofType: rp.RangeProofType,
+			tamper:    func(pp *PublicParams) { pp.PedersenGenerators[1] = nil },
+			wantErr:   "invalid pedersen generators",
+		},
+		{
+			name:      "relabelled version without regenerating",
+			proofType: rp.RangeProofType,
+			tamper:    func(pp *PublicParams) { pp.DriverVersion = 2 },
+			wantErr:   "invalid pedersen generators",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pp := newPP(t, tc.proofType)
+			tc.tamper(pp)
+			err := pp.Validate()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
+}
+
+func TestDeserializeRejectsInnerLabelMismatch(t *testing.T) {
+	pp, err := Setup(32, testingHelper(t), math3.BN254)
+	require.NoError(t, err)
+	raw, err := pp.Serialize()
+	require.NoError(t, err)
+
+	// Relabel the inner parameters but keep the outer identifier.
+	container, err := pp3.Unmarshal(raw)
+	require.NoError(t, err)
+	inner := &ppproto.PublicParameters{}
+	require.NoError(t, proto.Unmarshal(container.Raw, inner))
+	inner.TokenDriverVersion = 2
+	container.Raw, err = proto.Marshal(inner)
+	require.NoError(t, err)
+	raw, err = pp3.Marshal(container)
+	require.NoError(t, err)
+
+	_, err = NewPublicParamsFromBytes(raw, DLogNoGHDriverName, ProtocolV1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid driver name or version")
 }
