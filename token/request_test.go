@@ -76,6 +76,23 @@ func TestRequestSerialization(t *testing.T) {
 	assert.Equal(t, mRaw, mRaw2)
 }
 
+func TestRequest_Bytes_NilMetadata(t *testing.T) {
+	r := &Request{
+		Anchor:  "anchor-nil-meta",
+		Actions: &driver.TokenRequest{},
+	}
+	assert.Nil(t, r.Metadata)
+
+	raw, err := r.Bytes()
+	require.NoError(t, err)
+	require.NotEmpty(t, raw)
+
+	r2 := &Request{}
+	err = r2.FromBytes(raw)
+	require.NoError(t, err)
+	assert.Equal(t, RequestAnchor("anchor-nil-meta"), r2.Anchor)
+}
+
 // TestRequest_FromBytes_ErrorCases tests error paths in FromBytes method
 func TestRequest_FromBytes_ErrorCases(t *testing.T) {
 	t.Run("invalid bytes", func(t *testing.T) {
@@ -510,6 +527,36 @@ func TestNewRequestFromBytes(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed unmarshalling token request metadata")
 	})
+}
+
+// TestNewRequestFromBytes_NoAnchorBackfill verifies that metadata serialized without an
+// embedded anchor is not silently backfilled with the requested txID during deserialization.
+// This prevents an adversary from omitting the anchor key and passing validation under any txID.
+func TestNewRequestFromBytes_NoAnchorBackfill(t *testing.T) {
+	// Create a minimal request with actions
+	original := NewRequest(nil, "tx-A")
+	original.Actions = &driver.TokenRequest{
+		Actions: []*driver.TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+		},
+	}
+	actionsBytes, err := original.Actions.Bytes()
+	require.NoError(t, err)
+
+	// Create metadata with no anchor
+	meta := &driver.TokenRequestMetadata{
+		Anchor: "",
+		Actions: []*driver.ActionMetadataEntry{
+			{ActionID: 0, IssueMetadata: &driver.IssueMetadata{}},
+		},
+	}
+	metaBytes, err := meta.Bytes()
+	require.NoError(t, err)
+
+	// Deserialize under a different anchor — the anchor must NOT be backfilled
+	restored, err := NewRequestFromBytes(nil, "tx-B", actionsBytes, metaBytes)
+	require.NoError(t, err)
+	assert.Empty(t, restored.Metadata.Anchor, "metadata anchor must not be backfilled from txID")
 }
 
 // TestNewFullRequestFromBytes tests NewFullRequestFromBytes function

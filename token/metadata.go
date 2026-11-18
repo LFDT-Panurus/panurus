@@ -104,6 +104,7 @@ func (m *Metadata) FilterBy(ctx context.Context, eIDs ...string) (*Metadata, err
 		TokenService:  m.TokenService,
 		WalletService: m.WalletService,
 		TokenRequestMetadata: &driver.TokenRequestMetadata{
+			Anchor:      m.TokenRequestMetadata.Anchor,
 			Actions:     filteredActions,
 			Application: m.TokenRequestMetadata.Application,
 		},

@@ -648,6 +648,7 @@ func prepareIssueRequestWithAttrs(pp *v1setup.PublicParams, auditor *audit.Audit
 
 	// Create request metadata
 	requestMetadata := &driver.TokenRequestMetadata{
+		Anchor: "1",
 		Actions: []*driver.ActionMetadataEntry{
 			{ActionID: 0, IssueMetadata: issueMetadata},
 		},
@@ -888,7 +889,7 @@ func prepareSwapRequest(
 	}
 
 	// auditor inspect token
-	metadata := &driver.TokenRequestMetadata{}
+	metadata := &driver.TokenRequestMetadata{Anchor: "2"}
 	metadata.Actions = []*driver.ActionMetadataEntry{
 		{ActionID: 0, TransferMetadata: trmetadata1.Actions[0].TransferMetadata},
 		{ActionID: 1, TransferMetadata: trmetadata2.Actions[0].TransferMetadata},
@@ -1359,6 +1360,7 @@ func prepareTransferWithOpts(
 	}
 
 	tokenRequestMetadata := &driver.TokenRequestMetadata{
+		Anchor: "1",
 		Actions: []*driver.ActionMetadataEntry{
 			{ActionID: 0, TransferMetadata: transferMetadata},
 		},

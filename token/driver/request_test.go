@@ -1239,6 +1239,61 @@ func TestTokenRequestMetadata_WithApplication(t *testing.T) {
 	assert.Equal(t, reqMeta.Application, reqMeta2.Application)
 }
 
+func TestTokenRequestMetadata_FromProtos_DoesNotMutateInputProto(t *testing.T) {
+	proto := &request.TokenRequestMetadata{
+		Version: ProtocolV1,
+		ApplicationMetadata: map[string][]byte{
+			AnchorApplicationMetadataKey: []byte("anchor123"),
+			"other_key":                  []byte("other_val"),
+		},
+	}
+
+	m1 := &TokenRequestMetadata{}
+	err := m1.FromProtos(proto)
+	require.NoError(t, err)
+	assert.Equal(t, TokenRequestAnchor("anchor123"), m1.Anchor)
+	assert.Equal(t, map[string][]byte{"other_key": []byte("other_val")}, m1.Application)
+
+	// Proto must not have been mutated (anchor key remains)
+	assert.Contains(t, proto.ApplicationMetadata, AnchorApplicationMetadataKey)
+	assert.Equal(t, []byte("anchor123"), proto.ApplicationMetadata[AnchorApplicationMetadataKey])
+
+	// Second consumer should deserialize identically without losing the anchor
+	m2 := &TokenRequestMetadata{}
+	err = m2.FromProtos(proto)
+	require.NoError(t, err)
+	assert.Equal(t, TokenRequestAnchor("anchor123"), m2.Anchor)
+	assert.Equal(t, map[string][]byte{"other_key": []byte("other_val")}, m2.Application)
+}
+
+func TestTokenRequestMetadata_FromProtos_PreservesNilApplicationWhenOnlyAnchor(t *testing.T) {
+	proto := &request.TokenRequestMetadata{
+		Version: ProtocolV1,
+		ApplicationMetadata: map[string][]byte{
+			AnchorApplicationMetadataKey: []byte("anchor123"),
+		},
+	}
+
+	m := &TokenRequestMetadata{}
+	err := m.FromProtos(proto)
+	require.NoError(t, err)
+	assert.Equal(t, TokenRequestAnchor("anchor123"), m.Anchor)
+	assert.Nil(t, m.Application, "Application should remain nil when only anchor was present")
+}
+
+func TestTokenRequestMetadata_ToProtos_ReservedKeyCollision(t *testing.T) {
+	m := &TokenRequestMetadata{
+		Anchor: "anchor123",
+		Application: map[string][]byte{
+			AnchorApplicationMetadataKey: []byte("malicious-or-colliding"),
+		},
+	}
+
+	_, err := m.ToProtos()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "application metadata contains reserved key")
+}
+
 // TestIssueMetadata_Receivers_EmptyOutputs tests receiver extraction with empty outputs
 func TestIssueMetadata_Receivers_EmptyOutputs(t *testing.T) {
 	im := &IssueMetadata{

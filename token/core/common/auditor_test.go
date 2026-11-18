@@ -401,6 +401,7 @@ func TestValidateStructure(t *testing.T) {
 		}
 
 		metadata := &driver.TokenRequestMetadata{
+			Anchor: txID,
 			Actions: []*driver.ActionMetadataEntry{
 				{
 					ActionID:      0,
@@ -421,6 +422,7 @@ func TestValidateStructure(t *testing.T) {
 		}
 
 		metadata := &driver.TokenRequestMetadata{
+			Anchor: txID,
 			Actions: []*driver.ActionMetadataEntry{
 				{
 					ActionID:         0,
@@ -433,6 +435,95 @@ func TestValidateStructure(t *testing.T) {
 		require.NoError(t, err)
 	})
 
+	t.Run("AnchorEmpty", func(t *testing.T) {
+		tr := &driver.TokenRequest{
+			Actions: []*driver.TypedAction{
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue")},
+			},
+		}
+		metadata := &driver.TokenRequestMetadata{
+			Anchor: txID,
+			Actions: []*driver.ActionMetadataEntry{
+				{ActionID: 0, IssueMetadata: &driver.IssueMetadata{}},
+			},
+		}
+
+		err := ValidateStructure(tr, metadata, "")
+		require.ErrorIs(t, err, driver.ErrAnchorEmpty)
+	})
+
+	t.Run("AnchorTooLarge", func(t *testing.T) {
+		tr := &driver.TokenRequest{
+			Actions: []*driver.TypedAction{
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue")},
+			},
+		}
+		largeAnchor := driver.TokenRequestAnchor(make([]byte, driver.MaxAnchorSize+1))
+		metadata := &driver.TokenRequestMetadata{
+			Anchor: largeAnchor,
+			Actions: []*driver.ActionMetadataEntry{
+				{ActionID: 0, IssueMetadata: &driver.IssueMetadata{}},
+			},
+		}
+
+		err := ValidateStructure(tr, metadata, largeAnchor)
+		require.ErrorIs(t, err, driver.ErrAnchorTooLarge)
+	})
+
+	t.Run("MetadataAnchorEmpty", func(t *testing.T) {
+		tr := &driver.TokenRequest{
+			Actions: []*driver.TypedAction{
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue")},
+			},
+		}
+		metadata := &driver.TokenRequestMetadata{
+			Anchor: "",
+			Actions: []*driver.ActionMetadataEntry{
+				{ActionID: 0, IssueMetadata: &driver.IssueMetadata{}},
+			},
+		}
+
+		err := ValidateStructure(tr, metadata, txID)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "metadata anchor is empty")
+	})
+
+	t.Run("MetadataAnchorTooLarge", func(t *testing.T) {
+		tr := &driver.TokenRequest{
+			Actions: []*driver.TypedAction{
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue")},
+			},
+		}
+		largeAnchor := driver.TokenRequestAnchor(make([]byte, driver.MaxAnchorSize+1))
+		metadata := &driver.TokenRequestMetadata{
+			Anchor: largeAnchor,
+			Actions: []*driver.ActionMetadataEntry{
+				{ActionID: 0, IssueMetadata: &driver.IssueMetadata{}},
+			},
+		}
+
+		err := ValidateStructure(tr, metadata, txID)
+		require.ErrorIs(t, err, driver.ErrAnchorTooLarge)
+	})
+
+	t.Run("MetadataAnchorMismatch", func(t *testing.T) {
+		tr := &driver.TokenRequest{
+			Actions: []*driver.TypedAction{
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue")},
+			},
+		}
+		metadata := &driver.TokenRequestMetadata{
+			Anchor: "other-tx",
+			Actions: []*driver.ActionMetadataEntry{
+				{ActionID: 0, IssueMetadata: &driver.IssueMetadata{}},
+			},
+		}
+
+		err := ValidateStructure(tr, metadata, txID)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "metadata anchor mismatch")
+	})
+
 	t.Run("ActionCountMismatch", func(t *testing.T) {
 		tr := &driver.TokenRequest{
 			Actions: []*driver.TypedAction{
@@ -442,6 +533,7 @@ func TestValidateStructure(t *testing.T) {
 		}
 
 		metadata := &driver.TokenRequestMetadata{
+			Anchor: txID,
 			Actions: []*driver.ActionMetadataEntry{
 				{ActionID: 0, IssueMetadata: &driver.IssueMetadata{}},
 			},
@@ -458,6 +550,7 @@ func TestValidateStructure(t *testing.T) {
 		}
 
 		metadata := &driver.TokenRequestMetadata{
+			Anchor: txID,
 			Actions: []*driver.ActionMetadataEntry{
 				{ActionID: 0, IssueMetadata: &driver.IssueMetadata{}},
 			},
@@ -476,6 +569,7 @@ func TestValidateStructure(t *testing.T) {
 		}
 
 		metadata := &driver.TokenRequestMetadata{
+			Anchor:  txID,
 			Actions: []*driver.ActionMetadataEntry{nil},
 		}
 
@@ -492,6 +586,7 @@ func TestValidateStructure(t *testing.T) {
 		}
 
 		metadata := &driver.TokenRequestMetadata{
+			Anchor: txID,
 			Actions: []*driver.ActionMetadataEntry{
 				{
 					ActionID:      99, // Should be 0
@@ -513,6 +608,7 @@ func TestValidateStructure(t *testing.T) {
 		}
 
 		metadata := &driver.TokenRequestMetadata{
+			Anchor: txID,
 			Actions: []*driver.ActionMetadataEntry{
 				{ActionID: 0}, // No IssueMetadata
 			},
@@ -531,6 +627,7 @@ func TestValidateStructure(t *testing.T) {
 		}
 
 		metadata := &driver.TokenRequestMetadata{
+			Anchor: txID,
 			Actions: []*driver.ActionMetadataEntry{
 				{
 					ActionID:         0,
@@ -553,6 +650,7 @@ func TestValidateStructure(t *testing.T) {
 		}
 
 		metadata := &driver.TokenRequestMetadata{
+			Anchor: txID,
 			Actions: []*driver.ActionMetadataEntry{
 				{ActionID: 0}, // No TransferMetadata
 			},
@@ -571,6 +669,7 @@ func TestValidateStructure(t *testing.T) {
 		}
 
 		metadata := &driver.TokenRequestMetadata{
+			Anchor: txID,
 			Actions: []*driver.ActionMetadataEntry{
 				{
 					ActionID:         0,
@@ -593,6 +692,7 @@ func TestValidateStructure(t *testing.T) {
 		}
 
 		metadata := &driver.TokenRequestMetadata{
+			Anchor: txID,
 			Actions: []*driver.ActionMetadataEntry{
 				{ActionID: 0, IssueMetadata: &driver.IssueMetadata{}},
 			},
