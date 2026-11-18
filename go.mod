@@ -13,14 +13,14 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/google/pprof v0.0.0-20261016150608-1facf8f91b50
 	github.com/google/uuid v1.6.0
-	github.com/hyperledger-labs/fabric-smart-client v0.28.0
+	github.com/hyperledger-labs/fabric-smart-client v0.29.1
 	github.com/hyperledger/fabric-chaincode-go/v2 v2.3.0
 	github.com/hyperledger/fabric-lib-go v1.1.5
 	github.com/hyperledger/fabric-protos-go-apiv2 v0.3.7
 	github.com/hyperledger/fabric-x-common v0.2.12
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/jackc/pgxlisten v0.0.0-20250802141604-12b92425684c
-	github.com/onsi/ginkgo/v2 v2.33.1
+	github.com/onsi/ginkgo/v2 v2.34.0
 	github.com/onsi/gomega v1.44.0
 	github.com/prometheus/client_golang v1.25.0
 	github.com/stretchr/testify v1.12.1

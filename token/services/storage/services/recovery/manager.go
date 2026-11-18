@@ -1008,25 +1008,17 @@ func (m *Manager) finishRecovery(ctx context.Context, txID string, storedAt time
 	return nil
 }
 
-// isNotFoundError reports whether err looks like a "transaction not found on
-// ledger" failure surfaced from the recovery handler path. Matching by string
-// is intentionally loose so the recovery loop does not pull grpc/codes or
-// the network/fabric finality wrappers into its dependency surface; upstream
-// wraps these statuses with errors.Wrapf so the substrings survive.
+// isNotFoundError reports whether err is a "transaction not found on ledger"
+// failure. Matching by substring keeps grpc/codes and the finality wrappers
+// out of this package; upstream wraps with errors.Wrapf, so the text survives.
 //
-// Patterns covered (verified against the dev environment runtime error
-//
-//		"rpc error: code = NotFound desc = transaction ID [X]: not found in
-//		  index: tx not found"):
-//
-//	  - "code = NotFound"         — raw gRPC status text
-//	  - "not found in index"      — committer's gRPC status desc field
-//	  - "tx not found"            — FSC finality.TxNotFound sentinel appended
-//	  - "no such transaction ID"  — direct return from fabric in common/ledger/blkstorage/blockindex.go
-//	    by fabric-x ledger.GetTransactionByID
-//	    (fabric-smart-client/platform/fabricx/core/ledger/ledger.go:64).
-//	    Stable across committer error format changes since the sentinel
-//	    is wrapped at the FSC layer, above the committer's gRPC text.
+// Patterns:
+//   - "code = NotFound"        — raw gRPC status text
+//   - "not found in index"     — committer's gRPC status desc
+//   - "tx not found"           — FSC finality.TxNotFound sentinel
+//   - "no such transaction ID" — fabric blkstorage, returned by fabric-x
+//     ledger.GetTransactionByID; wrapped at the FSC layer, so it is stable
+//     across committer error format changes
 func isNotFoundError(err error) bool {
 	if err == nil {
 		return false

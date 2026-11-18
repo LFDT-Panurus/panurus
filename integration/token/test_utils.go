@@ -274,10 +274,6 @@ func ShareNetwork(s Network) {
 		ginkgo.DeferCleanup(func() {
 			failed := ginkgo.CurrentSpecReport().Failed()
 			st.afterSpec(failed)
-			// under fail-fast ginkgo skips every remaining spec (ginkgo v2.33.1
-			// internal/suite.go:449-451), so the BeforeAll cleanup would never run
-			// (internal/group.go:303-311). TearDown is idempotent, so that later cleanup,
-			// if it runs, is a no-op.
 			suiteConfig, _ := ginkgo.GinkgoConfiguration()
 			if tearDownNow(failed, suiteConfig.FailFast) {
 				s.TearDown()

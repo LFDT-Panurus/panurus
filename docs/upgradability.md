@@ -732,6 +732,22 @@ See FSC's
 See also FSC's
 [v0.27 to v0.28 upgrade guide](https://github.com/hyperledger-labs/fabric-smart-client/blob/v0.28.0/docs/upgrade/v0.27-to-v0.28.md).
 
+### FSC v0.28 to v0.29
+
+- **Stop all replicas of a node before upgrading it**: v0.28 and v0.29 replicas cannot run side by
+  side. Organizations still upgrade independently; v0.29.0 to v0.29.1 is rolling.
+- **No schema step**: roll back by running v0.28 on the same database. `node migrate --contract`
+  is not required for v0.29.
+- **WebSocket P2P TLS**: under `fsc.p2p.opts.websocket.tls`, `enabled`/`clientAuth*: false` or a
+  cert other than the `fsc.identity` keypair now fails startup; remove those keys.
+  `serverNameOverride` now takes effect.
+- **Readiness**: alert on the `/readyz` reason `grpc server stopped` (`/healthz` stays 200) and
+  restart the node.
+- **Fabric-x**: the ledger retries an `Unavailable` call once on another committer.
+
+See FSC's
+[v0.28 to v0.29 upgrade guide](https://github.com/hyperledger-labs/fabric-smart-client/blob/v0.29.1/docs/upgrade/v0.28-to-v0.29.md).
+
 ---
 
 ## Summary of Upgradability Responsibilities

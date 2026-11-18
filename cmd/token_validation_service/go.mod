@@ -6,8 +6,8 @@ replace github.com/LFDT-Panurus/panurus => ./../../
 
 require (
 	github.com/LFDT-Panurus/panurus v0.0.0
-	github.com/hyperledger-labs/fabric-smart-client v0.28.0
-	github.com/hyperledger-labs/fabric-smart-client/integration v0.28.0
+	github.com/hyperledger-labs/fabric-smart-client v0.29.1
+	github.com/hyperledger-labs/fabric-smart-client/integration v0.29.1
 	github.com/stretchr/testify v1.12.1
 	google.golang.org/grpc v1.85.0
 )
@@ -51,7 +51,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.32.0 // indirect
-	github.com/hyperledger-labs/fabric-smart-client/platform/fabric/services/state/cc/query v0.28.0 // indirect
+	github.com/hyperledger-labs/fabric-smart-client/platform/fabric/services/state/cc/query v0.29.1 // indirect
 	github.com/hyperledger/fabric-amcl v0.0.0-20230602173724-9e02669dceb2 // indirect
 	github.com/hyperledger/fabric-chaincode-go/v2 v2.3.1-0.20260831054443-83a556592560 // indirect
 	github.com/hyperledger/fabric-lib-go v1.1.5 // indirect
@@ -83,7 +83,7 @@ require (
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
-	github.com/onsi/ginkgo/v2 v2.33.1 // indirect
+	github.com/onsi/ginkgo/v2 v2.34.0 // indirect
 	github.com/onsi/gomega v1.44.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
@@ -132,4 +132,4 @@ require (
 	modernc.org/sqlite v1.61.1 // indirect
 )
 
-replace github.com/hyperledger-labs/fabric-smart-client/platform/view/services/comm/host/libp2p => github.com/hyperledger-labs/fabric-smart-client/platform/view/services/comm/host/libp2p v0.28.0
+replace github.com/hyperledger-labs/fabric-smart-client/platform/view/services/comm/host/libp2p => github.com/hyperledger-labs/fabric-smart-client/platform/view/services/comm/host/libp2p v0.29.1
