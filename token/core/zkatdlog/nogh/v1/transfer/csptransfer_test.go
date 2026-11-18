@@ -113,7 +113,8 @@ func TestCSPVerifierRejectsTruncatedRangeCorrectnessProof(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	verifier := transfer.NewCSPVerifier(in, out, pp)
+	verifier, err := transfer.NewCSPVerifier(in, out, pp)
+	require.NoError(t, err)
 
 	var verifyErr error
 	require.NotPanics(t, func() {

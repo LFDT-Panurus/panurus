@@ -1600,6 +1600,32 @@ The security of ZKAT-DLOG (NOGH) relies on:
 - Cache attacks (memory access patterns)
 - Power analysis (where applicable)
 
+**Curve Confusion Resistance**: A `G1`/`Zr` arriving from the wire carries its own curve
+identifier — `utils.FromG1Proto` decodes whichever curve the sender named, and the action's
+own `Validate` only nil-checks it. Mixing two curves in one operation is not a soundness
+failure but a crash: the backend `Add`/`Sub`/`Mul` type-asserts its argument to its own
+representation and panics. Validation runs on unauthenticated input, so every element is
+pinned to `PublicParams.Curve` before it reaches arithmetic:
+
+| Boundary | Check |
+| --- | --- |
+| Proof sub-structures | `SameType.Validate`, `TypeAndSumProof.Validate`, `RangeCorrectness.Validate` |
+| Issue token commitments | `NewSameTypeVerifier`, at construction, so the verifier cannot exist holding one; it also rejects an empty set, whose range proof would be vacuously valid |
+| Transfer input and output commitments | `NewTypeAndSumVerifier`, likewise at construction, for both transfer verifiers |
+| Commitment openings | `Token.ToClear`, over the commitment and the metadata's value and blinding factor; a foreign-curve scalar panics `commit`'s `Mul`, so the opening is checked too |
+| Upgrade witnesses | `TransferUpgradeWitnessValidate`, which runs before proof verification |
+| Auditor input | `audit.InspectOutput` |
+| Range-proof internals | `csp`'s `validateRangeProof`, `bulletproof`'s `IPA.Validate` |
+
+The checks also reject the point at infinity, which no honest element is except with
+negligible probability. A rejected element produces an ordinary validation error.
+
+This applies to scalars as well as group elements: a foreign-curve metadata value crashes
+`generators[i].Mul(vector[i])` inside `commit` just as a foreign commitment crashes `Sub`.
+Any new path that combines a wire-sourced element with a public-parameter generator needs
+the same check; the `*CommitmentNoPanic` fuzz targets in
+[Fuzz Testing](../development/testing.md#fuzz-testing) exist to catch the ones that miss it.
+
 ## 13. Implementation Details
 
 ### 13.1 Error Handling

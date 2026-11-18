@@ -44,8 +44,8 @@ func NewVerifier(inputs, outputs []*math.G1, pp *v1.PublicParams, proofType rp.P
 	}
 
 	if proofType == rp.RangeProofType {
-		return NewBulletProofVerifier(inputs, outputs, pp), nil
+		return NewBulletProofVerifier(inputs, outputs, pp)
 	}
 
-	return NewCSPVerifier(inputs, outputs, pp), nil
+	return NewCSPVerifier(inputs, outputs, pp)
 }

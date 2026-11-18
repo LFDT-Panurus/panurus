@@ -110,13 +110,15 @@ func TestBulletProofVerifier_TokenCountMismatch(t *testing.T) {
 	require.NoError(t, err)
 
 	// Construct a verifier with N=1 tokens — must succeed.
-	verifier := NewBulletProofVerifier(tokens, pp)
+	verifier, err := NewBulletProofVerifier(tokens, pp)
+	require.NoError(t, err)
 	require.NoError(t, verifier.Verify(proofBytes))
 
 	// Now construct a verifier with N+1=2 tokens by appending a second commitment.
 	// The range proof was generated for 1 token so the count check will fail.
 	extraToken := curve.GenG1.Mul(curve.NewRandomZr(randReader))
-	verifierWithExtra := NewBulletProofVerifier(append(tokens, extraToken), pp)
+	verifierWithExtra, err := NewBulletProofVerifier(append(tokens, extraToken), pp)
+	require.NoError(t, err)
 	err = verifierWithExtra.Verify(proofBytes)
 	require.Error(t, err, "T-GAP-C3: N+1 token verifier must reject a proof generated for N tokens")
 }
@@ -166,7 +168,8 @@ func TestBulletProofVerifier_HeterogeneousTokenTypesRejected(t *testing.T) {
 	proofBytes, err := prover.Prove()
 	require.NoError(t, err)
 
-	verifier := NewBulletProofVerifier(tokens, pp)
+	verifier, err := NewBulletProofVerifier(tokens, pp)
+	require.NoError(t, err)
 	err = verifier.Verify(proofBytes)
 	require.Error(t, err, "F-06: heterogeneous-type issue proof (USD, EUR) must be rejected")
 	require.ErrorIs(t, err, ErrInvalidIssueProof)

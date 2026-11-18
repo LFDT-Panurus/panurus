@@ -24,9 +24,13 @@ type BulletProofVerifier struct {
 }
 
 // NewBulletProofVerifier instantiates a BulletProofVerifier for the given token commitments and public parameters.
-func NewBulletProofVerifier(tokens []*math.G1, pp *v1.PublicParams) *BulletProofVerifier {
-	v := &BulletProofVerifier{curveID: pp.Curve}
-	v.SameType = NewSameTypeVerifier(tokens, pp.PedersenGenerators, math.Curves[pp.Curve])
+// It returns an error if a commitment does not belong to the curve in pp.
+func NewBulletProofVerifier(tokens []*math.G1, pp *v1.PublicParams) (*BulletProofVerifier, error) {
+	sameType, err := NewSameTypeVerifier(tokens, pp.PedersenGenerators, math.Curves[pp.Curve])
+	if err != nil {
+		return nil, err
+	}
+	v := &BulletProofVerifier{curveID: pp.Curve, SameType: sameType}
 	v.RangeCorrectness = bulletproof.NewRangeCorrectnessVerifier(
 		pp.PedersenGenerators[1:],
 		pp.RangeProofParams.LeftGenerators,
@@ -39,7 +43,7 @@ func NewBulletProofVerifier(tokens []*math.G1, pp *v1.PublicParams) *BulletProof
 		pp.ExecutorProvider,
 	)
 
-	return v
+	return v, nil
 }
 
 // Verify checks the validity of the zero-knowledge proof for an issue action.

@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package math
 
 import (
+	"fmt"
 	"testing"
 
 	math "github.com/IBM/mathlib"
@@ -33,6 +34,8 @@ func TestCheckElement(t *testing.T) {
 	err = CheckElement(g1, math.BLS12_381_BBS)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "element curve must equal curve ID")
+	// The message names both curves, so a rejection says which curve arrived.
+	require.Contains(t, err.Error(), fmt.Sprintf("got [%d], expected [%d]", math.BN254, math.BLS12_381_BBS))
 
 	inf := curve.NewG1()
 	err = CheckElement(inf, math.BN254)
@@ -54,6 +57,7 @@ func TestCheckBaseElement(t *testing.T) {
 	err = CheckBaseElement(zr, math.BLS12_381_BBS)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "element curve must equal curve ID")
+	require.Contains(t, err.Error(), fmt.Sprintf("got [%d], expected [%d]", math.BN254, math.BLS12_381_BBS))
 }
 
 func TestCheckElements(t *testing.T) {
@@ -71,6 +75,28 @@ func TestCheckElements(t *testing.T) {
 	err = CheckElements([]*math.G1{g1, nil}, math.BN254, 2)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "element is nil")
+}
+
+func TestCheckEachElement(t *testing.T) {
+	curve := math.Curves[math.BN254]
+	g1 := curve.GenG1
+
+	// Unlike CheckElements, no length is prescribed: any length passes, including zero.
+	require.NoError(t, CheckEachElement([]*math.G1{}, math.BN254))
+	require.NoError(t, CheckEachElement([]*math.G1{g1}, math.BN254))
+	require.NoError(t, CheckEachElement([]*math.G1{g1, g1}, math.BN254))
+
+	err := CheckEachElement([]*math.G1{g1, nil}, math.BN254)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "element is nil")
+
+	err = CheckEachElement([]*math.G1{g1, curve.NewG1()}, math.BN254)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "element is infinity")
+
+	err = CheckEachElement([]*math.G1{g1, math.Curves[math.BLS12_377_GURVY].GenG1}, math.BN254)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "element curve must equal curve ID")
 }
 
 func TestCheckZrElements(t *testing.T) {

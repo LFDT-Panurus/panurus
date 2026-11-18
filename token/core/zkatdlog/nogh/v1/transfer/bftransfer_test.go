@@ -505,7 +505,8 @@ func TestBulletProofVerifier_1to1WithAttachedRangeProof(t *testing.T) {
 
 	// The verifier must accept the proof: for 1-to-1 transfers RangeCorrectness
 	// is ignored entirely, so an incorrect (or even random) payload causes no failure.
-	verifier := transfer.NewBulletProofVerifier(in, out, pp)
+	verifier, err := transfer.NewBulletProofVerifier(in, out, pp)
+	require.NoError(t, err)
 	err = verifier.Verify(tamperedRaw)
 	require.NoError(t, err, "T-GAP-C1: 1-to-1 transfer with attached range proof must still be accepted")
 }

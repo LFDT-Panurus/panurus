@@ -177,12 +177,24 @@ type SameTypeVerifier struct {
 }
 
 // NewSameTypeVerifier returns a new SameTypeVerifier instance.
-func NewSameTypeVerifier(tokens []*math.G1, pp []*math.G1, c *math.Curve) *SameTypeVerifier {
+//
+// The token commitments are curve-checked here rather than in Verify, so the verifier
+// cannot exist holding one that would panic the G1 arithmetic (issue #2554).
+func NewSameTypeVerifier(tokens []*math.G1, pp []*math.G1, c *math.Curve) (*SameTypeVerifier, error) {
+	// An empty set would get a vacuously valid range proof: the range correctness
+	// verifier accepts a zero-length proof set against zero commitments.
+	if len(tokens) == 0 {
+		return nil, ErrNoTokenCommitments
+	}
+	if err := math2.CheckEachElement(tokens, c.ID()); err != nil {
+		return nil, errors.Join(ErrInvalidTokenCommitment, err)
+	}
+
 	return &SameTypeVerifier{
 		Tokens:    tokens,
 		PedParams: pp,
 		Curve:     c,
-	}
+	}, nil
 }
 
 // Verify checks the validity of the SameType proof.
