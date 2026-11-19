@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/benchmark"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	tokentype "github.com/LFDT-Panurus/panurus/token/token"
@@ -48,22 +49,7 @@ func RunTokenStoreBenchmarks(b *testing.B, store *TokenStore) {
 			cfg,
 			func() *TokenStore { return store },
 			func(s *TokenStore) error {
-				it, err := s.UnspentTokensIterator(context.Background())
-				if err != nil {
-					return err
-				}
-				defer it.Close()
-				for {
-					tok, err := it.Next()
-					if err != nil {
-						return err
-					}
-					if tok == nil {
-						break
-					}
-				}
-
-				return nil
+				return drainUnspentTokens(s.UnspentTokensIterator(context.Background()))
 			},
 		)
 		result.Print()
@@ -91,24 +77,26 @@ func RunTokenStoreBenchmarks(b *testing.B, store *TokenStore) {
 			cfg,
 			func() *TokenStore { return store },
 			func(s *TokenStore) error {
-				it, err := s.UnspentTokensIteratorBy(context.Background(), "wallet0", tokentype.Type("GOLD"))
-				if err != nil {
-					return err
-				}
-				defer it.Close()
-				for {
-					tok, err := it.Next()
-					if err != nil {
-						return err
-					}
-					if tok == nil {
-						break
-					}
-				}
-
-				return nil
+				return drainUnspentTokens(s.UnspentTokensIteratorBy(context.Background(), "wallet0", tokentype.Type("GOLD")))
 			},
 		)
 		result.Print()
 	})
+}
+
+// drainUnspentTokens reads it to exhaustion and closes it.
+func drainUnspentTokens(it tdriver.UnspentTokensIterator, err error) error {
+	if err != nil {
+		return err
+	}
+	defer it.Close()
+	for {
+		tok, err := it.Next()
+		if err != nil {
+			return err
+		}
+		if tok == nil {
+			return nil
+		}
+	}
 }

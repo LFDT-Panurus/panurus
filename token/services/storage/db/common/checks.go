@@ -460,39 +460,9 @@ func (a *DefaultCheckers) walkTransactions(ctx context.Context, tmsID token.TMSI
 	// before it" enough to dedupe, without tracking every distinct tx_id seen
 	// so far: a set that would otherwise grow with total ledger history when
 	// TransactionWindow is unset.
-	lastTxID := ""
-	first := true
+	dedup := &txDeduplicator{}
 	for {
-		count, err := func() (int, error) {
-			it, err := a.db.Transactions(ctx, params, page)
-			if err != nil {
-				return 0, errors.WithMessagef(err, "failed querying transactions [%s]", tmsID)
-			}
-			defer it.Items.Close()
-			count := 0
-			for {
-				transactionRecord, err := it.Items.Next()
-				if err != nil {
-					return 0, errors.WithMessagef(err, "failed querying transactions [%s]", tmsID)
-				}
-				if transactionRecord == nil {
-					break
-				}
-				count++
-
-				if !first && transactionRecord.TxID == lastTxID {
-					continue
-				}
-				first = false
-				lastTxID = transactionRecord.TxID
-
-				if err := fn(transactionRecord); err != nil {
-					return 0, err
-				}
-			}
-
-			return count, nil
-		}()
+		count, err := a.walkTransactionsPage(ctx, tmsID, params, page, dedup, fn)
 		if err != nil {
 			return err
 		}
@@ -501,6 +471,58 @@ func (a *DefaultCheckers) walkTransactions(ctx context.Context, tmsID token.TMSI
 		}
 		if page, err = page.Next(); err != nil {
 			return errors.WithMessagef(err, "failed advancing pagination [%s]", tmsID)
+		}
+	}
+}
+
+// txDeduplicator remembers the last transaction id seen across the pages of a walk.
+type txDeduplicator struct {
+	lastTxID string
+	seen     bool
+}
+
+// isRepeat reports whether txID is the same transaction as the previous record,
+// and records txID as the latest one otherwise.
+func (d *txDeduplicator) isRepeat(txID string) bool {
+	if d.seen && txID == d.lastTxID {
+		return true
+	}
+	d.seen = true
+	d.lastTxID = txID
+
+	return false
+}
+
+// walkTransactionsPage reads one page of transactions, calling fn once per
+// transaction not already seen by dedup, and returns how many rows the page held.
+func (a *DefaultCheckers) walkTransactionsPage(
+	ctx context.Context,
+	tmsID token.TMSID,
+	params driver.QueryTransactionsParams,
+	page driver2.Pagination,
+	dedup *txDeduplicator,
+	fn func(*driver.TransactionRecord) error,
+) (int, error) {
+	it, err := a.db.Transactions(ctx, params, page)
+	if err != nil {
+		return 0, errors.WithMessagef(err, "failed querying transactions [%s]", tmsID)
+	}
+	defer it.Items.Close()
+	count := 0
+	for {
+		transactionRecord, err := it.Items.Next()
+		if err != nil {
+			return 0, errors.WithMessagef(err, "failed querying transactions [%s]", tmsID)
+		}
+		if transactionRecord == nil {
+			return count, nil
+		}
+		count++
+		if dedup.isRepeat(transactionRecord.TxID) {
+			continue
+		}
+		if err := fn(transactionRecord); err != nil {
+			return 0, err
 		}
 	}
 }
@@ -599,20 +621,15 @@ func (a *DefaultCheckers) CheckUnspentTokens(ctx context.Context) ([]Finding, er
 	}
 	defer uit.Close()
 
-	batch := make([]*token2.ID, 0, a.batchSize)
-	flush := func() error {
-		if len(batch) == 0 {
-			return nil
-		}
-		res, err := a.checkUnspentBatch(ctx, tms, net, qe, batch)
+	batch := newTokenIDBatcher(a.batchSize, func(ids []*token2.ID) error {
+		res, err := a.checkUnspentBatch(ctx, tms, net, qe, ids)
 		if err != nil {
 			return err
 		}
 		findings = append(findings, res...)
-		batch = batch[:0]
 
 		return nil
-	}
+	})
 
 	for {
 		tok, err := uit.Next()
@@ -623,18 +640,50 @@ func (a *DefaultCheckers) CheckUnspentTokens(ctx context.Context) ([]Finding, er
 			break
 		}
 		id := tok.Id
-		batch = append(batch, &id)
-		if len(batch) >= a.batchSize {
-			if err := flush(); err != nil {
-				return nil, err
-			}
+		if err := batch.add(&id); err != nil {
+			return nil, err
 		}
 	}
-	if err := flush(); err != nil {
+	if err := batch.flush(); err != nil {
 		return nil, err
 	}
 
 	return findings, nil
+}
+
+// tokenIDBatcher accumulates token ids and hands them to process once a full
+// batch has been collected, or when flushed explicitly.
+type tokenIDBatcher struct {
+	ids     []*token2.ID
+	size    int
+	process func([]*token2.ID) error
+}
+
+func newTokenIDBatcher(size int, process func([]*token2.ID) error) *tokenIDBatcher {
+	return &tokenIDBatcher{ids: make([]*token2.ID, 0, size), size: size, process: process}
+}
+
+// add appends id to the current batch, processing the batch once it is full.
+func (b *tokenIDBatcher) add(id *token2.ID) error {
+	b.ids = append(b.ids, id)
+	if len(b.ids) < b.size {
+		return nil
+	}
+
+	return b.flush()
+}
+
+// flush processes whatever ids are pending, if any.
+func (b *tokenIDBatcher) flush() error {
+	if len(b.ids) == 0 {
+		return nil
+	}
+	if err := b.process(b.ids); err != nil {
+		return err
+	}
+	b.ids = b.ids[:0]
+
+	return nil
 }
 
 // checkUnspentBatch compares one batch of locally held unspent tokens against the ledger.
@@ -660,23 +709,11 @@ func (a *DefaultCheckers) checkUnspentBatch(
 		// one missing id, so resolve local content one id at a time instead of treating a
 		// race as a check failure, dropping whichever ids are gone: they are no longer
 		// unspent, so there is nothing left to compare for them.
-		var stillUnspent []*token2.ID
-		local = make(map[token2.ID][]byte, len(ids))
-		for _, id := range ids {
-			if err := qe.GetTokenOutputs(ctx, []*token2.ID{id}, func(_ *token2.ID, tokenRaw []byte) error {
-				local[*id] = tokenRaw
-
-				return nil
-			}); err != nil {
-				if errors.Is(err, tdriver.ErrTokenNotFound) {
-					continue
-				}
-
-				return nil, errors.WithMessagef(err, "failed reading local content of token [%s]", id)
-			}
-			stillUnspent = append(stillUnspent, id)
+		var err error
+		local, ids, err = readLocalOneByOne(ctx, qe, ids)
+		if err != nil {
+			return nil, err
 		}
-		ids = stillUnspent
 		if len(ids) == 0 {
 			return nil, nil
 		}
@@ -717,6 +754,29 @@ func (a *DefaultCheckers) checkUnspentBatch(
 	}
 
 	return findings, nil
+}
+
+// readLocalOneByOne reads the local content of each id on its own, returning the
+// content of the ids that are still present and dropping the ones that are gone.
+func readLocalOneByOne(ctx context.Context, qe *token.QueryEngine, ids []*token2.ID) (map[token2.ID][]byte, []*token2.ID, error) {
+	var stillUnspent []*token2.ID
+	local := make(map[token2.ID][]byte, len(ids))
+	for _, id := range ids {
+		if err := qe.GetTokenOutputs(ctx, []*token2.ID{id}, func(_ *token2.ID, tokenRaw []byte) error {
+			local[*id] = tokenRaw
+
+			return nil
+		}); err != nil {
+			if errors.Is(err, tdriver.ErrTokenNotFound) {
+				continue
+			}
+
+			return nil, nil, errors.WithMessagef(err, "failed reading local content of token [%s]", id)
+		}
+		stillUnspent = append(stillUnspent, id)
+	}
+
+	return local, stillUnspent, nil
 }
 
 // checkUnspentOneByOne resolves each token of a failed batch on its own, so that a
@@ -812,66 +872,61 @@ func (a *DefaultCheckers) CheckTokenSpendability(ctx context.Context) ([]Finding
 		if tok == nil {
 			break
 		}
-		id := tok.ID
-		// is the token's format supported?
-		if !supportedTokenFormatsSet.Contains(tok.Format) {
-			findings = append(findings, Finding{
-				Checker:  CheckerTokenSpendability,
-				Code:     CodeTokenFormatUnsupported,
-				Severity: SeverityCritical,
-				TxID:     id.TxId,
-				TokenID:  &id,
-				Message:  fmt.Sprintf("token format not supported [%s][%s]", tok.ID, tok.Format),
-			})
-
-			continue
-		}
-
-		logger.DebugfContext(ctx, "deobfuscating token [%s][%s]...", tok.ID, tok.Format)
-		// extract the token's recipients and try to get a verifier for it
-		_, _, recipients, _, err := ts.Deobfuscate(ctx, tok.Token, tok.TokenMetadata)
-		if err != nil {
-			findings = append(findings, Finding{
-				Checker:  CheckerTokenSpendability,
-				Code:     CodeTokenNotDeobfuscatable,
-				Severity: SeverityCritical,
-				TxID:     id.TxId,
-				TokenID:  &id,
-				Message:  fmt.Sprintf("failed to deobfuscate token [%s][%s], [%s]", tok.ID, tok.Format, err),
-			})
-
-			continue
-		}
-		logger.DebugfContext(ctx, "deobfuscated token [%s][%s][%v]...", tok.ID, tok.Format, recipients)
-		if len(recipients) == 0 {
-			findings = append(findings, Finding{
-				Checker:  CheckerTokenSpendability,
-				Code:     CodeTokenNoRecipients,
-				Severity: SeverityCritical,
-				TxID:     id.TxId,
-				TokenID:  &id,
-				Message:  fmt.Sprintf("token recipient list is empty for [%s][%s]", tok.ID, tok.Format),
-			})
-
-			continue
-		}
-		for _, recipient := range recipients {
-			if _, err := sigService.OwnerVerifier(ctx, recipient); err != nil {
-				findings = append(findings, Finding{
-					Checker:  CheckerTokenSpendability,
-					Code:     CodeTokenRecipientUnverifiable,
-					Severity: SeverityCritical,
-					TxID:     id.TxId,
-					TokenID:  &id,
-					Message:  fmt.Sprintf("failed to verify recipient [%s][%s][%s], [%s]", tok.ID, recipient, tok.Format, err),
-				})
-			}
-		}
+		findings = append(findings, checkSpendability(ctx, ts, sigService, supportedTokenFormatsSet, tok)...)
 	}
 
 	logger.DebugfContext(ctx, "finished checks with [%d] findings", len(findings))
 
 	return findings, nil
+}
+
+// checkSpendability returns the findings that make a single unspent token unspendable.
+func checkSpendability(
+	ctx context.Context,
+	ts *token.TokensService,
+	sigService *token.SignatureService,
+	supportedTokenFormats collections.Set[token2.Format],
+	tok *token2.LedgerToken,
+) []Finding {
+	id := tok.ID
+	newFinding := func(code string, message string) []Finding {
+		return []Finding{{
+			Checker:  CheckerTokenSpendability,
+			Code:     code,
+			Severity: SeverityCritical,
+			TxID:     id.TxId,
+			TokenID:  &id,
+			Message:  message,
+		}}
+	}
+
+	// is the token's format supported?
+	if !supportedTokenFormats.Contains(tok.Format) {
+		return newFinding(CodeTokenFormatUnsupported, fmt.Sprintf("token format not supported [%s][%s]", tok.ID, tok.Format))
+	}
+
+	logger.DebugfContext(ctx, "deobfuscating token [%s][%s]...", tok.ID, tok.Format)
+	// extract the token's recipients and try to get a verifier for it
+	_, _, recipients, _, err := ts.Deobfuscate(ctx, tok.Token, tok.TokenMetadata)
+	if err != nil {
+		return newFinding(CodeTokenNotDeobfuscatable, fmt.Sprintf("failed to deobfuscate token [%s][%s], [%s]", tok.ID, tok.Format, err))
+	}
+	logger.DebugfContext(ctx, "deobfuscated token [%s][%s][%v]...", tok.ID, tok.Format, recipients)
+	if len(recipients) == 0 {
+		return newFinding(CodeTokenNoRecipients, fmt.Sprintf("token recipient list is empty for [%s][%s]", tok.ID, tok.Format))
+	}
+
+	var findings []Finding
+	for _, recipient := range recipients {
+		if _, err := sigService.OwnerVerifier(ctx, recipient); err != nil {
+			findings = append(findings, newFinding(
+				CodeTokenRecipientUnverifiable,
+				fmt.Sprintf("failed to verify recipient [%s][%s][%s], [%s]", tok.ID, recipient, tok.Format, err),
+			)...)
+		}
+	}
+
+	return findings
 }
 
 // CheckLocalCompleteness looks for tokens the ledger produced for this node that
@@ -903,20 +958,15 @@ func (a *DefaultCheckers) CheckLocalCompleteness(ctx context.Context) ([]Finding
 	params := a.transactionQuery()
 	params.Statuses = []driver.TxStatus{driver.Confirmed}
 
-	batch := make([]*token2.ID, 0, a.batchSize)
-	flush := func() error {
-		if len(batch) == 0 {
-			return nil
-		}
-		res, err := a.checkPresenceBatch(ctx, tms, net, qe, batch)
+	batch := newTokenIDBatcher(a.batchSize, func(ids []*token2.ID) error {
+		res, err := a.checkPresenceBatch(ctx, tms, net, qe, ids)
 		if err != nil {
 			return err
 		}
 		findings = append(findings, res...)
-		batch = batch[:0]
 
 		return nil
-	}
+	})
 
 	err = a.walkTransactions(ctx, tms.ID(), params, func(transactionRecord *driver.TransactionRecord) error {
 		expected, finding, err := a.expectedTokens(ctx, tms, transactionRecord.TxID)
@@ -929,11 +979,8 @@ func (a *DefaultCheckers) CheckLocalCompleteness(ctx context.Context) ([]Finding
 			return nil
 		}
 		for _, id := range expected {
-			batch = append(batch, id)
-			if len(batch) >= a.batchSize {
-				if err := flush(); err != nil {
-					return err
-				}
+			if err := batch.add(id); err != nil {
+				return err
 			}
 		}
 
@@ -942,7 +989,7 @@ func (a *DefaultCheckers) CheckLocalCompleteness(ctx context.Context) ([]Finding
 	if err != nil {
 		return nil, err
 	}
-	if err := flush(); err != nil {
+	if err := batch.flush(); err != nil {
 		return nil, err
 	}
 
