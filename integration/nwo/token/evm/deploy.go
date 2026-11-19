@@ -42,7 +42,7 @@ func contractsDirFromSource() string {
 // network stands a TMS up exactly the way an operator would rather than through a parallel path that
 // could drift from it.
 //
-// It satisfies the driver-owned Backend, which is the seam the Besu and fabricx+EVM backends share.
+// It satisfies the driver-owned Backend, which is the seam the Besu and Chaguar+EVM backends share.
 type ForgeBackend struct {
 	// Endpoint is the node's JSON-RPC URL.
 	Endpoint string

@@ -13,7 +13,7 @@ import (
 )
 
 // TopologyName is the platform name an EVM-backed topology registers under. Suites select this
-// backend by name, the way they select fabric or fabricx today.
+// backend by name, the way they select fabric or Chaguar today.
 const TopologyName = "evm"
 
 // Defaults for a test network. They are tuned for a locally mined chain rather than a public one:
