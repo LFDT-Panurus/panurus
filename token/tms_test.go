@@ -12,6 +12,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/driver/mock"
 	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/sigobserve"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/assert"
@@ -71,6 +72,53 @@ func TestNewManagementService(t *testing.T) {
 	assert.NotNil(t, ms)
 	assert.Equal(t, tmsID, ms.id)
 	assert.Equal(t, mockTMS, ms.tms)
+}
+
+// instrumentedTMS is a driver.TokenManagerService (via the embedded mock) that also implements the
+// signatureInstrumented capability, so signatureServiceOptions takes its probe branch. The embedded
+// mock supplies every other method; only the signature capability and the identity provider the
+// resolver reads from are overridden here.
+type instrumentedTMS struct {
+	*mock.TokenManagerService
+	gate     SignatureGate
+	provider driver.IdentityProvider
+}
+
+func (t *instrumentedTMS) SignatureObserver() sigobserve.Observer { return sigobserve.Nop }
+
+//nolint:ireturn // mirrors the signatureInstrumented probe: the gate (or nil) is the return type by design
+func (t *instrumentedTMS) SignatureGate() SignatureGate { return t.gate }
+
+func (t *instrumentedTMS) IdentityProvider() driver.IdentityProvider { return t.provider }
+
+// TestSignatureServiceOptionsInstallsPrincipalKeyResolver pins finding 2 at the wiring level: when a
+// driver installs a gate, signatureServiceOptions must also install the principal-key resolver, so
+// the gate meters the resolved enrollment id rather than the raw pseudonym hash.
+func TestSignatureServiceOptionsInstallsPrincipalKeyResolver(t *testing.T) {
+	provider := &mock.IdentityProvider{}
+	provider.GetAuditInfoReturns([]byte("audit-info"), nil)
+	provider.GetEIDAndRHReturns("alice", "rh", nil)
+	gate := &denyingGate{}
+	tms := &instrumentedTMS{TokenManagerService: &mock.TokenManagerService{}, gate: gate, provider: provider}
+
+	opts := signatureServiceOptions(tms)
+	require.Len(t, opts, 3, "observer, gate and principal-key resolver must all be installed")
+
+	s := NewSignatureService(&mock.Deserializer{}, provider, opts...)
+	require.NotNil(t, s.principalKey, "the resolver must be wired so pseudonym rotation cannot bypass the gate")
+
+	_, err := s.OwnerVerifier(t.Context(), Identity("a_pseudonym"))
+	require.ErrorIs(t, err, SignatureThrottled)
+	assert.Equal(t, "eid:alice", gate.last, "the gate must meter the resolved enrollment id end to end")
+}
+
+// TestSignatureServiceOptionsWithoutGateInstallsNothing pins that an instrumented driver with no
+// active policy (nil gate) installs no options, so the resolver's audit-info lookups are never paid
+// for by a service that does not gate.
+func TestSignatureServiceOptionsWithoutGateInstallsNothing(t *testing.T) {
+	tms := &instrumentedTMS{TokenManagerService: &mock.TokenManagerService{}, gate: nil, provider: &mock.IdentityProvider{}}
+
+	assert.Nil(t, signatureServiceOptions(tms), "without a gate there is nothing to install")
 }
 
 // TestManagementService_String verifies String representation

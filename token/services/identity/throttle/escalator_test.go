@@ -1105,3 +1105,138 @@ func TestEscalatorDetachedPrincipalDoesNotLeakGauge(t *testing.T) {
 	e.mu.Unlock()
 	assert.Equal(t, 1, n, "the principals map must not grow past MaxPrincipals")
 }
+
+// ids returns the principal ids in the list from most- to least-recently-seen.
+func (l *lruList) ids() []string {
+	var out []string
+	for p := l.head.next; p != l.tail; p = p.next {
+		out = append(out, p.id)
+	}
+
+	return out
+}
+
+// assertEscalatorLRUConsistent pins the list/map invariant: every tracked LevelNormal principal is
+// in lruNormal, every LevelSoft one in lruSoft, every LevelBlocked one in neither, each linked once
+// and ordered most-recently-seen first. Callers must not hold e.mu.
+func assertEscalatorLRUConsistent(t *testing.T, e *Escalator) {
+	t.Helper()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	seen := map[string]bool{}
+	for _, l := range []*lruList{e.lruNormal, e.lruSoft} {
+		var prev time.Time
+		first := true
+		for p := l.head.next; p != l.tail; p = p.next {
+			require.Contains(t, e.principals, p.id, "a listed principal must be in the map")
+			require.False(t, seen[p.id], "a principal must appear in a list at most once")
+			seen[p.id] = true
+			want := LevelNormal
+			if l == e.lruSoft {
+				want = LevelSoft
+			}
+			require.Equal(t, want, p.level, "a principal must be in the list matching its level")
+			if !first {
+				require.False(t, prev.Before(p.lastSeen), "the list must be ordered most-recently-seen first")
+			}
+			prev, first = p.lastSeen, false
+		}
+	}
+	for id, p := range e.principals {
+		switch p.level {
+		case LevelBlocked:
+			require.False(t, seen[id], "a blocked principal must be in no list")
+		default:
+			require.True(t, seen[id], "every normal or soft principal must be tracked in a list")
+		}
+	}
+}
+
+// TestEscalatorEvictionFollowsAccessRecency pins that evictToMakeRoom honours lastSeen as kept by
+// the LRU list: re-seeing an older principal spares it, and the one that has gone untouched is
+// evicted — not simply the first-created.
+func TestEscalatorEvictionFollowsAccessRecency(t *testing.T) {
+	cfg := enforcing()
+	cfg.MaxPrincipals = 2
+	clock := newTestClock()
+	e := newTestEscalator(t, cfg, clock)
+	ctx := t.Context()
+
+	require.NoError(t, e.Allow(ctx, "p1", sigobserve.OpSign)) // t0
+	clock.advance(time.Second)
+	require.NoError(t, e.Allow(ctx, "p2", sigobserve.OpSign)) // t1
+	clock.advance(time.Second)
+	require.NoError(t, e.Allow(ctx, "p1", sigobserve.OpSign)) // t2: p1 re-seen, p2 now the LRU
+	clock.advance(time.Second)
+
+	require.NoError(t, e.Allow(ctx, "p3", sigobserve.OpSign)) // at cap: evicts p2, keeps p1
+
+	e.mu.Lock()
+	_, p1kept := e.principals["p1"]
+	_, p2kept := e.principals["p2"]
+	_, p3kept := e.principals["p3"]
+	e.mu.Unlock()
+	assert.True(t, p1kept, "a recently re-seen principal must not be evicted")
+	assert.False(t, p2kept, "the least-recently-seen principal must be evicted")
+	assert.True(t, p3kept, "the new arrival must be inserted")
+	assertEscalatorLRUConsistent(t, e)
+}
+
+// TestEscalatorLRUMembershipFollowsLevel pins that a principal moves between the two lists as its
+// level changes and leaves both while blocked, so eviction never picks a blocked principal.
+func TestEscalatorLRUMembershipFollowsLevel(t *testing.T) {
+	cfg := enforcing()
+	clock := newTestClock()
+	e := newTestEscalator(t, cfg, clock)
+
+	// A plain operation leaves "n" at normal, so it sits in lruNormal.
+	require.NoError(t, e.Allow(t.Context(), "n", sigobserve.OpSign))
+	assert.Equal(t, []string{"n"}, e.lruNormal.ids())
+	assert.Empty(t, e.lruSoft.ids())
+
+	// Driving "s" to soft moves it into lruSoft, out of lruNormal.
+	observeInvalid(t, e, "s", cfg.MinSamples)
+	require.Equal(t, LevelSoft, e.Level("s"))
+	assert.Equal(t, []string{"n"}, e.lruNormal.ids())
+	assert.Equal(t, []string{"s"}, e.lruSoft.ids())
+	assertEscalatorLRUConsistent(t, e)
+
+	// Driving "s" on to blocked removes it from every list: a block must never be evicted.
+	clock.advance(cfg.SoftDuration + time.Second)
+	observeInvalid(t, e, "s", cfg.MinSamples)
+	require.Equal(t, LevelBlocked, e.Level("s"))
+	assert.Equal(t, []string{"n"}, e.lruNormal.ids())
+	assert.Empty(t, e.lruSoft.ids(), "a blocked principal must be in no list")
+	assertEscalatorLRUConsistent(t, e)
+
+	// When the block expires it is released to soft, rejoining lruSoft.
+	clock.advance(cfg.BlockDuration + time.Second)
+	observeInvalid(t, e, "s", 1) // an observation drives maintainLevel, releasing the expired block
+	require.Equal(t, LevelSoft, e.Level("s"))
+	assert.Equal(t, []string{"s"}, e.lruSoft.ids())
+	assertEscalatorLRUConsistent(t, e)
+}
+
+// BenchmarkSaturatedEviction documents the hot-path win: with the map full of normal principals,
+// every fresh principal pays only an O(1) list-tail eviction, not a full-map scan. It is a
+// benchmark, not an assertion — constant time is not safely assertable in a unit test.
+func BenchmarkSaturatedEviction(b *testing.B) {
+	cfg := enforcing()
+	cfg.MaxPrincipals = 10_000
+	require.NoError(b, cfg.Defaults())
+	clock := newTestClock()
+	e := New(cfg, func(e *Escalator) { e.now = clock.Now })
+	b.Cleanup(e.Stop)
+
+	ctx := b.Context()
+	for i := range 10_000 { // fill to the cap with normal principals
+		_ = e.Allow(ctx, strconv.Itoa(i), sigobserve.OpSign)
+	}
+
+	b.ResetTimer()
+	for i := range b.N {
+		// Each key is unseen, so every Allow evicts the LRU-normal tail to make room.
+		_ = e.Allow(ctx, "fresh-"+strconv.Itoa(i), sigobserve.OpSign)
+	}
+}
