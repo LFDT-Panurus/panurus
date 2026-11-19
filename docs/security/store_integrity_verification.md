@@ -52,7 +52,22 @@ evaluate would cost write throughput and catch nothing.
 1. **Callers of `endorserdb.AppendValidationRecord` MUST validate the token request first**, and
    MUST take `pp_hash` from their own TMS rather than from the peer that sent the request. The store
    checks that the payload is a deserializable request with at least one action; it cannot check
-   that the actions are legal.
+   that the actions are legal. As a hardening measure the FSC approval responder also calls
+   `endorserdb.AlreadyProcessed(anchor)` *before* validating, and rejects a request whose anchor
+   already has an approved validation record with `ErrAlreadyProcessed` — so a replayed anchor is
+   refused cheaply and explicitly rather than paying for a full re-validation first. That early check
+   is an optimisation, not the guarantee: the responder writes the validation record *before*
+   releasing the endorsement signature to the client, so "endorsement released ⇒ record durable"
+   holds, and the approving insert is the atomic single-approval backstop — it is a conditional upsert
+   on the `tx_id` primary key that overwrites only a prior *rejected* row (`ON CONFLICT (tx_id) DO
+   UPDATE ... WHERE rejected = true`), so a concurrent duplicate that slips past `AlreadyProcessed`
+   affects no rows and is reported as `integrity.ErrAlreadyApproved`, before a second endorsement is
+   produced. If endorsement then fails, the responder deletes the record
+   (`endorserdb.DeleteValidationRecord`) so the request stays retryable rather than being permanently
+   marked as processed. A request whose validation *fails* is instead recorded as a rejected row via
+   `endorserdb.RecordValidationFailure`, together with the `pp_hash` it was evaluated against (which
+   may be empty if validation failed before that hash was resolved); a rejected row carries no status
+   and never gates re-evaluation.
 2. **Callers of `AddTransactionEndorsementAck` MUST verify the signature** against the payload they
    sent to that endorser, before storing. The store checks only that an endorser and a signature are
    present.

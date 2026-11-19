@@ -24,6 +24,10 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
 )
 
+// DefaultMaxValidationFailureRecords caps retained rejected rows, which are keyed by
+// client-supplied anchors and would otherwise grow without bound.
+const DefaultMaxValidationFailureRecords = 10000
+
 // EndorserStore manages validation records for token transaction endorsements
 type EndorserStore struct {
 	readDB      *sql.DB
@@ -33,6 +37,8 @@ type EndorserStore struct {
 	tableParams []string
 	ci          common3.CondInterpreter
 	pi          common3.PagInterpreter
+	// maxFailureRecords caps retained rejected rows; approved rows are never pruned.
+	maxFailureRecords int
 }
 
 // NewEndorserStore creates a new EndorserStore
@@ -51,7 +57,17 @@ func NewEndorserStore(
 		tableParams: tables.Params,
 		ci:          ci,
 		pi:          pi,
+
+		maxFailureRecords: DefaultMaxValidationFailureRecords,
 	}, nil
+}
+
+// SetMaxValidationFailureRecords sets the rejected-row retention cap. Values below 1 are ignored.
+func (db *EndorserStore) SetMaxValidationFailureRecords(n int) {
+	if n < 1 {
+		return
+	}
+	db.maxFailureRecords = n
 }
 
 // Close closes the database connections
@@ -59,7 +75,15 @@ func (db *EndorserStore) Close() error {
 	return nil // Connections are managed externally
 }
 
-// GetSchema returns the SQL schema for creating the endorser store tables
+// GetSchema returns the SQL schema for creating the endorser store table.
+//
+// A single validations table holds one row per transaction, keyed by tx_id. The rejected
+// column discriminates approved requests (rejected = false) from requests whose validation
+// failed (rejected = true). Approved rows are the single-approval / already-processed guard:
+// GetStatus only reads rows with rejected = false, so a rejected row never makes a request
+// look processed. Rejected rows additionally carry a free-text reason and the public
+// parameters hash the request was evaluated against, so a rejection can be replayed; that
+// pp_hash may be empty when validation failed before the endorser resolved it.
 func (db *EndorserStore) GetSchema() string {
 	return fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
@@ -67,12 +91,15 @@ func (db *EndorserStore) GetSchema() string {
 			request BYTEA NOT NULL,
 			metadata BYTEA NOT NULL,
 			pp_hash BYTEA NOT NULL,
+			rejected BOOL NOT NULL DEFAULT false,
+			reason TEXT NOT NULL DEFAULT '',
 			status INT NOT NULL,
 			status_message TEXT NOT NULL,
 			stored_at TIMESTAMP NOT NULL
 		);
 		CREATE INDEX IF NOT EXISTS idx_status_storedat_%s ON %s ( status, stored_at );
-	`, db.table, db.table, db.table)
+		CREATE INDEX IF NOT EXISTS idx_rejected_storedat_%s ON %s ( rejected, stored_at );
+	`, db.table, db.table, db.table, db.table, db.table)
 }
 
 // CreateSchema creates the database schema for the endorser store
@@ -133,10 +160,14 @@ func (db *EndorserStore) QueryValidations(ctx context.Context, params dbdriver.Q
 func (db *EndorserStore) GetStatus(ctx context.Context, txID string) (dbdriver.TxStatus, string, error) {
 	var status dbdriver.TxStatus
 	var statusMessage string
+	// Only approved rows (rejected = false) count as a status: a rejected row is an audit
+	// record of a failed request, not an approval, so it must read back as Unknown exactly as
+	// a missing row does. This is what keeps a recorded failure from gating re-evaluation via
+	// AlreadyProcessed.
 	query, args := q.Select().
 		FieldsByName("status", "status_message").
 		From(q.Table(db.table)).
-		Where(cond.Eq("tx_id", txID)).
+		Where(cond.And(cond.Eq("tx_id", txID), cond.Eq("rejected", false))).
 		Format(db.ci)
 	logging.Debug(logger, query, txID)
 
@@ -152,6 +183,117 @@ func (db *EndorserStore) GetStatus(ctx context.Context, txID string) (dbdriver.T
 	}
 
 	return status, statusMessage, nil
+}
+
+// RecordValidationFailure records, for auditing purposes, that validation of the request filed
+// under txID failed, storing the request bytes, the public parameters hash it was evaluated
+// against, and a free-text reason, so the rejection can be replayed as it happened.
+//
+// It writes into the shared validations table with rejected = true. Unlike AddValidationRecord
+// it applies no token-request well-formedness checks (the request may have failed because it
+// was malformed) and accepts an empty ppHash (validation can fail before the endorser resolves
+// its own public parameters hash). It never produces an approved row, so it never affects the
+// already-processed guard.
+//
+// The insert is a conditional upsert keyed by tx_id: a fresh anchor inserts, a prior rejection
+// is overwritten (latest-wins), but an existing approved row is left untouched by the
+// ON CONFLICT ... WHERE rejected = true predicate. It is therefore impossible for a recorded
+// failure to clobber an approval.
+func (db *EndorserStore) RecordValidationFailure(ctx context.Context, txID string, tokenRequest []byte, ppHash driver2.PPHash, reason string) error {
+	logger.DebugfContext(ctx, "recording validation failure [%s]", txID)
+
+	if txID == "" {
+		return errors.WithMessage(integrity.ErrEmptyTxID, "refusing to record validation failure")
+	}
+	if len(tokenRequest) == 0 {
+		return errors.Wrapf(integrity.ErrEmptyTokenRequest, "refusing to record validation failure for [%s]", txID)
+	}
+
+	// The metadata column is NOT NULL; a rejected row carries no validator metadata, so store
+	// the JSON null the approved path also stores for a nil map rather than an empty blob.
+	metaBytes, err := marshal(nil)
+	if err != nil {
+		return errors.Wrapf(err, "failed to marshal metadata for tx [%s]", txID)
+	}
+
+	// pp_hash is NOT NULL but may be empty for a rejection (validation can fail before the
+	// endorser resolves its own hash). A nil []byte would be stored as SQL NULL, so coerce it
+	// to a zero-length blob: still "empty", but satisfying the NOT NULL column.
+	if ppHash == nil {
+		ppHash = driver2.PPHash{}
+	}
+
+	now := time.Now().UTC()
+	query, args := q.InsertInto(db.table).
+		Fields("tx_id", "request", "metadata", "pp_hash", "rejected", "reason", "status", "status_message", "stored_at").
+		Row(txID, tokenRequest, metaBytes, ppHash, true, reason, dbdriver.Unknown, "", now).
+		OnConflict(
+			[]common3.FieldName{"tx_id"},
+			q.OverwriteValue("request"),
+			q.OverwriteValue("pp_hash"),
+			q.OverwriteValue("reason"),
+			q.OverwriteValue("stored_at"),
+		).
+		Where(cond.Eq(common3.FieldName(db.table+".rejected"), true)).
+		Format()
+
+	logging.Debug(logger, query, args)
+	if _, err := db.writeDB.ExecContext(ctx, query, args...); err != nil {
+		return errors.Wrapf(err, "failed to insert validation failure record for tx [%s]", txID)
+	}
+
+	if err := db.pruneValidationFailures(ctx); err != nil {
+		return errors.WithMessagef(err, "failed to enforce validation failure retention after recording tx [%s]", txID)
+	}
+
+	return nil
+}
+
+// pruneValidationFailures keeps the maxFailureRecords most recent rejected rows and deletes
+// the rest. Approved rows are never touched.
+func (db *EndorserStore) pruneValidationFailures(ctx context.Context) error {
+	query := fmt.Sprintf(
+		"DELETE FROM %[1]s WHERE rejected = $1 AND tx_id NOT IN "+
+			"(SELECT tx_id FROM %[1]s WHERE rejected = $1 ORDER BY stored_at DESC, tx_id DESC LIMIT $2)",
+		db.table,
+	)
+	args := []any{true, db.maxFailureRecords}
+
+	logging.Debug(logger, query, args)
+	if _, err := db.writeDB.ExecContext(ctx, query, args...); err != nil {
+		return errors.Wrap(err, "failed to prune validation failure records")
+	}
+
+	return nil
+}
+
+// QueryValidationFailures returns an iterator over validation failure records matching params.
+func (db *EndorserStore) QueryValidationFailures(ctx context.Context, params dbdriver.QueryValidationFailureRecordsParams) (dbdriver.ValidationFailureRecordsIterator, error) {
+	validationsTable := q.Table(db.table)
+	query, args := q.Select().
+		Fields(
+			validationsTable.Field("tx_id"), validationsTable.Field("request"),
+			validationsTable.Field("pp_hash"), validationsTable.Field("reason"),
+			validationsTable.Field("stored_at"),
+		).
+		From(validationsTable).
+		Where(HasValidationFailureParams(params, db.table)).
+		Format(db.ci)
+
+	logging.Debug(logger, query, args)
+	rows, err := db.readDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	it := common.NewIterator(rows, func(r *dbdriver.ValidationFailureRecord) error {
+		return rows.Scan(&r.TxID, &r.TokenRequest, &r.PPHash, &r.Reason, &r.Timestamp)
+	})
+	if params.Filter == nil {
+		return it, nil
+	}
+
+	return iterators.Filter(it, params.Filter), nil
 }
 
 // EndorserStoreTransaction represents a database transaction for endorser operations
@@ -181,13 +323,20 @@ func (w *EndorserStoreTransaction) Rollback() {
 	}
 }
 
-// AddValidationRecord adds a validation record to the database.
+// AddValidationRecord adds an approved (rejected = false) validation record to the database.
 //
 // Verification: as for TransactionStoreTransaction.AddTokenRequest, this layer
 // does not interpret tokenRequest — the wire-format check lives in the
 // endorserdb service. What is refused here is a row no later check could act
 // on: an empty transaction id, empty request bytes, or an empty public
 // parameters hash.
+//
+// The insert is a conditional upsert keyed by tx_id. It overwrites a prior rejected row
+// (so a request that was recorded as failed and is later re-submitted and approved becomes
+// the approved record), but the ON CONFLICT ... WHERE rejected = true predicate refuses to
+// touch an existing approved row. A duplicate approval therefore affects no rows, which is
+// reported as an error: this is the atomic single-approval backstop that prevents a second
+// endorsement being produced for an anchor this endorser already approved.
 func (w *EndorserStoreTransaction) AddValidationRecord(ctx context.Context, txID string, tokenRequest []byte, meta map[string][]byte, ppHash driver2.PPHash) error {
 	logger.DebugfContext(ctx, "adding validation record [%s]", txID)
 
@@ -201,26 +350,71 @@ func (w *EndorserStoreTransaction) AddValidationRecord(ctx context.Context, txID
 	}
 
 	query, args := q.InsertInto(w.table).
-		Fields("tx_id", "request", "metadata", "pp_hash", "status", "status_message", "stored_at").
-		Row(txID, tokenRequest, metaBytes, ppHash, dbdriver.Pending, "", time.Now().UTC()).
+		Fields("tx_id", "request", "metadata", "pp_hash", "rejected", "reason", "status", "status_message", "stored_at").
+		Row(txID, tokenRequest, metaBytes, ppHash, false, "", dbdriver.Pending, "", time.Now().UTC()).
+		OnConflict(
+			[]common3.FieldName{"tx_id"},
+			q.OverwriteValue("request"),
+			q.OverwriteValue("metadata"),
+			q.OverwriteValue("pp_hash"),
+			q.OverwriteValue("rejected"),
+			q.OverwriteValue("reason"),
+			q.OverwriteValue("status"),
+			q.OverwriteValue("status_message"),
+			q.OverwriteValue("stored_at"),
+		).
+		Where(cond.Eq(common3.FieldName(w.table+".rejected"), true)).
 		Format()
 
 	logging.Debug(logger, query, args)
-	if _, err := w.tx.ExecContext(ctx, query, args...); err != nil {
+	res, err := w.tx.ExecContext(ctx, query, args...)
+	if err != nil {
 		return errors.Wrapf(err, "failed to insert validation record for tx [%s]", txID)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		// The statement ran, but the driver cannot report the row count. Fail closed: an
+		// approval whose single-approval guarantee cannot be confirmed must not be treated
+		// as recorded, or a second endorsement could still be produced.
+		return errors.Wrapf(err, "failed to confirm validation record was stored for tx [%s]", txID)
+	}
+	if affected == 0 {
+		// No row was inserted or updated: an approved row for this anchor already exists and
+		// the WHERE rejected = true guard refused to overwrite it. The request was already
+		// approved, so this is a duplicate approval and must be rejected.
+		return errors.Wrapf(integrity.ErrAlreadyApproved, "refusing to re-approve already-approved tx [%s]", txID)
 	}
 
 	return nil
 }
 
-// SetStatus sets the status of a validation record
+// DeleteValidationRecord removes the validation record for txID. Deleting a txID that has
+// no record is not an error: the DELETE simply affects no rows.
+func (w *EndorserStoreTransaction) DeleteValidationRecord(ctx context.Context, txID string) error {
+	logger.DebugfContext(ctx, "deleting validation record [%s]", txID)
+
+	query, args := q.DeleteFrom(w.table).
+		Where(cond.Eq("tx_id", txID)).
+		Format(w.ci)
+
+	logging.Debug(logger, query, args)
+	if _, err := w.tx.ExecContext(ctx, query, args...); err != nil {
+		return errors.Wrapf(err, "failed to delete validation record for tx [%s]", txID)
+	}
+
+	return nil
+}
+
+// SetStatus sets the status of an approved validation record. The rejected = false guard
+// keeps it from ever promoting a rejected audit row into something GetStatus would report: a
+// status only belongs to an approval.
 func (w *EndorserStoreTransaction) SetStatus(ctx context.Context, txID string, status dbdriver.TxStatus, message string) error {
 	logger.DebugfContext(ctx, "setting validation record status [%s][%s]", txID, status)
 
 	query, args := q.Update(w.table).
 		Set("status", status).
 		Set("status_message", message).
-		Where(cond.Eq("tx_id", txID)).
+		Where(cond.And(cond.Eq("tx_id", txID), cond.Eq("rejected", false))).
 		Format(w.ci)
 
 	logging.Debug(logger, query, args)
