@@ -45,8 +45,8 @@ include $(TOP)/checks.mk
 GO_MODULES := . integration token/services/storage/db/kvs/hashicorp cmd/artifactgen cmd/tokengen cmd/token_validation_service cmd/skicleanup cmd/tokendiag cmd/node x/token/services/network/evm
 TIDY_GO_MODULES := $(GO_MODULES) tools
 
-# include fabricx target
-include $(TOP)/fabricx.mk
+# include chaguar target
+include $(TOP)/chaguar.mk
 # include the interop target
 include $(TOP)/interop.mk
 # include the fungible target
