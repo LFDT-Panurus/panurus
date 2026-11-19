@@ -45,7 +45,7 @@ type ConfigService interface {
 	UnmarshalKey(key string, rawVal any) error
 }
 
-// QueryService models the FabricX query service needed by the NSListenerManager
+// QueryService models the Chaguar query service needed by the NSListenerManager
 //
 //go:generate counterfeiter -o mock/qs.go -fake-name QueryService . QueryService
 type QueryService interface {
@@ -685,7 +685,7 @@ func (o *OnlyOnceListener) OnError(ctx context.Context, txID string, err error) 
 	})
 }
 
-// fabricXFSCStatus maps Fabric-X transaction status codes to FSC validation codes.
+// fabricXFSCStatus maps Chaguar transaction status codes to FSC validation codes.
 func fabricXFSCStatus(c int32) fdriver.ValidationCode {
 	switch committerpb.Status(c) {
 	case committerpb.Status_STATUS_UNSPECIFIED:

@@ -92,7 +92,7 @@ type MSPManager interface {
 
 // EndorserSelector returns the subset of configured endorsers that should be contacted
 // for a given tx, according to the real endorsement policy of the namespace. Implementations
-// are network-specific (Fabric discovery / FabricX query service). It returns an error if the
+// are network-specific (Fabric discovery / Chaguar query service). It returns an error if the
 // policy cannot be satisfied by the configured endorsers.
 //
 //go:generate counterfeiter -o mock/endorser_selector.go -fake-name EndorserSelector . EndorserSelector

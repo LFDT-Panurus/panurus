@@ -13,7 +13,7 @@ SPDX-License-Identifier: Apache-2.0
 // this package depends only on evm-module types and never on the panurus integration module (the
 // dependency runs the other way, integration requires this module).
 //
-// The layering mirrors fabricx: the backend's own repo (FSC for fabricx, this module for evm) ships
+// The layering mirrors Chaguar: the backend's own repo (FSC for Chaguar, this module for evm) ships
 // the platform, and a consumer's NWO framework adds a thin adapter over it. The panurus adapter
 // (integration/nwo/token/evm) implements the token-layer Backend by delegating to the Backend defined
 // here.

@@ -27,7 +27,7 @@ type QueryStatesExecutor interface {
 	QueryState(ctx context.Context, namespace qe.Namespace, key string) (qe.Data, error)
 }
 
-// ledger models the FabricX ledger.
+// ledger models the Chaguar ledger.
 type ledger struct {
 	l             *fabric.Ledger
 	ch            *fabric.Channel

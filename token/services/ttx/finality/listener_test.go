@@ -458,7 +458,7 @@ func TestOnStatus_DoesNotRetryUnrecognizedStatus(t *testing.T) {
 
 // TestOnStatus_DoesNotReleaseLocksOnNonTerminalStatus pins the counterpart to
 // TestOnStatus_ReleasesLocksOnUnrecognizedStatus: network.Busy and network.Unknown are
-// legitimate transient, *non*-terminal states — fabricx's ListenerEvent.process
+// legitimate transient, *non*-terminal states — Chaguar's ListenerEvent.process
 // (token/services/network/fabricx/finality/finality.go) forwards exactly these to
 // OnStatus while a transaction is still pending — so releasing their selection locks
 // would hand the same tokens to a concurrent Select while the first transaction is

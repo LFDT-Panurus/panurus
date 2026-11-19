@@ -42,7 +42,7 @@ type ServiceProvider struct {
 	lazy.Provider[token2.TMSID, endorsement.Service]
 }
 
-// NewServiceProvider returns a new ServiceProvider instance for FabricX endorsement.
+// NewServiceProvider returns a new ServiceProvider instance for Chaguar endorsement.
 // It uses a lazy provider to load endorsement services for different TMS IDs
 // based on their configuration and requirements.
 func NewServiceProvider(
@@ -144,7 +144,7 @@ func key(tmsID token2.TMSID) string {
 // NamespaceTxProcessor models a namespace transaction processor for fabric X
 type NamespaceTxProcessor struct{}
 
-// EnableTxProcessing is a no-op implementation because for FabricX
+// EnableTxProcessing is a no-op implementation because for Chaguar
 // the endorser service is stateless and does not require pre-processing.
 func (n *NamespaceTxProcessor) EnableTxProcessing(tmsID token2.TMSID) error {
 	return nil
