@@ -32,7 +32,7 @@ func (m *mockPPM[T]) PublicParams() T {
 }
 
 func TestServiceWithCounterfeiter(t *testing.T) {
-	logger := &logging.MockLogger{}
+	logger := logging.MustGetLogger()
 	ppm := &mockPPM[driver.PublicParameters]{}
 	ip := &dmock.IdentityProvider{}
 	des := &dmock.Deserializer{}

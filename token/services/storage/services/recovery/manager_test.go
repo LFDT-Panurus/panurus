@@ -25,11 +25,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// recordingLogger wraps the package's no-op MockLogger and records Errorf
-// calls, so the escalation tests can assert on when the alert fires without
-// depending on the real zap-backed logger's output.
+// recordingLogger wraps a real logger and records Errorf calls, so the
+// escalation tests can assert on when the alert fires without depending on
+// the zap-backed logger's output.
 type recordingLogger struct {
-	logging.MockLogger
+	logging.Logger
 	mu       sync.Mutex
 	messages []string
 }
@@ -851,7 +851,7 @@ func TestManager_SkipsReclaimedTransactionStillInFlight(t *testing.T) {
 // recordingLogger above, which only captures Errorf and is relied on by the
 // escalation tests to contain nothing but those calls.
 type sweepLogger struct {
-	logging.MockLogger
+	logging.Logger
 	mu       sync.Mutex
 	messages []string
 }
@@ -886,7 +886,7 @@ func (l *sweepLogger) allMessages() []string {
 // sweep claiming both must report the real breakdown, not claim the sweep
 // made no progress at all.
 func TestManager_SweepSummary_MixedSkipAndSuccessIsNotReportedAsFullyWedged(t *testing.T) {
-	logger := &sweepLogger{}
+	logger := &sweepLogger{Logger: logging.MustGetLogger()}
 	mockDB := &mock2.Storage{}
 	mockHandler := &mock2.Handler{}
 	config := recovery2.Config{
@@ -957,7 +957,7 @@ func TestManager_SweepSummary_MixedSkipAndSuccessIsNotReportedAsFullyWedged(t *t
 // rather than firing on every sweep (round-2 finding: an unthrottled Error
 // log would fire every scanInterval indefinitely, flooding alerting).
 func TestManager_StuckTransactionAlertThreshold_EscalatesAndBacksOff(t *testing.T) {
-	logger := &recordingLogger{}
+	logger := &recordingLogger{Logger: logging.MustGetLogger()}
 	mockDB := &mock2.Storage{}
 	mockHandler := &mock2.Handler{}
 	config := recovery2.Config{
@@ -1012,7 +1012,7 @@ func TestManager_StuckTransactionAlertThreshold_EscalatesAndBacksOff(t *testing.
 // TestManager_StuckTransactionAlertThreshold_ZeroDisablesEscalation verifies
 // the documented opt-out.
 func TestManager_StuckTransactionAlertThreshold_ZeroDisablesEscalation(t *testing.T) {
-	logger := &recordingLogger{}
+	logger := &recordingLogger{Logger: logging.MustGetLogger()}
 	mockDB := &mock2.Storage{}
 	mockHandler := &mock2.Handler{}
 	config := recovery2.Config{
@@ -1058,7 +1058,7 @@ func TestManager_StuckTransactionAlertThreshold_ZeroDisablesEscalation(t *testin
 // exact message logged and confirm the stuck-transaction escalation (set to
 // fire on the very first recordTimeout call here) never fires.
 type shutdownLogger struct {
-	logging.MockLogger
+	logging.Logger
 	mu       sync.Mutex
 	messages []string
 }
@@ -1092,7 +1092,7 @@ func (l *shutdownLogger) allMessages() []string {
 // test needs, and StuckTransactionAlertThreshold to 1, so any recordTimeout
 // call at all is enough to prove the bug is present.
 func TestManager_ShutdownDuringRecoveryIsNotCountedAsTimeout(t *testing.T) {
-	logger := &shutdownLogger{}
+	logger := &shutdownLogger{Logger: logging.MustGetLogger()}
 	mockDB := &mock2.Storage{}
 	mockHandler := &mock2.Handler{}
 	config := recovery2.Config{
@@ -1165,7 +1165,7 @@ func TestManager_ShutdownDuringRecoveryIsNotCountedAsTimeout(t *testing.T) {
 // exceeded LeaseDuration, so every untouched deployment logged a Warn on
 // every single Start().
 func TestManager_DefaultConfigDoesNotSelfTriggerLeaseWarnings(t *testing.T) {
-	logger := &sweepLogger{}
+	logger := &sweepLogger{Logger: logging.MustGetLogger()}
 	mockDB := &mock2.Storage{}
 	mockHandler := &mock2.Handler{}
 
