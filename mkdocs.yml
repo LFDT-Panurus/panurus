@@ -155,4 +155,7 @@ nav:
       - AI Agents: development/ai_agents.md
       - Update FSC Dependency: development/update-fsc.md
       - Documentation: development/documentation.md
+  - Proposals:
+      - Overview: proposals/README.md
+      - Release Process: proposals/release-process.md
   - Evolution: evolution_summary.md
