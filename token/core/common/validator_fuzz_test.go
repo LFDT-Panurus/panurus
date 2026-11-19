@@ -47,7 +47,7 @@ func FuzzVerifyTokenRequestFromRawNoPanic(f *testing.F) {
 			return issues, transfers, nil
 		})
 		validator := NewValidator[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer](
-			&logging.MockLogger{}, nil, nil, limits, actionDeserializer, nil, nil, nil,
+			logging.MustGetLogger(), nil, nil, limits, actionDeserializer, nil, nil, nil,
 		)
 
 		require.NotPanics(t, func() {
@@ -74,7 +74,7 @@ func FuzzStructuredTokenRequestSignatureEnvelope(f *testing.F) {
 		actionDeserializer := &dmock.ActionDeserializer[driver.TransferAction, driver.IssueAction]{}
 		actionDeserializer.DeserializeActionsReturns(nil, []driver.TransferAction{&dmock.TransferAction{}}, nil)
 		validator := NewValidator[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer](
-			&logging.MockLogger{}, nil, nil, limits, actionDeserializer,
+			logging.MustGetLogger(), nil, nil, limits, actionDeserializer,
 			[]ValidateTransferFunc[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer]{
 				func(c context.Context, ctx *Context[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer]) error {
 					_, err := ctx.SignatureProvider.HasBeenSignedBy(c, nil, &dmock.Verifier{})
@@ -155,7 +155,7 @@ func FuzzRequestResourceLimits(f *testing.F) {
 			return nil, transfers, nil
 		})
 		validator := NewValidator[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer](
-			&logging.MockLogger{}, nil, nil, limits, actionDeserializer, nil, nil, nil,
+			logging.MustGetLogger(), nil, nil, limits, actionDeserializer, nil, nil, nil,
 		)
 
 		var validationErr error

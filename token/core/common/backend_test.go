@@ -20,7 +20,7 @@ import (
 )
 
 func TestBackend(t *testing.T) {
-	logger := &logging.MockLogger{}
+	logger := logging.MustGetLogger()
 	message := []byte("test-message")
 	sigs := [][]byte{[]byte("sig1"), []byte("sig2")}
 
@@ -94,7 +94,7 @@ func TestBackend(t *testing.T) {
 }
 
 func TestBackendSignatureConsumption(t *testing.T) {
-	backend := NewBackend(&logging.MockLogger{}, nil, []byte("message"), [][]byte{[]byte("signature")})
+	backend := NewBackend(logging.MustGetLogger(), nil, []byte("message"), [][]byte{[]byte("signature")})
 	require.ErrorIs(t, backend.EnsureExhausted(), ErrUnconsumedSignatures)
 
 	_, err := backend.HasBeenSignedBy(t.Context(), nil, nil)

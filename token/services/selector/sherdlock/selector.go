@@ -29,10 +29,6 @@ const NoBackoff = -1
 
 var logger = logging.MustGetLogger()
 
-func Logger() logging.Logger {
-	return logger
-}
-
 type Selector struct {
 	logger    logging.Logger
 	cache     Iterator[*token2.UnspentTokenInWallet]

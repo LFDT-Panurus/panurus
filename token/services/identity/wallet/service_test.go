@@ -26,7 +26,7 @@ func TestNewServiceFields(t *testing.T) {
 	ip := &dmock.IdentityProvider{}
 	d := &dmock.Deserializer{}
 	r := wallet.RoleRegistries{}
-	logger := &logging.MockLogger{}
+	logger := logging.MustGetLogger()
 	s := wallet.NewService(logger, ip, d, r)
 	require.NotNil(t, s)
 	require.Equal(t, ip, s.IdentityProvider)
@@ -43,14 +43,14 @@ func TestRegisterIdentityDelegation(t *testing.T) {
 
 		return nil
 	})
-	s := wallet.NewService(&logging.MockLogger{}, &dmock.IdentityProvider{}, &dmock.Deserializer{}, map[idriver.IdentityRoleType]wallet.RoleRegistry{idriver.OwnerRole: reg, idriver.IssuerRole: reg})
+	s := wallet.NewService(logging.MustGetLogger(), &dmock.IdentityProvider{}, &dmock.Deserializer{}, map[idriver.IdentityRoleType]wallet.RoleRegistry{idriver.OwnerRole: reg, idriver.IssuerRole: reg})
 	require.NoError(t, s.RegisterOwnerIdentity(ctx, driver.IdentityConfiguration{}))
 	require.True(t, called)
 
 	// test error propagation
 	errReg := &wmock.RoleRegistry{}
 	errReg.RegisterIdentityReturns(errors.New("boom"))
-	s2 := wallet.NewService(&logging.MockLogger{}, &dmock.IdentityProvider{}, &dmock.Deserializer{}, map[idriver.IdentityRoleType]wallet.RoleRegistry{idriver.OwnerRole: errReg})
+	s2 := wallet.NewService(logging.MustGetLogger(), &dmock.IdentityProvider{}, &dmock.Deserializer{}, map[idriver.IdentityRoleType]wallet.RoleRegistry{idriver.OwnerRole: errReg})
 	reqErr := s2.RegisterOwnerIdentity(ctx, driver.IdentityConfiguration{})
 	require.Error(t, reqErr)
 }
@@ -63,7 +63,7 @@ func TestGettersForwarding(t *testing.T) {
 	ip.GetRevocationHandlerReturnsOnCall(0, "rh", nil)
 	ip.GetEIDAndRHReturnsOnCall(0, "eid2", "rh2", nil)
 
-	s := wallet.NewService(&logging.MockLogger{}, ip, &dmock.Deserializer{}, nil)
+	s := wallet.NewService(logging.MustGetLogger(), ip, &dmock.Deserializer{}, nil)
 	a, err := s.GetAuditInfo(ctx, driver.Identity("id"))
 	require.NoError(t, err)
 	require.Equal(t, []byte("ai"), a)
@@ -83,7 +83,7 @@ func TestRegisterRecipientIdentityFailuresAndSuccess(t *testing.T) {
 	ctx := t.Context()
 	ip := &dmock.IdentityProvider{}
 	d := &dmock.Deserializer{}
-	regSvc := wallet.NewService(&logging.MockLogger{}, ip, d, nil)
+	regSvc := wallet.NewService(logging.MustGetLogger(), ip, d, nil)
 
 	// A typed identity, long enough to pass validateBasicStructure's length bounds
 	typedID, err := identity.WrapWithType(driver.X509IdentityType, []byte("raw-identity"))
@@ -141,7 +141,7 @@ func TestRegisterRecipientIdentity_MatchIdentityFailureSkipsIdentityProvider(t *
 	ip := &dmock.IdentityProvider{}
 	d := &dmock.Deserializer{}
 	d.MatchIdentityReturns(errors.New("mismatch"))
-	regSvc := wallet.NewService(&logging.MockLogger{}, ip, d, nil)
+	regSvc := wallet.NewService(logging.MustGetLogger(), ip, d, nil)
 
 	err = regSvc.RegisterRecipientIdentity(ctx, &driver.RecipientData{Identity: typedID, AuditInfo: []byte(`{"EID":"alice","RH":"rh"}`)})
 	require.Error(t, err)
@@ -162,7 +162,7 @@ func TestRegisterRecipientIdentity_RollbackWhenRegisterRecipientDataFails(t *tes
 	ip := &ipWithRollback{IdentityProvider: base}
 	d := &dmock.Deserializer{}
 	d.MatchIdentityReturns(nil)
-	regSvc := wallet.NewService(&logging.MockLogger{}, ip, d, nil)
+	regSvc := wallet.NewService(logging.MustGetLogger(), ip, d, nil)
 
 	err = regSvc.RegisterRecipientIdentity(ctx, &driver.RecipientData{Identity: typedID, AuditInfo: []byte(`{"EID":"alice","RH":"rh"}`)})
 	require.Error(t, err)
@@ -176,7 +176,7 @@ func TestWalletAndLookupFunctions(t *testing.T) {
 	auditorReg := &wmock.RoleRegistry{}
 	certifierReg := &wmock.RoleRegistry{}
 	s := wallet.NewService(
-		&logging.MockLogger{},
+		logging.MustGetLogger(),
 		&dmock.IdentityProvider{},
 		&dmock.Deserializer{},
 		map[idriver.IdentityRoleType]wallet.RoleRegistry{
@@ -232,7 +232,7 @@ func TestWalletAccessorsMissingRegistry(t *testing.T) {
 	ctx := t.Context()
 	// Empty RoleRegistries: every accessor and delegator must return an error rather than
 	// panicking on a nil-interface method call.
-	s := wallet.NewService(&logging.MockLogger{}, &dmock.IdentityProvider{}, &dmock.Deserializer{}, wallet.RoleRegistries{})
+	s := wallet.NewService(logging.MustGetLogger(), &dmock.IdentityProvider{}, &dmock.Deserializer{}, wallet.RoleRegistries{})
 
 	_, err := s.OwnerWallet(ctx, driver.WalletLookupID("id"))
 	require.ErrorContains(t, err, "no registry configured for owner role")
@@ -265,7 +265,7 @@ func TestWalletAccessorsWrongWalletType(t *testing.T) {
 	notAnOwner.IDReturns("w-mismatch")
 	ownerReg.WalletByIDReturns(notAnOwner, nil)
 	s := wallet.NewService(
-		&logging.MockLogger{},
+		logging.MustGetLogger(),
 		&dmock.IdentityProvider{},
 		&dmock.Deserializer{},
 		map[idriver.IdentityRoleType]wallet.RoleRegistry{idriver.OwnerRole: ownerReg},
@@ -291,7 +291,7 @@ func TestWalletAccessorsTypedNilWalletCorrectTypeNoPanic(t *testing.T) {
 	var nilOwner *dmock.OwnerWallet // typed-nil that *does* satisfy driver.OwnerWallet
 	ownerReg.WalletByIDReturns(nilOwner, nil)
 	s := wallet.NewService(
-		&logging.MockLogger{},
+		logging.MustGetLogger(),
 		&dmock.IdentityProvider{},
 		&dmock.Deserializer{},
 		map[idriver.IdentityRoleType]wallet.RoleRegistry{idriver.OwnerRole: ownerReg},
@@ -320,7 +320,7 @@ func TestWalletAccessorsTypedNilWalletNoPanic(t *testing.T) {
 	var nilWallet *dmock.IssuerWallet // typed-nil driver.Wallet, not an OwnerWallet
 	ownerReg.WalletByIDReturns(nilWallet, nil)
 	s := wallet.NewService(
-		&logging.MockLogger{},
+		logging.MustGetLogger(),
 		&dmock.IdentityProvider{},
 		&dmock.Deserializer{},
 		map[idriver.IdentityRoleType]wallet.RoleRegistry{idriver.OwnerRole: ownerReg},
@@ -369,14 +369,14 @@ func TestWalletAccessorsRegistryGuard(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run("missing/"+tc.role, func(t *testing.T) {
-			s := wallet.NewService(&logging.MockLogger{}, &dmock.IdentityProvider{}, &dmock.Deserializer{}, wallet.RoleRegistries{})
+			s := wallet.NewService(logging.MustGetLogger(), &dmock.IdentityProvider{}, &dmock.Deserializer{}, wallet.RoleRegistries{})
 			require.NotPanics(t, func() {
 				require.ErrorContains(t, tc.call(ctx, s), "no registry configured for "+tc.role+" role")
 			})
 		})
 		t.Run("typed-nil/"+tc.role, func(t *testing.T) {
 			var nilReg *wmock.RoleRegistry // non-nil interface wrapping a nil pointer
-			s := wallet.NewService(&logging.MockLogger{}, &dmock.IdentityProvider{}, &dmock.Deserializer{},
+			s := wallet.NewService(logging.MustGetLogger(), &dmock.IdentityProvider{}, &dmock.Deserializer{},
 				map[idriver.IdentityRoleType]wallet.RoleRegistry{tc.key: nilReg})
 			require.NotPanics(t, func() {
 				require.ErrorContains(t, tc.call(ctx, s), "no registry configured for "+tc.role+" role")
@@ -391,7 +391,7 @@ func TestDoneSkipsNilRegistry(t *testing.T) {
 	liveReg := &wmock.RoleRegistry{}
 	liveReg.DoneReturns(nil)
 	var nilReg *wmock.RoleRegistry // non-nil interface wrapping a nil pointer
-	s := wallet.NewService(&logging.MockLogger{}, &dmock.IdentityProvider{}, &dmock.Deserializer{},
+	s := wallet.NewService(logging.MustGetLogger(), &dmock.IdentityProvider{}, &dmock.Deserializer{},
 		map[idriver.IdentityRoleType]wallet.RoleRegistry{idriver.OwnerRole: liveReg, idriver.IssuerRole: nilReg})
 
 	require.NotPanics(t, func() {
@@ -401,7 +401,7 @@ func TestDoneSkipsNilRegistry(t *testing.T) {
 }
 
 func TestSpendIDsAndConvert(t *testing.T) {
-	s := wallet.NewService(&logging.MockLogger{}, &dmock.IdentityProvider{}, &dmock.Deserializer{}, nil)
+	s := wallet.NewService(logging.MustGetLogger(), &dmock.IdentityProvider{}, &dmock.Deserializer{}, nil)
 	// SpendIDs empty
 	res, err := s.SpendIDs()
 	require.NoError(t, err)

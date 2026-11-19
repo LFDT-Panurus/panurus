@@ -18,7 +18,7 @@ import (
 
 func newTestValidator(limits driver.ResourceLimits) *Validator[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer] {
 	return NewValidator[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer](
-		&logging.MockLogger{}, nil, nil, limits, &dmock.ActionDeserializer[driver.TransferAction, driver.IssueAction]{}, nil, nil, nil,
+		logging.MustGetLogger(), nil, nil, limits, &dmock.ActionDeserializer[driver.TransferAction, driver.IssueAction]{}, nil, nil, nil,
 	)
 }
 
