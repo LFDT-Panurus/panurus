@@ -29,7 +29,7 @@ const namespacePolicy2of3 = "OutOf(2, 'Org1MSP.member', 'Org2MSP.member', 'Org3M
 
 var namespacePolicyOrgs = []string{"Org1", "Org2", "Org3"}
 
-// endorserNode is the single FSC endorser the FabricX topology deploys.
+// endorserNode is the single FSC endorser the Fabric-X topology deploys.
 const endorserNode = "endorser-1"
 
 const None = 0
