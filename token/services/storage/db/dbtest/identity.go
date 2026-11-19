@@ -65,6 +65,7 @@ var IdentityCases = []struct {
 	{"GetConfigurationID", TGetConfigurationID},
 	{"SignerInfoConcurrent", TSignerInfoConcurrent},
 	{"GetExistingSignerInfo", TGetExistingSignerInfo},
+	{"SignerInfoReadWriteRace", TGetExistingSignerInfoRacesStore},
 	{"RegisterIdentityDescriptor", TRegisterIdentityDescriptor},
 	// Keep the name short: it is used as a SQL table prefix and PostgreSQL truncates
 	// identifiers at 63 characters, which would collide the store's tables.
@@ -323,6 +324,48 @@ func TGetExistingSignerInfo(t *testing.T, db driver.IdentityStore) {
 	existing, err = db.GetExistingSignerInfo(ctx, bob)
 	require.NoError(t, err)
 	assert.Empty(t, existing)
+}
+
+// TGetExistingSignerInfoRacesStore races StoreSignerInfo against a GetExistingSignerInfo that
+// includes the identity being stored, then asserts every stored signer reads back as existing.
+//
+// This is #2586 at the store level: the read takes its existence query and its cache write in
+// two steps, so a store committing in between used to have its cached "present" overwritten by
+// the read's stale "absent", leaving a committed signer reported as not ours until eviction.
+func TGetExistingSignerInfoRacesStore(t *testing.T, db driver.IdentityStore) {
+	t.Helper()
+	ctx := t.Context()
+	signerInfo := []byte("signer_info")
+	n := 50
+
+	identities := make([]tdriver.Identity, n)
+	for i := range identities {
+		identities[i] = fmt.Appendf(nil, "racer_%d", i)
+	}
+
+	wg := sync.WaitGroup{}
+	for i, id := range identities {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			assert.NoError(t, db.StoreSignerInfo(ctx, id, signerInfo))
+		}()
+		go func() {
+			defer wg.Done()
+			// Query a window around the identity being stored, so the read caches a verdict
+			// for it whether or not its own query saw the row.
+			batch := identities[max(0, i-2):min(len(identities), i+3)]
+			_, err := db.GetExistingSignerInfo(ctx, batch...)
+			assert.NoError(t, err)
+		}()
+	}
+	wg.Wait()
+
+	for _, id := range identities {
+		exists, err := db.SignerInfoExists(ctx, id)
+		require.NoError(t, err, "failed to check signer info existence for [%s]", id)
+		require.True(t, exists, "signer info for [%s] is committed but reads as absent", id)
+	}
 }
 
 func TRegisterIdentityDescriptor(t *testing.T, db driver.IdentityStore) {

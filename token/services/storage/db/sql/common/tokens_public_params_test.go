@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,6 +20,7 @@ const (
 	publicParamsSelect = "SELECT raw FROM PP WHERE raw_hash = \\$1"
 	publicParamsInsert = "INSERT INTO PP \\(raw, raw_hash, stored_at\\) " +
 		"VALUES \\(\\$1, \\$2, \\$3\\) ON CONFLICT DO NOTHING"
+	publicParamsHashesSelect = "SELECT raw_hash FROM PP ORDER BY stored_at DESC"
 )
 
 func newTestPublicParamsStore(t *testing.T) *sqlFixture[*TokenStore] {
@@ -75,6 +78,41 @@ func TestStorePublicParams_AlreadyStoredSkipsInsert(t *testing.T) {
 
 	require.NoError(t, f.store.StorePublicParams(t.Context(), []byte("pp")))
 	// No ExpectExec: an insert here would fail the call.
+	require.NoError(t, f.mock.ExpectationsWereMet())
+}
+
+// TestPublicParamsHashes_TruncatedScanIsAnError pins the contract #2586 found unguarded: a
+// scan cut short by a connection failure is reported, not returned as a partial history of
+// public parameters. The check that appeared to cover it ran before the scan, where it could
+// only report what QueryContext already had.
+func TestPublicParamsHashes_TruncatedScanIsAnError(t *testing.T) {
+	f := newTestPublicParamsStore(t)
+
+	f.mock.ExpectQuery(publicParamsHashesSelect).
+		WillReturnRows(sqlmock.NewRows([]string{"raw_hash"}).
+			AddRow([]byte("h1")).
+			AddRow([]byte("h2")).
+			RowError(1, errors.New("connection reset by peer")))
+
+	hashes, err := f.store.PublicParamsHashes(t.Context())
+
+	require.ErrorContains(t, err, "connection reset by peer")
+	require.Nil(t, hashes, "a truncated history must not be returned as the complete one")
+	require.NoError(t, f.mock.ExpectationsWereMet())
+}
+
+func TestPublicParamsHashes_CompleteScanIsReturned(t *testing.T) {
+	f := newTestPublicParamsStore(t)
+
+	f.mock.ExpectQuery(publicParamsHashesSelect).
+		WillReturnRows(sqlmock.NewRows([]string{"raw_hash"}).
+			AddRow([]byte("h1")).
+			AddRow([]byte("h2")))
+
+	hashes, err := f.store.PublicParamsHashes(t.Context())
+
+	require.NoError(t, err)
+	require.Equal(t, []tdriver.PPHash{[]byte("h1"), []byte("h2")}, hashes)
 	require.NoError(t, f.mock.ExpectationsWereMet())
 }
 

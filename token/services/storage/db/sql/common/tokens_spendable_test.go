@@ -12,8 +12,11 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/LFDT-Panurus/panurus/token/token"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/require"
 )
+
+const unspendableFormatsSelect = "SELECT DISTINCT ledger_type FROM TOKENS WHERE"
 
 func newTestTokenTransaction(t *testing.T) *sqlFixture[*TokenTransaction] {
 	t.Helper()
@@ -70,6 +73,55 @@ func TestSetSpendableBySupportedTokenFormats_NoFormatsClearsAll(t *testing.T) {
 
 	require.NoError(t, f.store.SetSpendableBySupportedTokenFormats(t.Context(), nil))
 	// Exactly one statement: there is no format left to mark spendable.
+	require.NoError(t, f.mock.ExpectationsWereMet())
+}
+
+func newTestTokenStore(t *testing.T) *sqlFixture[*TokenStore] {
+	t.Helper()
+
+	return newSQLFixture(t, func(db *sql.DB, _ sqlmock.Sqlmock) *TokenStore {
+		return &TokenStore{
+			readDB:  db,
+			writeDB: db,
+			table:   tokenTables{Tokens: "TOKENS"},
+			ci:      newTestInterpreter(),
+		}
+	})
+}
+
+// TestUnspendableTokenFormats_TruncatedScanIsAnError is the counterpart of
+// TestPublicParamsHashes_TruncatedScanIsAnError for the other pre-scan rows.Err() #2586
+// found: a shortened list of unsupported formats would make UnsupportedTokensIteratorBy skip
+// tokens that do need an upgrade, so a truncated scan must be an error.
+func TestUnspendableTokenFormats_TruncatedScanIsAnError(t *testing.T) {
+	f := newTestTokenStore(t)
+
+	f.mock.ExpectQuery(unspendableFormatsSelect).
+		WillReturnRows(sqlmock.NewRows([]string{"ledger_type"}).
+			AddRow(token.Format("OLD1")).
+			AddRow(token.Format("OLD2")).
+			RowError(1, errors.New("connection reset by peer")))
+
+	formats, err := f.store.unspendableTokenFormats(t.Context(), "alice", "TOK")
+
+	require.ErrorContains(t, err, "connection reset by peer")
+	require.Nil(t, formats, "a truncated list must not be reported as the full set of unsupported formats")
+	require.NoError(t, f.mock.ExpectationsWereMet())
+}
+
+func TestUnspendableTokenFormats_CompleteScanFiltersSupported(t *testing.T) {
+	f := newTestTokenStore(t)
+	f.store.supportedTokenFormats = []token.Format{"NEW"}
+
+	f.mock.ExpectQuery(unspendableFormatsSelect).
+		WillReturnRows(sqlmock.NewRows([]string{"ledger_type"}).
+			AddRow(token.Format("OLD")).
+			AddRow(token.Format("NEW")))
+
+	formats, err := f.store.unspendableTokenFormats(t.Context(), "alice", "TOK")
+
+	require.NoError(t, err)
+	require.Equal(t, []token.Format{"OLD"}, formats)
 	require.NoError(t, f.mock.ExpectationsWereMet())
 }
 

@@ -399,6 +399,31 @@ returning or caching anything, so a hash-addressed read cannot silently return a
 data. For the full posture, including the KVS backend's inability to make the last comparison, see
 [**Store Integrity Verification**](../security/store_integrity_verification.md).
 
+### Signer info existence cache
+
+The SQL `IdentityStore` (`token/services/storage/db/sql/common/identity.go`) caches whether signer
+info exists per identity hash, so `SignerInfoExists` and `Provider.AreMe` need not re-query. In
+production it is a 5000-entry `SecondChanceCache`, so entries are evicted under churn.
+
+Writes follow two rules, both under `IdentityStore.signerInfoMu` so a read and a store cannot
+interleave:
+
+*   **A positive is terminal.** A signer row is only ever inserted, never deleted, so a committed
+    row can never become an absence. `StoreSignerInfo` and `RegisterIdentityDescriptor` cache `true`
+    as soon as their write commits.
+*   **A negative is only the query's snapshot.** `GetExistingSignerInfo` queries, then caches a
+    verdict per hash. A store committing between those two steps holds a verdict the query could not
+    see, and caching the stale `false` over it makes a committed signer read as "not mine" until
+    eviction, blocking signing and ownership checks (#2586). Two checks reject such a negative, as
+    each covers a case the other misses: a **store counter** sampled before the query, which still
+    works once the store's cached positive has been evicted, and a **positive still in the cache**,
+    which covers a store the counter cannot attribute to this call, as under read-replica lag.
+
+A failed read caches nothing, a truncated scan included — a partial result is not a verdict (#2562).
+
+The KVS backend (`token/services/storage/db/kvs/identitydb.go`) has no such cache and reads through
+on every lookup, so neither rule applies.
+
 ## Identity Types
 
 The Identity Service leverages a wrapper called **TypedIdentity** to support various identity schemes uniformly. 
