@@ -65,7 +65,7 @@ are already covered by CI's parallel per-infra jobs.
 
 On a fabricx network the token public parameters are installed by invoking the
 `SetupPublicParams` view on the `issuer` FSC node
-(`integration/nwo/token/fabricx/factory.go`). Three things about how that failure is
+(`integration/nwo/token/chaguar/factory.go`). Three things about how that failure is
 reported are worth knowing when a suite goes red:
 
 - **Installation is deferred, and `PostRun` must not wait for it.**
