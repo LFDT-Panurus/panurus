@@ -344,7 +344,7 @@ sequenceDiagram
     autonumber
 
     actor Admin as Administrator<br/>(or Issuer)
-    participant Fabric as Ledger<br/>(Fabric/FabricX/etc)
+    participant Fabric as Ledger<br/>(Fabric/Chaguar/etc)
 
     box darkgreen Panurus Stack
         participant Network as Network Service
