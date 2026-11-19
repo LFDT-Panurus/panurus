@@ -51,6 +51,7 @@ func (s *sliceIterator) Next() (*token2.UnspentToken, error) {
 type mockQueryService struct {
 	tokens         []*token2.UnspentToken
 	getTokensError error
+	iteratorCalls  int
 }
 
 func (m *mockQueryService) UnspentTokensIterator(_ context.Context) (*token.UnspentTokensIterator, error) {
@@ -58,6 +59,8 @@ func (m *mockQueryService) UnspentTokensIterator(_ context.Context) (*token.Unsp
 }
 
 func (m *mockQueryService) UnspentTokensIteratorBy(_ context.Context, _ string, _ token2.Type) (driver.UnspentTokensIterator, error) {
+	m.iteratorCalls++
+
 	return &sliceIterator{tokens: m.tokens}, nil
 }
 
@@ -244,6 +247,58 @@ func TestSelectByID_HappyPath(t *testing.T) {
 
 	// no unlocks should have happened
 	assert.Empty(t, locker.unlocked, "no tokens should be unlocked on success")
+}
+
+// cancellingLocker cancels the caller's context on its first Lock call, simulating a caller
+// that gives up while an attempt is in flight.
+type cancellingLocker struct {
+	recordingLocker
+	cancel context.CancelFunc
+}
+
+func (c *cancellingLocker) Lock(ctx context.Context, owner string, id *token2.ID, txID string, reclaim bool) (string, error) {
+	c.cancel()
+
+	return c.recordingLocker.Lock(ctx, owner, id, txID, reclaim)
+}
+
+// TestSelectByID_ContextAlreadyDone: a caller whose context is already done gets an error
+// wrapping ctx.Err() without the selector opening a single iterator.
+func TestSelectByID_ContextAlreadyDone(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	locker := &recordingLocker{lockFailAfter: 100}
+	qs := &mockQueryService{tokens: makeTokens(3, "USD", -1)}
+	sel := newSelector(locker, qs, 5)
+
+	_, _, err := sel.Select(ctx, &ownerFilter{id: "wallet1"}, "0x2", "USD")
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Zero(t, qs.iteratorCalls, "no selection work for a caller that already gave up")
+	assert.Zero(t, locker.calls)
+}
+
+// TestSelectByID_ContextCancelledDuringAttempt: a caller that gives up during the first
+// attempt stops the retries there and gets ctx.Err() instead of SelectorInsufficientFunds,
+// both with no retry wait (where nothing else would notice) and with a long one.
+func TestSelectByID_ContextCancelledDuringAttempt(t *testing.T) {
+	for _, timeout := range []time.Duration{0, -time.Second, time.Hour} {
+		t.Run(timeout.String(), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+
+			locker := &cancellingLocker{lockFailAfter: 100, cancel: cancel}
+			qs := &mockQueryService{tokens: makeTokens(1, "USD", -1)}
+			sel := newSelector(locker, qs, 5)
+			sel.timeout = timeout
+
+			_, _, err := sel.Select(ctx, &ownerFilter{id: "wallet1"}, "0x2", "USD")
+			require.ErrorIs(t, err, context.Canceled)
+			require.NotErrorIs(t, err, token.SelectorInsufficientFunds)
+			assert.Equal(t, 1, qs.iteratorCalls, "no retry after the caller gave up")
+			assert.Len(t, locker.totalUnlocked(), 1, "the attempt's lock must still be released")
+		})
+	}
 }
 
 // TestRetryBackoffIsJittered verifies the retry backoff is randomized over
