@@ -157,34 +157,9 @@ func (t *Transaction) Lock(ctx context.Context, wallet *token.OwnerWallet, sende
 		}
 	}
 
-	var hash []byte
-	hashFunc := crypto.SHA256 // default hash function
-	var hashEncoding encoding.Encoding
-	if options.Attributes != nil {
-		boxed, ok := options.Attributes["htlc.hash"]
-		if ok {
-			hash, ok = boxed.([]byte)
-			if !ok {
-				return nil, errors.Errorf("expected htlc.hash attribute to be []byte, got [%T]", boxed)
-			}
-		}
-		boxed, ok = options.Attributes["htlc.hashFunc"]
-		if ok {
-			hashFunc, ok = boxed.(crypto.Hash)
-			if !ok {
-				return nil, errors.Errorf("expected htlc.hashFunc attribute to be crypto.Hash, got [%T]", boxed)
-			}
-			if hashFunc == 0 {
-				hashFunc = crypto.SHA256 // default hash function
-			}
-		}
-		boxed, ok = options.Attributes["htlc.hashEncoding"]
-		if ok {
-			hashEncoding, ok = boxed.(encoding.Encoding)
-			if !ok {
-				return nil, errors.Errorf("expected htlc.hashEncoding attribute to be Encoding, got [%T]", boxed)
-			}
-		}
+	hash, hashFunc, hashEncoding, err := hashOptionsFromAttributes(options.Attributes)
+	if err != nil {
+		return nil, err
 	}
 	scriptID, preImage, script, err := t.recipientAsScript(sender, recipient, deadline, hash, hashFunc, hashEncoding)
 	if err != nil {
@@ -203,6 +178,35 @@ func (t *Transaction) Lock(ctx context.Context, wallet *token.OwnerWallet, sende
 	}
 
 	return preImage, nil
+}
+
+// hashOptionsFromAttributes extracts the optional htlc.hash, htlc.hashFunc and htlc.hashEncoding
+// attributes. Missing attributes yield a nil hash, SHA256, and the zero encoding respectively.
+func hashOptionsFromAttributes(attributes map[string]any) ([]byte, crypto.Hash, encoding.Encoding, error) {
+	var hash []byte
+	hashFunc := crypto.SHA256 // default hash function
+	var hashEncoding encoding.Encoding
+
+	if boxed, ok := attributes["htlc.hash"]; ok {
+		if hash, ok = boxed.([]byte); !ok {
+			return nil, 0, 0, errors.Errorf("expected htlc.hash attribute to be []byte, got [%T]", boxed)
+		}
+	}
+	if boxed, ok := attributes["htlc.hashFunc"]; ok {
+		if hashFunc, ok = boxed.(crypto.Hash); !ok {
+			return nil, 0, 0, errors.Errorf("expected htlc.hashFunc attribute to be crypto.Hash, got [%T]", boxed)
+		}
+		if hashFunc == 0 {
+			hashFunc = crypto.SHA256 // default hash function
+		}
+	}
+	if boxed, ok := attributes["htlc.hashEncoding"]; ok {
+		if hashEncoding, ok = boxed.(encoding.Encoding); !ok {
+			return nil, 0, 0, errors.Errorf("expected htlc.hashEncoding attribute to be Encoding, got [%T]", boxed)
+		}
+	}
+
+	return hash, hashFunc, hashEncoding, nil
 }
 
 // Reclaim appends a reclaim (transfer) action to the token request of the transaction
