@@ -518,52 +518,68 @@ func TransactionRecords(ctx context.Context, record *token.AuditRecord, timestam
 		})
 
 		// create a transaction record from ins and ous
-
-		// All ins should be for same EID, check this
-		inEIDs := ins.EnrollmentIDs()
-		if len(inEIDs) > 1 {
-			return nil, errors.Errorf("expected at most 1 input enrollment id, got %d, [%v]", len(inEIDs), inEIDs)
+		actionTxs, err := actionTransactionRecords(string(record.Anchor), ins, ous, timestamp)
+		if err != nil {
+			return nil, err
 		}
-		inEID := ""
-		if len(inEIDs) == 1 {
-			inEID = inEIDs[0]
-		}
-
-		outEIDs := ous.EnrollmentIDs()
-		outEIDs = append(outEIDs, "")
-		outTT := ous.TokenTypes()
-		for _, outEID := range outEIDs {
-			for _, tokenType := range outTT {
-				received := ous.ByEnrollmentID(outEID).ByType(tokenType).UniquePerOutput().Sum()
-				if received.Cmp(big.NewInt(0)) <= 0 {
-					continue
-				}
-
-				tt := dbdriver.Issue
-				if len(inEIDs) != 0 {
-					if len(outEID) == 0 {
-						tt = dbdriver.Redeem
-					} else {
-						tt = dbdriver.Transfer
-					}
-				}
-
-				txs = append(txs, dbdriver.TransactionRecord{
-					TxID:         string(record.Anchor),
-					SenderEID:    inEID,
-					RecipientEID: outEID,
-					TokenType:    tokenType,
-					Amount:       received,
-					Status:       dbdriver.Pending,
-					ActionType:   tt,
-					Timestamp:    timestamp,
-				})
-			}
-		}
+		txs = append(txs, actionTxs...)
 	}
 	logger.DebugfContext(ctx, "parsed transactions for tx [%s]", record.Anchor)
 
 	return txs, err
+}
+
+// actionTransactionRecords converts the inputs and outputs of a single action into
+// one transaction record per recipient enrollment id and token type that received value.
+func actionTransactionRecords(txID string, ins *token.InputStream, ous *token.OutputStream, timestamp time.Time) ([]TransactionRecord, error) {
+	// All ins should be for same EID, check this
+	inEIDs := ins.EnrollmentIDs()
+	if len(inEIDs) > 1 {
+		return nil, errors.Errorf("expected at most 1 input enrollment id, got %d, [%v]", len(inEIDs), inEIDs)
+	}
+	inEID := ""
+	if len(inEIDs) == 1 {
+		inEID = inEIDs[0]
+	}
+
+	var txs []TransactionRecord
+	outEIDs := ous.EnrollmentIDs()
+	outEIDs = append(outEIDs, "")
+	outTT := ous.TokenTypes()
+	for _, outEID := range outEIDs {
+		for _, tokenType := range outTT {
+			received := ous.ByEnrollmentID(outEID).ByType(tokenType).UniquePerOutput().Sum()
+			if received.Cmp(big.NewInt(0)) <= 0 {
+				continue
+			}
+
+			txs = append(txs, dbdriver.TransactionRecord{
+				TxID:         txID,
+				SenderEID:    inEID,
+				RecipientEID: outEID,
+				TokenType:    tokenType,
+				Amount:       received,
+				Status:       dbdriver.Pending,
+				ActionType:   transactionActionType(len(inEIDs) != 0, outEID),
+				Timestamp:    timestamp,
+			})
+		}
+	}
+
+	return txs, nil
+}
+
+// transactionActionType classifies a movement: without a sender it is an issue,
+// without a recipient a redeem, and a transfer otherwise.
+func transactionActionType(hasSender bool, recipientEID string) dbdriver.ActionType {
+	if !hasSender {
+		return dbdriver.Issue
+	}
+	if len(recipientEID) == 0 {
+		return dbdriver.Redeem
+	}
+
+	return dbdriver.Transfer
 }
 
 // recordAction names one action of a request: its type and its index among the actions of

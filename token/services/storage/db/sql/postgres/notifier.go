@@ -298,30 +298,8 @@ func (db *Notifier) Subscribe(callback driver.TriggerCallback) error {
 	// Start the listener if this is the first subscription
 	var justStarted bool
 	db.startOnce.Do(func() {
-		logger.Debugf("First subscription for notifier of [%s]. Notifier starts listening...", db.table)
-		// The notification trigger is installed on first subscription rather
-		// than at store creation: tables nobody subscribes to must not pay
-		// the per-row pg_notify cost (NOTIFY serializes transaction commits
-		// on a global queue lock).
-		if db.ensureSchema != nil {
-			if err := db.ensureSchema(); err != nil {
-				db.startupErr = errors.Wrapf(err, "failed creating notification schema for [%s]", db.table)
-
-				return
-			}
-		}
-		// the notifier may have been closed while the schema was installing
-		if err := db.ctx.Err(); err != nil {
-			db.startupErr = err
-
-			return
-		}
-		if !db.startListener() {
-			db.startupErr = ErrNotifierClosed
-
-			return
-		}
-		justStarted = true
+		db.startupErr = db.start()
+		justStarted = db.startupErr == nil
 	})
 
 	// startOnce.Do guarantees the write inside the closure is visible here.
@@ -345,6 +323,30 @@ func (db *Notifier) Subscribe(callback driver.TriggerCallback) error {
 
 		return nil
 	}
+}
+
+// start installs the notification schema and launches the listener. It runs once,
+// on the first subscription, and its error is the notifier's final startup error.
+func (db *Notifier) start() error {
+	logger.Debugf("First subscription for notifier of [%s]. Notifier starts listening...", db.table)
+	// The notification trigger is installed on first subscription rather
+	// than at store creation: tables nobody subscribes to must not pay
+	// the per-row pg_notify cost (NOTIFY serializes transaction commits
+	// on a global queue lock).
+	if db.ensureSchema != nil {
+		if err := db.ensureSchema(); err != nil {
+			return errors.Wrapf(err, "failed creating notification schema for [%s]", db.table)
+		}
+	}
+	// the notifier may have been closed while the schema was installing
+	if err := db.ctx.Err(); err != nil {
+		return err
+	}
+	if !db.startListener() {
+		return ErrNotifierClosed
+	}
+
+	return nil
 }
 
 // startListener launches the goroutine that owns the LISTEN connection, unless

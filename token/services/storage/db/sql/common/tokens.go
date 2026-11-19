@@ -816,16 +816,9 @@ func (db *TokenStore) ListUnspentTokensByWallets(ctx context.Context, walletIDs 
 		); err != nil {
 			return nil, err
 		}
-		walletID := ""
-		if walletCol.Valid && walletCol.String != "" {
-			if _, ok := walletIDSet[walletCol.String]; ok {
-				walletID = walletCol.String
-			}
-		}
-		if walletID == "" && ownerWalletCol.Valid && ownerWalletCol.String != "" {
-			if _, ok := walletIDSet[ownerWalletCol.String]; ok {
-				walletID = ownerWalletCol.String
-			}
+		walletID := requestedWalletID(walletIDSet, walletCol)
+		if walletID == "" {
+			walletID = requestedWalletID(walletIDSet, ownerWalletCol)
 		}
 		if walletID == "" {
 			continue
@@ -839,6 +832,36 @@ func (db *TokenStore) ListUnspentTokensByWallets(ctx context.Context, walletIDs 
 	}
 
 	return result, rows.Err()
+}
+
+// requestedWalletID returns col's value if it is set and in walletIDSet, or "" otherwise.
+func requestedWalletID(walletIDSet map[string]struct{}, col sql.NullString) string {
+	if !col.Valid || col.String == "" {
+		return ""
+	}
+	if _, ok := walletIDSet[col.String]; !ok {
+		return ""
+	}
+
+	return col.String
+}
+
+// firstMissing returns the position of the first of n inputs that no row matched,
+// or -1 when every input matched. counter is the number of rows matched, and
+// isSet reports whether the input at the given position was matched.
+func firstMissing(n, counter int, isSet func(int) bool) int {
+	if counter == 0 {
+		return 0
+	}
+	if counter == n {
+		return -1
+	}
+	for j := range n {
+		if !isSet(j) {
+			return j
+		}
+	}
+	panic("programming error: should not reach this point")
 }
 
 // ListAuditTokens returns the audited tokens associated to the passed ids
@@ -893,16 +916,8 @@ func (db *TokenStore) ListAuditTokens(ctx context.Context, ids ...*token.ID) ([]
 	if rows.Err() != nil {
 		return nil, rows.Err()
 	}
-	if counter == 0 {
-		return nil, errors.Errorf("token not found for key [%s:%d]", ids[0].TxId, ids[0].Index)
-	}
-	if counter != len(ids) {
-		for j, t := range tokens {
-			if t == nil {
-				return nil, errors.Errorf("token not found for key [%s:%d]", ids[j].TxId, ids[j].Index)
-			}
-		}
-		panic("programming error: should not reach this point")
+	if j := firstMissing(len(ids), counter, func(i int) bool { return tokens[i] != nil }); j >= 0 {
+		return nil, errors.Errorf("token not found for key [%s:%d]", ids[j].TxId, ids[j].Index)
 	}
 
 	return tokens, nil
@@ -1186,16 +1201,8 @@ func (db *TokenStore) GetTokens(ctx context.Context, inputs ...*token.ID) ([]*to
 	if err = rows.Err(); err != nil {
 		return tokens, err
 	}
-	if counter == 0 {
-		return nil, errors.Errorf("token not found for key [%s:%d]", inputs[0].TxId, inputs[0].Index)
-	}
-	if counter != len(inputs) {
-		for j, t := range tokens {
-			if t == nil {
-				return nil, errors.Errorf("token not found for key [%s:%d]", inputs[j].TxId, inputs[j].Index)
-			}
-		}
-		panic("programming error: should not reach this point")
+	if j := firstMissing(len(inputs), counter, func(i int) bool { return tokens[i] != nil }); j >= 0 {
+		return nil, errors.Errorf("token not found for key [%s:%d]", inputs[j].TxId, inputs[j].Index)
 	}
 
 	return tokens, nil
@@ -1310,16 +1317,8 @@ func (db *TokenStore) WhoDeletedTokens(ctx context.Context, inputs ...*token.ID)
 	if err = rows.Err(); err != nil {
 		return nil, isSpent, err
 	}
-	if counter == 0 {
-		return nil, nil, errors.Wrapf(tdriver.ErrTokenNotFound, "token not found for key [%s:%d]", inputs[0].TxId, inputs[0].Index)
-	}
-	if counter != len(inputs) {
-		for j, f := range found {
-			if !f {
-				return nil, nil, errors.Wrapf(tdriver.ErrTokenNotFound, "token not found for key [%s:%d]", inputs[j].TxId, inputs[j].Index)
-			}
-		}
-		panic("programming error: should not reach this point")
+	if j := firstMissing(len(inputs), counter, func(i int) bool { return found[i] }); j >= 0 {
+		return nil, nil, errors.Wrapf(tdriver.ErrTokenNotFound, "token not found for key [%s:%d]", inputs[j].TxId, inputs[j].Index)
 	}
 
 	return spentBy, isSpent, nil
