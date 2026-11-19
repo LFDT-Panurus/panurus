@@ -45,8 +45,8 @@ include $(TOP)/checks.mk
 GO_MODULES := . integration token/services/storage/db/kvs/hashicorp cmd/artifactgen cmd/tokengen cmd/token_validation_service cmd/skicleanup cmd/tokendiag cmd/node x/token/services/network/evm
 TIDY_GO_MODULES := $(GO_MODULES) tools
 
-# include fabricx target
-include $(TOP)/fabricx.mk
+# include chaguar target
+include $(TOP)/chaguar.mk
 # include the interop target
 include $(TOP)/interop.mk
 # include the fungible target
@@ -166,11 +166,11 @@ install-softhsm:
 BESU_IMAGE ?= hyperledger/besu:24.3.0
 
 # The EVM gateway integration suite runs against this fabric-x-evm image.
-FABRICX_EVM_IMAGE ?= ghcr.io/hyperledger/fabric-x-evm:0.1.3
+EVM_GATEWAY_IMAGE ?= ghcr.io/hyperledger/fabric-x-evm:0.1.3
 
 .PHONY: docker-images
 # build/pull docker images needed for testing
-docker-images: fabric-docker-images monitoring-docker-images testing-docker-images besu-docker-images fabricx-evm-docker-images
+docker-images: fabric-docker-images monitoring-docker-images testing-docker-images besu-docker-images evm-gateway-docker-images
 
 .PHONY: testing-docker-images
 # pull docker images for testing (postgres, vault)

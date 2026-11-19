@@ -58,7 +58,7 @@ body:
       options:
         - Local (NWO / Integration Test)
         - Fabric
-        - FabricX
+        - Chaguar
         - Other
     validations:
       required: true
