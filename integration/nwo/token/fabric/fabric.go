@@ -326,24 +326,8 @@ func (p *NetworkHandler) GenerateCryptoMaterial(cmGenerator generators.CryptoMat
 	entry.Wallets[node.Name] = wallet
 
 	// Issuer identities
-	issuers := opts.Issuers()
-	if len(issuers) != 0 {
-		var index int
-		found := false
-		for i, issuer := range issuers {
-			if issuer == node.ID() || issuer == "_default_" {
-				index = i
-				found = true
-				issuers[i] = node.ID()
-
-				break
-			}
-		}
-		if !found {
-			issuers = append(issuers, node.ID())
-			index = len(issuers) - 1
-		}
-
+	if issuers := opts.Issuers(); len(issuers) != 0 {
+		issuers, index := withDefaultLabel(issuers, node.ID())
 		ids := cmGenerator.GenerateIssuerIdentities(tms, node, issuers...)
 		if len(ids) > 0 {
 			wallet.Issuers = append(wallet.Issuers, ids...)
@@ -352,23 +336,8 @@ func (p *NetworkHandler) GenerateCryptoMaterial(cmGenerator generators.CryptoMat
 	}
 
 	// Owner identities
-	owners := opts.Owners()
-	if len(owners) != 0 {
-		var index int
-		found := false
-		for i, owner := range owners {
-			if owner == node.ID() || owner == "_default_" {
-				index = i
-				found = true
-				owners[i] = node.ID()
-
-				break
-			}
-		}
-		if !found {
-			owners = append(owners, node.ID())
-			index = len(owners) - 1
-		}
+	if owners := opts.Owners(); len(owners) != 0 {
+		owners, index := withDefaultLabel(owners, node.ID())
 		ids := cmGenerator.GenerateOwnerIdentities(tms, node, owners...)
 		if len(ids) > 0 {
 			wallet.Owners = append(wallet.Owners, ids...)
@@ -393,6 +362,22 @@ func (p *NetworkHandler) GenerateCryptoMaterial(cmGenerator generators.CryptoMat
 			wallet.Certifiers[len(wallet.Certifiers)-1].Default = true
 		}
 	}
+}
+
+// withDefaultLabel returns labels with the node's own label in the default slot, together with
+// that slot's index. The first label equal to nodeID or "_default_" is the default slot (and is
+// rewritten to nodeID in place); if there is none, nodeID is appended as the default.
+func withDefaultLabel(labels []string, nodeID string) ([]string, int) {
+	for i, label := range labels {
+		if label == nodeID || label == "_default_" {
+			labels[i] = nodeID
+
+			return labels, i
+		}
+	}
+	labels = append(labels, nodeID)
+
+	return labels, len(labels) - 1
 }
 
 // getCombinedWallets aggregates wallet identities for nodeName across all entries
@@ -438,33 +423,26 @@ func (p *NetworkHandler) getCombinedWallets(tms *topology2.TMS, nodeName string)
 		if w == nil {
 			continue
 		}
-		for _, id := range w.Issuers {
-			if k := "i:" + id.ID + ":" + id.Path; !seen[k] {
-				seen[k] = true
-				combined.Issuers = append(combined.Issuers, id)
-			}
-		}
-		for _, id := range w.Owners {
-			if k := "o:" + id.ID + ":" + id.Path; !seen[k] {
-				seen[k] = true
-				combined.Owners = append(combined.Owners, id)
-			}
-		}
-		for _, id := range w.Auditors {
-			if k := "a:" + id.ID + ":" + id.Path; !seen[k] {
-				seen[k] = true
-				combined.Auditors = append(combined.Auditors, id)
-			}
-		}
-		for _, id := range w.Certifiers {
-			if k := "c:" + id.ID + ":" + id.Path; !seen[k] {
-				seen[k] = true
-				combined.Certifiers = append(combined.Certifiers, id)
-			}
-		}
+		combined.Issuers = appendUnseen(combined.Issuers, w.Issuers, "i", seen)
+		combined.Owners = appendUnseen(combined.Owners, w.Owners, "o", seen)
+		combined.Auditors = appendUnseen(combined.Auditors, w.Auditors, "a", seen)
+		combined.Certifiers = appendUnseen(combined.Certifiers, w.Certifiers, "c", seen)
 	}
 
 	return combined
+}
+
+// appendUnseen appends to dst every identity in ids whose (role, ID, path) key is not yet in seen,
+// recording the keys it appends.
+func appendUnseen(dst, ids []topology2.Identity, role string, seen map[string]bool) []topology2.Identity {
+	for _, id := range ids {
+		if k := role + ":" + id.ID + ":" + id.Path; !seen[k] {
+			seen[k] = true
+			dst = append(dst, id)
+		}
+	}
+
+	return dst
 }
 
 func (p *NetworkHandler) GetEntry(tms *topology2.TMS) *Entry {

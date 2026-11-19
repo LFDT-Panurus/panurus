@@ -55,21 +55,14 @@ func (r *TestCaseRunner) Run(scenario *model.TestCase, customers map[string]*cus
 	if !ok {
 		return r.failed(scenario, settings, errors.Errorf("no state for payer [%s]", scenario.Payer))
 	}
-	funds := scenario.Issue.Total
-
-	if settings.UseExistingFunds {
-		r.logger.Infof("Use existing funds enabled. Check the balance of %s", payer.Name)
-		currentBalance, err := r.intermediary.GetBalance(payer.Name)
-		if err != nil {
-			return &TestCaseResult{
-				Success:   false,
-				Name:      scenario.Name,
-				Iteration: settings.Iteration,
-				Error:     err,
-			}
+	funds, balanceErr := r.startingFunds(scenario, payer, settings)
+	if balanceErr != nil {
+		return &TestCaseResult{
+			Success:   false,
+			Name:      scenario.Name,
+			Iteration: settings.Iteration,
+			Error:     balanceErr,
 		}
-		funds = currentBalance
-		r.logger.Infof("User [%s] has balance: [%d]", payer.Name, currentBalance)
 	}
 
 	withdrawAmnts, err := scenario.Issue.Distribution.GetAmounts(funds)
@@ -89,21 +82,14 @@ func (r *TestCaseRunner) Run(scenario *model.TestCase, customers map[string]*cus
 	r.logger.Infof("============= Start test case %s, iter %d =============", scenario.Name, settings.Iteration)
 
 	if scenario.Issue.Execute && !settings.UseExistingFunds {
-		r.logger.Infof("Starting withdrawals")
-		execErr := r.doWithdrawals(payer, withdrawAmnts, settings)
-
-		if execErr != nil {
-			r.logger.Warnf("Some withdrawals failed: %v", execErr)
-			funds, err = r.intermediary.GetBalance(payer.Name)
-			if err != nil {
-				return &TestCaseResult{
-					Success:   false,
-					Name:      scenario.Name,
-					Iteration: settings.Iteration,
-					Error:     err,
-				}
+		funds, balanceErr = r.withdraw(payer, withdrawAmnts, funds, settings)
+		if balanceErr != nil {
+			return &TestCaseResult{
+				Success:   false,
+				Name:      scenario.Name,
+				Iteration: settings.Iteration,
+				Error:     balanceErr,
 			}
-			r.logger.Warnf("Will proceed with transfers of successfully withdrawn amount [%v]", funds)
 		}
 	}
 
@@ -149,6 +135,41 @@ func (r *TestCaseRunner) Run(scenario *model.TestCase, customers map[string]*cus
 		Duration:  duration,
 		Iteration: settings.Iteration,
 	}
+}
+
+// startingFunds returns the amount the test case starts from: the payer's current balance when
+// settings.UseExistingFunds is set, otherwise the scenario's issue total.
+func (r *TestCaseRunner) startingFunds(scenario *model.TestCase, payer *customerState, settings *TestCaseSettings) (api.Amount, api.Error) {
+	if !settings.UseExistingFunds {
+		return scenario.Issue.Total, nil
+	}
+	r.logger.Infof("Use existing funds enabled. Check the balance of %s", payer.Name)
+	currentBalance, err := r.intermediary.GetBalance(payer.Name)
+	if err != nil {
+		return 0, err
+	}
+	r.logger.Infof("User [%s] has balance: [%d]", payer.Name, currentBalance)
+
+	return currentBalance, nil
+}
+
+// withdraw executes the withdrawals and returns the funds available for the transfers: funds when
+// every withdrawal succeeded, otherwise the payer's balance after the successful ones.
+func (r *TestCaseRunner) withdraw(payer *customerState, amounts []api.Amount, funds api.Amount, settings *TestCaseSettings) (api.Amount, api.Error) {
+	r.logger.Infof("Starting withdrawals")
+	execErr := r.doWithdrawals(payer, amounts, settings)
+	if execErr == nil {
+		return funds, nil
+	}
+
+	r.logger.Warnf("Some withdrawals failed: %v", execErr)
+	funds, err := r.intermediary.GetBalance(payer.Name)
+	if err != nil {
+		return 0, err
+	}
+	r.logger.Warnf("Will proceed with transfers of successfully withdrawn amount [%v]", funds)
+
+	return funds, nil
 }
 
 // resolveCustomers maps aliases to their states, failing on an unknown or empty set.
