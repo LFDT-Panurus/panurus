@@ -331,9 +331,9 @@ network; all three are disabled in CI anyway. Once they pass, add T2.1 then T2 a
 "Extras", each with its own token type, and T7 after T6.
 
 CI runs the specs of "Extras" it enabled before, T13, T4, T5 and T3, with
-`make integration-tests-fabricx-dlog-extras`: all three infrastructure types in one job, one
+`make integration-tests-chaguar-dlog-extras`: all three infrastructure types in one job, one
 network each; `-extras-{websocket,libp2p,replicas}` run one type each. To enable T12, T2.1 or
-T2 in CI, widen `FABRICX_DLOG_EXTRAS_FILTER` in `fabricx.mk` rather than adding a job, and
+T2 in CI, widen `CHAGUAR_DLOG_EXTRAS_FILTER` in `chaguar.mk` rather than adding a job, and
 split the job per infrastructure type if it then gets close to the longest itest jobs.
 
 ### Enabling the Token Platform Without a TMS
@@ -360,13 +360,13 @@ TMS is registered. `EnableTokenPlatform` is meant as the config-generation groun
 bringing up nodes that will have a TMS registered dynamically at runtime, once that
 capability exists — it is not itself a way to use tokens.
 
-## Fabric-X Tests
+## Chaguar Tests
 
-For tests involving Fabric-X (starts with `fabricx`), you need additional setup:
+For tests involving Chaguar (starts with `chaguar`), you need additional setup:
 
 ```bash
-make fxconfig configtxgen fabricx-docker-images
-make integration-tests-fabricx-dlog-t1
+make fxconfig configtxgen chaguar-docker-images
+make integration-tests-chaguar-dlog-t1
 ```
 
 ## Cleaning Up

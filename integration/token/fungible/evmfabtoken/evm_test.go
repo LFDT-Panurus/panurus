@@ -110,7 +110,7 @@ var _ = Describe("EndToEnd", func() {
 	// it on any backend, so it is declared in the zkatdlog EVM suites only.
 	//
 	// No PolicyIdentity spec either, for a stronger reason: T14 is commented out of the CI matrix for
-	// both dlog-fabric and fabricx-dlog (.github/workflows/tests.yml), so it is not green anywhere.
+	// both dlog-fabric and chaguar-dlog (.github/workflows/tests.yml), so it is not green anywhere.
 	// See the zkatdlog EVM suite for what it trips over.
 
 	// The selector tests drive several transactions at once from one node, which is the only spec

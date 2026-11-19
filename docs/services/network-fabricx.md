@@ -409,7 +409,7 @@ Two consequences of reading the version rather than counting notifications:
   public-parameters-update specs (T2, T2.1, T7) restart the endorser after the
   update and then transact against the new parameters. They are not run in CI yet
   ([#1945](https://github.com/LFDT-Panurus/panurus/issues/1945)); run them locally
-  with e.g. `make integration-tests-fabricx-dlog TEST_FILTER="(T2.1 || T2) && websocket"`.
+  with e.g. `make integration-tests-chaguar-dlog TEST_FILTER="(T2.1 || T2) && websocket"`.
 - **No drift**: a missed or coalesced notification, or a version that jumps by more
   than one, cannot desynchronize the keeper, because each update re-reads the real
   version.
