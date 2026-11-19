@@ -81,68 +81,22 @@ func instrumentFile(filename string) error {
 		return err
 	}
 
-	modified := false
-	hasTracerImport := false
-	tracerAlias := "tracer"
+	hasTracerImport, tracerAlias := findTracerImport(node)
 
-	// Check if tracer is already imported
-	for _, imp := range node.Imports {
-		if imp.Path.Value == `"github.com/LFDT-Panurus/panurus/cmd/profiler/tracer"` {
-			hasTracerImport = true
-			if imp.Name != nil {
-				tracerAlias = imp.Name.Name
-			}
-
-			break
-		}
-	}
-
-	// Check if any functions need instrumentation
-	needsTracer := false
-	ast.Inspect(node, func(n ast.Node) bool {
-		fn, ok := n.(*ast.FuncDecl)
-		if !ok {
-			return true
-		}
-
-		if shouldSkipFunction(fn) {
-			return true
-		}
-
-		needsTracer = true
-
-		return true
-	})
-
-	if !needsTracer {
+	if !anyFunctionNeedsTracer(node) {
 		return nil
 	}
 
-	// Add tracer import if needed
+	modified := false
 	if !hasTracerImport {
 		tracerAlias = findUniqueAlias(node, "tracer")
 		addTracerImport(node, tracerAlias)
 		modified = true
 	}
 
-	// Add tracer calls to functions
-	ast.Inspect(node, func(n ast.Node) bool {
-		fn, ok := n.(*ast.FuncDecl)
-		if !ok {
-			return true
-		}
-
-		if shouldSkipFunction(fn) {
-			return true
-		}
-
-		if !hasTracerCall(fn, tracerAlias) {
-			addTracerCall(fn, tracerAlias)
-			modified = true
-		}
-
-		return true
-	})
+	if addTracerCallsToFunctions(node, tracerAlias) {
+		modified = true
+	}
 
 	if !modified {
 		return nil
@@ -155,6 +109,59 @@ func instrumentFile(filename string) error {
 	}
 
 	return os.WriteFile(filename, buf.Bytes(), 0644)
+}
+
+// findTracerImport reports whether the tracer package is already imported by node, and under
+// which alias.
+func findTracerImport(node *ast.File) (hasImport bool, alias string) {
+	alias = "tracer"
+	for _, imp := range node.Imports {
+		if imp.Path.Value == `"github.com/LFDT-Panurus/panurus/cmd/profiler/tracer"` {
+			if imp.Name != nil {
+				alias = imp.Name.Name
+			}
+
+			return true, alias
+		}
+	}
+
+	return false, alias
+}
+
+// anyFunctionNeedsTracer reports whether node has at least one function eligible for
+// instrumentation.
+func anyFunctionNeedsTracer(node *ast.File) bool {
+	needsTracer := false
+	ast.Inspect(node, func(n ast.Node) bool {
+		if fn, ok := n.(*ast.FuncDecl); ok && !shouldSkipFunction(fn) {
+			needsTracer = true
+		}
+
+		return true
+	})
+
+	return needsTracer
+}
+
+// addTracerCallsToFunctions adds a tracer call to every eligible function in node that doesn't
+// already have one, and reports whether it modified anything.
+func addTracerCallsToFunctions(node *ast.File, tracerAlias string) bool {
+	modified := false
+	ast.Inspect(node, func(n ast.Node) bool {
+		fn, ok := n.(*ast.FuncDecl)
+		if !ok || shouldSkipFunction(fn) {
+			return true
+		}
+
+		if !hasTracerCall(fn, tracerAlias) {
+			addTracerCall(fn, tracerAlias)
+			modified = true
+		}
+
+		return true
+	})
+
+	return modified
 }
 
 // findUniqueAlias finds a unique identifier name to avoid conflicts.

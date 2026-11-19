@@ -85,89 +85,60 @@ func injectTracer(filename, benchName string) error {
 }
 
 func addTracerImport(file *ast.File) {
-	tracerPath := "github.com/LFDT-Panurus/panurus/cmd/profiler/tracer"
-	flagPath := "flag"
-
-	// Check if imports already exist
-	hasTracer := false
-	hasFlag := false
-	for _, imp := range file.Imports {
-		if imp.Path.Value == `"`+tracerPath+`"` {
-			hasTracer = true
-		}
-		if imp.Path.Value == `"`+flagPath+`"` {
-			hasFlag = true
-		}
-	}
-
-	if hasTracer && hasFlag {
-		return
-	}
-
-	// Add tracer import
 	var newImports []ast.Spec
-	if !hasTracer {
-		newImports = append(newImports, &ast.ImportSpec{
-			Path: &ast.BasicLit{
-				Kind:  token.STRING,
-				Value: `"` + tracerPath + `"`,
-			},
-		})
-	}
-
-	// Add flag import
-	if !hasFlag {
-		newImports = append(newImports, &ast.ImportSpec{
-			Path: &ast.BasicLit{
-				Kind:  token.STRING,
-				Value: `"` + flagPath + `"`,
-			},
-		})
+	for _, path := range []string{"github.com/LFDT-Panurus/panurus/cmd/profiler/tracer", "flag"} {
+		if !hasImport(file, path) {
+			newImports = append(newImports, &ast.ImportSpec{
+				Path: &ast.BasicLit{
+					Kind:  token.STRING,
+					Value: `"` + path + `"`,
+				},
+			})
+		}
 	}
 
 	if len(newImports) == 0 {
 		return
 	}
 
-	// Find or create import declaration
-	var importDecl *ast.GenDecl
-	for _, decl := range file.Decls {
-		if gen, ok := decl.(*ast.GenDecl); ok && gen.Tok == token.IMPORT {
-			importDecl = gen
-
-			break
-		}
-	}
-
+	importDecl := findImportDecl(file)
 	if importDecl == nil {
-		// Create new import declaration
+		// Create new import declaration and insert it at the beginning of declarations
 		importDecl = &ast.GenDecl{
 			Tok:   token.IMPORT,
 			Specs: newImports,
 		}
-		// Insert at beginning of declarations
 		file.Decls = append([]ast.Decl{importDecl}, file.Decls...)
 	} else {
-		// Add to existing import declaration
 		importDecl.Specs = append(importDecl.Specs, newImports...)
 	}
 }
 
-func addFlagVars(file *ast.File) {
-	// Check if flags already exist
-	for _, decl := range file.Decls {
-		if gen, ok := decl.(*ast.GenDecl); ok && gen.Tok == token.VAR {
-			for _, spec := range gen.Specs {
-				if vs, ok := spec.(*ast.ValueSpec); ok {
-					for _, name := range vs.Names {
-						if name.Name == "showTime" || name.Name == "showPercent" ||
-							name.Name == "rootFunction" || name.Name == "minPercent" {
-							return // Flags already exist
-						}
-					}
-				}
-			}
+// hasImport reports whether file imports the package at path.
+func hasImport(file *ast.File, path string) bool {
+	for _, imp := range file.Imports {
+		if imp.Path.Value == `"`+path+`"` {
+			return true
 		}
+	}
+
+	return false
+}
+
+// findImportDecl returns the first import declaration of file, or nil if there is none.
+func findImportDecl(file *ast.File) *ast.GenDecl {
+	for _, decl := range file.Decls {
+		if gen, ok := decl.(*ast.GenDecl); ok && gen.Tok == token.IMPORT {
+			return gen
+		}
+	}
+
+	return nil
+}
+
+func addFlagVars(file *ast.File) {
+	if hasFlagVars(file) {
+		return
 	}
 
 	// Create flag variable declarations
@@ -189,21 +160,54 @@ var (
 		return
 	}
 
-	// Add flag declarations after imports
-	insertPos := 0
-	for i, decl := range file.Decls {
-		if _, ok := decl.(*ast.GenDecl); ok {
-			insertPos = i + 1
-		} else {
-			break
-		}
-	}
-
-	// Insert flag declarations
+	// Insert flag declarations after imports
+	insertPos := leadingGenDeclCount(file)
 	for _, decl := range flagFile.Decls {
 		file.Decls = append(file.Decls[:insertPos], append([]ast.Decl{decl}, file.Decls[insertPos:]...)...)
 		insertPos++
 	}
+}
+
+// hasFlagVars reports whether file already declares any of the flag variables addFlagVars adds.
+func hasFlagVars(file *ast.File) bool {
+	for _, decl := range file.Decls {
+		if gen, ok := decl.(*ast.GenDecl); ok && gen.Tok == token.VAR && declaresFlagVar(gen) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// declaresFlagVar reports whether the var declaration gen names any of the flag variables
+// addFlagVars adds.
+func declaresFlagVar(gen *ast.GenDecl) bool {
+	for _, spec := range gen.Specs {
+		vs, ok := spec.(*ast.ValueSpec)
+		if !ok {
+			continue
+		}
+		for _, name := range vs.Names {
+			switch name.Name {
+			case "showTime", "showPercent", "rootFunction", "minPercent":
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// leadingGenDeclCount returns the number of consecutive generic declarations (imports, consts,
+// types, vars) at the start of file.
+func leadingGenDeclCount(file *ast.File) int {
+	for i, decl := range file.Decls {
+		if _, ok := decl.(*ast.GenDecl); !ok {
+			return i
+		}
+	}
+
+	return len(file.Decls)
 }
 
 func injectTracerCode(fn *ast.FuncDecl) {
