@@ -99,87 +99,76 @@ func (d *Driver) NewCertificationClient(ctx context.Context, tms *token.Manageme
 
 	k := tms.Channel() + ":" + tms.Namespace()
 
-	cm, ok := d.CertificationClients[k]
-	if !ok {
-		certification := &Certification{}
-		if err := tms.Configuration().UnmarshalKey(ConfigurationKey, &certification); err != nil {
-			return nil, errors.Wrap(err, "failed unmarshalling certification config")
-		}
-
-		certifiers, err := d.Resolver.ResolveIdentities(certification.IDs...)
-		if err != nil {
-			return nil, errors.WithMessagef(err, "cannot resolve certifier identities")
-		}
-
-		if len(certifiers) == 0 {
-			return nil, errors.Errorf("no certifier id configured")
-		}
-
-		maxAttempts := certification.MaxAttempts
-		if maxAttempts <= 0 {
-			maxAttempts = DefaultMaxAttempts
-		}
-
-		waitTime := certification.WaitTime
-		if waitTime <= 0 {
-			waitTime = DefaultWaitTime
-		}
-
-		batchSize := certification.BatchSize
-		if batchSize <= 0 {
-			batchSize = DefaultBatchSize
-		}
-
-		bufferSize := certification.BufferSize
-		if bufferSize <= 0 {
-			bufferSize = DefaultBufferSize
-		}
-
-		flushInterval := certification.FlushInterval
-		if flushInterval <= 0 {
-			flushInterval = DefaultFlushInterval
-		}
-
-		workers := certification.Workers
-		if workers <= 0 {
-			workers = DefaultWorkers
-		}
-
-		responseTimeout := certification.ResponseTimeout
-		if responseTimeout <= 0 {
-			responseTimeout = DefaultResponseTimeout
-		}
-
-		certificationClient := NewCertificationClient(
-			ctx,
-			tms.Network(),
-			tms.Channel(),
-			tms.Namespace(),
-			tms.Vault().NewQueryEngine(),
-			tms.Vault().CertificationStorage(),
-			d.ViewManager,
-			certifiers,
-			d.Subscriber,
-			maxAttempts,
-			waitTime,
-			batchSize,
-			bufferSize,
-			flushInterval,
-			workers,
-			responseTimeout,
-			d.MetricsProvider,
-		)
-		if err := certificationClient.Scan(); err != nil {
-			logger.Warnf("failed to scan the vault for tokens to be certified [%s]", err)
-		}
-
-		certificationClient.Start()
-
-		d.CertificationClients[k] = certificationClient
-		cm = certificationClient
+	if cm, ok := d.CertificationClients[k]; ok {
+		return cm, nil
 	}
 
-	return cm, nil
+	certification := &Certification{}
+	if err := tms.Configuration().UnmarshalKey(ConfigurationKey, &certification); err != nil {
+		return nil, errors.Wrap(err, "failed unmarshalling certification config")
+	}
+
+	certifiers, err := d.Resolver.ResolveIdentities(certification.IDs...)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "cannot resolve certifier identities")
+	}
+
+	if len(certifiers) == 0 {
+		return nil, errors.Errorf("no certifier id configured")
+	}
+
+	cfg := certification.withDefaults()
+	certificationClient := NewCertificationClient(
+		ctx,
+		tms.Network(),
+		tms.Channel(),
+		tms.Namespace(),
+		tms.Vault().NewQueryEngine(),
+		tms.Vault().CertificationStorage(),
+		d.ViewManager,
+		certifiers,
+		d.Subscriber,
+		cfg.MaxAttempts,
+		cfg.WaitTime,
+		cfg.BatchSize,
+		cfg.BufferSize,
+		cfg.FlushInterval,
+		cfg.Workers,
+		cfg.ResponseTimeout,
+		d.MetricsProvider,
+	)
+	if err := certificationClient.Scan(); err != nil {
+		logger.Warnf("failed to scan the vault for tokens to be certified [%s]", err)
+	}
+
+	certificationClient.Start()
+
+	d.CertificationClients[k] = certificationClient
+
+	return certificationClient, nil
+}
+
+// withDefaults returns a copy of c where every non-positive tunable is replaced by its default.
+func (c *Certification) withDefaults() Certification {
+	out := *c
+	out.MaxAttempts = positiveOr(c.MaxAttempts, DefaultMaxAttempts)
+	out.WaitTime = positiveOr(c.WaitTime, DefaultWaitTime)
+	out.BatchSize = positiveOr(c.BatchSize, DefaultBatchSize)
+	out.BufferSize = positiveOr(c.BufferSize, DefaultBufferSize)
+	out.FlushInterval = positiveOr(c.FlushInterval, DefaultFlushInterval)
+	out.Workers = positiveOr(c.Workers, DefaultWorkers)
+	out.ResponseTimeout = positiveOr(c.ResponseTimeout, DefaultResponseTimeout)
+
+	return out
+}
+
+// positiveOr returns v if it is strictly positive, def otherwise.
+func positiveOr[T int | time.Duration](v, def T) T {
+	if v <= 0 {
+		return def
+	}
+
+	return v
 }
 
 func (d *Driver) NewCertificationService(tms *token.ManagementService, wallet string) (driver.CertificationService, error) {
