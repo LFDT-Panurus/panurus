@@ -565,7 +565,18 @@ For more details on the specific Protobuf messages used by each driver, see:
 ### Recommendations for Protocol Changes
 *   **Never Reuse Field Numbers**: Once a field number is assigned in a `.proto` file, it must never be reassigned to a different field, even if the original field is deprecated.
 *   **Prefer Optional Fields**: Use `proto3` defaults or explicitly check for presence to ensure that missing fields from older clients don't cause crashes.
-*   **Versioned Packages**: For major, breaking changes in a driver's internal logic, create a new protobuf package (e.g., `package zkatdlognogh.v2;`). This allows both the old and new unmarshallers to coexist in the same codebase.
+*   **Versioned Packages**: For major, breaking changes in a driver's internal logic, create a new protobuf package (e.g., `package panurus.token.zkatdlog.v2;`). This allows both the old and new unmarshallers to coexist in the same codebase.
+
+### Package Names and File Paths
+
+All Panurus protos use the `panurus.` package prefix (for example `panurus.token.driver.v1`).
+`buf.yaml` declares one module at the repository root, so each file registers under its
+repository-relative path (for example `token/driver/protos/v1/common.proto`). Imports use
+the same paths. This keeps Panurus descriptors unique in the global protobuf registry, so a
+binary can also link other modules that use bare file names such as `common.proto`.
+Package names and file paths are not part of the binary wire format.
+Changing them is still a `buf breaking` (`FILE`) violation, and it renames the generated
+Go `File_<path>_proto` descriptor variables. Treat such a change as a one-time exception.
 
 ### Automated Enforcement (`buf breaking`)
 

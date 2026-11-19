@@ -6,7 +6,7 @@
 
 syntax = "proto3";
 
-package fabric_token_sdk.token.zkatdlog.v1;
+package panurus.token.zkatdlog.v1;
 
 option go_package = "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/v1/math";
 

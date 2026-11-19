@@ -4,7 +4,7 @@
 
 syntax = "proto3";
 
-package identity_idemix;
+package panurus.identity.idemix.v1;
 
 option go_package = "github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto/protos-go/config";
 
@@ -23,9 +23,11 @@ message SerializedIdemixIdentity {
   // proof contains the cryptographic evidence that this identity is valid
   bytes proof = 4;
 
+  // schema names the idemix credential schema of this identity
   string schema = 5;
 }
 
+// IdemixConfig contains the configuration of an idemix identity provider
 message IdemixConfig {
   // Version indicates message protocol version
   uint64 version = 1;
@@ -75,5 +77,6 @@ message IdemixSignerConfig {
   // is the identifier of the secret key sk
   bytes ski = 8;
 
+  // schema names the idemix credential schema of the default signer
   string schema = 9;
 }
