@@ -15,6 +15,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/common"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/upgrade"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/issue"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
 	token2 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
@@ -49,6 +50,95 @@ func NewIssueService(
 	}
 }
 
+// resolveUpgradeIssueParams handles the special case where the issue also contains a redemption:
+// it extracts the (single) token type and total value to issue from the tokens being upgraded,
+// and resolves the issuer identity for that type.
+func (s *IssueService) resolveUpgradeIssueParams(ctx context.Context, opts *driver.IssueOptions, pp *setup.PublicParams) (driver.Identity, token.Type, []uint64, error) {
+	// this is a special case where the issue contains also redemption
+	// we need to extract token types and values from the passed tokens
+	tokensToUpgrade, err := s.TokensUpgradeService.ProcessTokensUpgradeRequest(ctx, opts.TokensUpgradeRequest)
+	if err != nil {
+		return nil, "", nil, errors.Wrapf(err, "failed to extract token types and values from the passed tokens")
+	}
+
+	// check that token types are all the same and sum the token values
+	if len(tokensToUpgrade) == 0 {
+		return nil, "", nil, errors.New("no token types found in the passed tokens")
+	}
+	tokenType := tokensToUpgrade[0].Type
+	var totalValue uint64
+	for _, t := range tokensToUpgrade {
+		if t.Type != tokenType {
+			return nil, "", nil, errors.New("all token types should be the same")
+		}
+		// sum the token values
+		q, err := token.NewUBigQuantity(t.Quantity, pp.QuantityPrecision)
+		if err != nil {
+			return nil, "", nil, errors.Wrapf(err, "failed to create quantity from [%s]", t.Quantity)
+		}
+		totalValue += q.Uint64()
+	}
+
+	s.Logger.DebugfContext(ctx, "upgrade: extracted token type [%s] and value [%d] from the passed tokens", tokenType, totalValue)
+
+	// fetch issuer identity
+	issuerIdentity, err := opts.Wallet.GetIssuerIdentity(tokenType)
+	if err != nil {
+		return nil, "", nil, errors.WithMessagef(err, "failed getting issuer identity for type [%s]", tokenType)
+	}
+
+	return issuerIdentity, tokenType, []uint64{totalValue}, nil
+}
+
+// buildIssueInputsMetadata builds the upgrade-request inputs metadata and, if this issue also
+// upgrades tokens, populates issueAction.Inputs from the upgrade request's tokens.
+func buildIssueInputsMetadata(issueAction *issue.Action, opts *driver.IssueOptions) []*driver.IssueInputMetadata {
+	if opts == nil || opts.TokensUpgradeRequest == nil || len(opts.TokensUpgradeRequest.Tokens) == 0 {
+		return nil
+	}
+	var inputsMetadata []*driver.IssueInputMetadata
+	tokens := opts.TokensUpgradeRequest.Tokens
+	issueAction.Inputs = make([]*issue.ActionInput, len(tokens))
+	for i, tok := range tokens {
+		issueAction.Inputs[i] = &issue.ActionInput{
+			ID:    tok.ID,
+			Token: tok.Token,
+		}
+		inputsMetadata = append(inputsMetadata, &driver.IssueInputMetadata{
+			TokenID: &tok.ID,
+		})
+	}
+
+	return inputsMetadata
+}
+
+// buildIssueOutputsMetadata builds the per-output issue metadata (audit info + receiver) for
+// every issued output.
+func (s *IssueService) buildIssueOutputsMetadata(ctx context.Context, owners [][]byte, zkOutputsMetadata []*token2.Metadata) ([]*driver.IssueOutputMetadata, error) {
+	var outputsMetadata []*driver.IssueOutputMetadata
+	for i, owner := range owners {
+		raw, err := zkOutputsMetadata[i].Serialize()
+		if err != nil {
+			return nil, errors.WithMessagef(err, "failed serializing token info")
+		}
+		auditInfo, err := s.Deserializer.GetAuditInfo(ctx, owner, s.WalletService)
+		if err != nil {
+			return nil, err
+		}
+		receivers, err := common2.AuditableRecipients(ctx, s.Deserializer, s.WalletService, owner)
+		if err != nil {
+			return nil, errors.WithMessagef(err, "failed getting receivers of issue output [%d]", i)
+		}
+		outputsMetadata = append(outputsMetadata, &driver.IssueOutputMetadata{
+			OutputMetadata:  raw,
+			OutputAuditInfo: auditInfo,
+			Receivers:       receivers,
+		})
+	}
+
+	return outputsMetadata, nil
+}
+
 // Issue returns an IssueAction as a function of the passed arguments
 // Issue also returns a serialization TokenInformation associated with issued tokens
 // and the identity of the issuer
@@ -65,38 +155,10 @@ func (s *IssueService) Issue(ctx context.Context, issuerIdentity driver.Identity
 
 	pp := s.PublicParametersManager.PublicParams()
 	if issuerIdentity.IsNone() && len(tokenType) == 0 && values == nil {
-		// this is a special case where the issue contains also redemption
-		// we need to extract token types and values from the passed tokens
-		tokensToUpgrade, err := s.TokensUpgradeService.ProcessTokensUpgradeRequest(ctx, opts.TokensUpgradeRequest)
+		var err error
+		issuerIdentity, tokenType, values, err = s.resolveUpgradeIssueParams(ctx, opts, pp)
 		if err != nil {
-			return nil, nil, errors.Wrapf(err, "failed to extract token types and values from the passed tokens")
-		}
-
-		// check that token types are all the same and sum the token values
-		if len(tokensToUpgrade) == 0 {
-			return nil, nil, errors.New("no token types found in the passed tokens")
-		}
-		tokenType = tokensToUpgrade[0].Type
-		var totalValue uint64
-		for _, t := range tokensToUpgrade {
-			if t.Type != tokenType {
-				return nil, nil, errors.New("all token types should be the same")
-			}
-			// sum the token values
-			q, err := token.NewUBigQuantity(t.Quantity, pp.QuantityPrecision)
-			if err != nil {
-				return nil, nil, errors.Wrapf(err, "failed to create quantity from [%s]", t.Quantity)
-			}
-			totalValue += q.Uint64()
-		}
-		values = []uint64{totalValue}
-
-		s.Logger.DebugfContext(ctx, "upgrade: extracted token type [%s] and value [%d] from the passed tokens", tokenType, totalValue)
-
-		// fetch issuer identity
-		issuerIdentity, err = opts.Wallet.GetIssuerIdentity(tokenType)
-		if err != nil {
-			return nil, nil, errors.WithMessagef(err, "failed getting issuer identity for type [%s]", tokenType)
+			return nil, nil, err
 		}
 	}
 
@@ -121,40 +183,11 @@ func (s *IssueService) Issue(ctx context.Context, issuerIdentity driver.Identity
 
 	// metadata
 
-	var inputsMetadata []*driver.IssueInputMetadata
-	if opts != nil && opts.TokensUpgradeRequest != nil && len(opts.TokensUpgradeRequest.Tokens) > 0 {
-		tokens := opts.TokensUpgradeRequest.Tokens
-		issueAction.Inputs = make([]*issue.ActionInput, len(tokens))
-		for i, tok := range tokens {
-			issueAction.Inputs[i] = &issue.ActionInput{
-				ID:    tok.ID,
-				Token: tok.Token,
-			}
-			inputsMetadata = append(inputsMetadata, &driver.IssueInputMetadata{
-				TokenID: &tok.ID,
-			})
-		}
-	}
+	inputsMetadata := buildIssueInputsMetadata(issueAction, opts)
 
-	var outputsMetadata []*driver.IssueOutputMetadata
-	for i, owner := range owners {
-		raw, err := zkOutputsMetadata[i].Serialize()
-		if err != nil {
-			return nil, nil, errors.WithMessagef(err, "failed serializing token info")
-		}
-		auditInfo, err := s.Deserializer.GetAuditInfo(ctx, owner, s.WalletService)
-		if err != nil {
-			return nil, nil, err
-		}
-		receivers, err := common2.AuditableRecipients(ctx, s.Deserializer, s.WalletService, owner)
-		if err != nil {
-			return nil, nil, errors.WithMessagef(err, "failed getting receivers of issue output [%d]", i)
-		}
-		outputsMetadata = append(outputsMetadata, &driver.IssueOutputMetadata{
-			OutputMetadata:  raw,
-			OutputAuditInfo: auditInfo,
-			Receivers:       receivers,
-		})
+	outputsMetadata, err := s.buildIssueOutputsMetadata(ctx, owners, zkOutputsMetadata)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	issuerSerializedIdentity, err := issuer.Signer.Serialize()
@@ -186,6 +219,32 @@ func (s *IssueService) Issue(ctx context.Context, issuerIdentity driver.Identity
 	return issueAction, meta, err
 }
 
+// verifyIssueOutput checks the i-th output's metadata against its on-chain commitment, returning
+// the commitment (for the aggregate ZK-proof check) after validating the cleartext token matches.
+func (s *IssueService) verifyIssueOutput(ctx context.Context, action *issue.Action, i int, om *driver.IssueOutputMetadata, pp *setup.PublicParams) (*math.G1, error) {
+	if om == nil || len(om.OutputMetadata) == 0 {
+		return nil, errors.Errorf("missing output metadata for output index [%d]", i)
+	}
+	// token information in cleartext
+	metadata := &token2.Metadata{}
+	if err := metadata.Deserialize(om.OutputMetadata); err != nil {
+		return nil, errors.Wrap(err, "failed unmarshalling metadata")
+	}
+	if err := metadata.Validate(true); err != nil {
+		return nil, errors.Wrap(err, "invalid metadata")
+	}
+
+	// check that token info matches output.
+	// If so, return token in cleartext. Else return an error.
+	tok, err := action.Outputs[i].ToClear(metadata, pp)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed getting token in the clear")
+	}
+	s.Logger.DebugfContext(ctx, "transfer output [%s,%s,%s]", tok.Type, tok.Quantity, driver.Identity(tok.Owner))
+
+	return action.Outputs[i].Data, nil
+}
+
 // VerifyIssue checks if the outputs of an IssueAction match the passed metadata
 func (s *IssueService) VerifyIssue(ctx context.Context, ia driver.IssueAction, outputMetadata []*driver.IssueOutputMetadata) error {
 	// prepare
@@ -207,27 +266,11 @@ func (s *IssueService) VerifyIssue(ctx context.Context, ia driver.IssueAction, o
 	pp := s.PublicParametersManager.PublicParams()
 	coms := make([]*math.G1, len(action.Outputs))
 	for i := range len(action.Outputs) {
-		coms[i] = action.Outputs[i].Data
-
-		if outputMetadata[i] == nil || len(outputMetadata[i].OutputMetadata) == 0 {
-			return errors.Errorf("missing output metadata for output index [%d]", i)
-		}
-		// token information in cleartext
-		metadata := &token2.Metadata{}
-		if err := metadata.Deserialize(outputMetadata[i].OutputMetadata); err != nil {
-			return errors.Wrap(err, "failed unmarshalling metadata")
-		}
-		if err := metadata.Validate(true); err != nil {
-			return errors.Wrap(err, "invalid metadata")
-		}
-
-		// check that token info matches output.
-		// If so, return token in cleartext. Else return an error.
-		tok, err := action.Outputs[i].ToClear(metadata, pp)
+		com, err := s.verifyIssueOutput(ctx, action, i, outputMetadata[i], pp)
 		if err != nil {
-			return errors.Wrap(err, "failed getting token in the clear")
+			return err
 		}
-		s.Logger.DebugfContext(ctx, "transfer output [%s,%s,%s]", tok.Type, tok.Quantity, driver.Identity(tok.Owner))
+		coms[i] = com
 	}
 
 	// check the proof

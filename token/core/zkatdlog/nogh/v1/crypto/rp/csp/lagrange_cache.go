@@ -80,42 +80,39 @@ func getOrComputeDenomInvsBN254(n uint64, partial bool) []*bn254fr.Element {
 	return actual.(*lagrangeCacheEntry).denomInvsBN254
 }
 
-// computeDenomInvs computes and batch-inverts the Lagrange denominators for the
-// given parameters using native gnark-crypto arithmetic (no big.Int).
-//
-// Full variant (partial=false):
+// computeDenomInvsFull computes the full-variant Lagrange denominators using native gnark-crypto
+// arithmetic (no big.Int):
 //
 //	m = n+1 evaluation points {0,...,n}
 //	d_i = ∏_{j=0, j≠i}^{n} (i-j)   for i = 0..n
-//
-// Partial variant (partial=true):
+func computeDenomInvsFull[T any, E math2.GnarkFr[T]](n uint64) []E {
+	m := int(n) + 1 // #nosec G115
+	denoms := make([]T, m)
+	denomsE := make([]E, m)
+	for i := range denoms {
+		denomsE[i] = E(&denoms[i])
+		denomsE[i].SetOne()
+		var diff T
+		diffE := E(&diff)
+		for j := range m {
+			if j == i {
+				continue
+			}
+			diffE.SetInt64(int64(i - j))
+			denomsE[i].Mul(denomsE[i], diffE)
+		}
+	}
+
+	return math2.NativeBatchInverse[T, E](denomsE)
+}
+
+// computeDenomInvsPartial computes the partial-variant Lagrange denominators using native
+// gnark-crypto arithmetic (no big.Int):
 //
 //	total = 2n+1 evaluation points {0,...,2n}
 //	relevant indices = {0, n+1, ..., 2n}  (n+1 entries)
 //	d_k = ∏_{j=0, j≠relevant[k]}^{2n} (relevant[k]-j)
-func computeDenomInvs[T any, E math2.GnarkFr[T]](n uint64, partial bool) []E {
-	if !partial {
-		m := int(n) + 1 // #nosec G115
-		denoms := make([]T, m)
-		denomsE := make([]E, m)
-		for i := range denoms {
-			denomsE[i] = E(&denoms[i])
-			denomsE[i].SetOne()
-			var diff T
-			diffE := E(&diff)
-			for j := range m {
-				if j == i {
-					continue
-				}
-				diffE.SetInt64(int64(i - j))
-				denomsE[i].Mul(denomsE[i], diffE)
-			}
-		}
-
-		return math2.NativeBatchInverse[T, E](denomsE)
-	}
-
-	// Partial: relevant indices are {0, n+1, ..., 2n}.
+func computeDenomInvsPartial[T any, E math2.GnarkFr[T]](n uint64) []E {
 	total := 2*int(n) + 1             // #nosec G115
 	relevant := make([]int, int(n)+1) // #nosec G115
 	relevant[0] = 0
@@ -140,4 +137,15 @@ func computeDenomInvs[T any, E math2.GnarkFr[T]](n uint64, partial bool) []E {
 	}
 
 	return math2.NativeBatchInverse[T, E](denomsE)
+}
+
+// computeDenomInvs computes and batch-inverts the Lagrange denominators for the given
+// parameters, dispatching to the full or partial variant (see computeDenomInvsFull /
+// computeDenomInvsPartial).
+func computeDenomInvs[T any, E math2.GnarkFr[T]](n uint64, partial bool) []E {
+	if !partial {
+		return computeDenomInvsFull[T, E](n)
+	}
+
+	return computeDenomInvsPartial[T, E](n)
 }

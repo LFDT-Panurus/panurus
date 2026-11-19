@@ -208,6 +208,21 @@ func TestTokensService_GenUpgradeProof(t *testing.T) {
 	}
 }
 
+// checkUpgradeProofTC is a single table-driven test case for
+// TestTokensService_CheckUpgradeProof.
+type checkUpgradeProofTC struct {
+	name            string
+	ch              driver.TokensUpgradeChallenge
+	ledgerTokens    []token.LedgerToken
+	proof           func() driver.TokensUpgradeProof
+	wantErr         bool
+	errMsg          string
+	expected        bool
+	wantErrProcess  bool
+	processErrMsg   string
+	getDeserializer func() upgrade.Deserializer
+}
+
 func TestTokensService_CheckUpgradeProof(t *testing.T) {
 	ts, err := upgrade.NewService(nil, 16, nil, nil, nil, nil)
 	require.NoError(t, err)
@@ -242,18 +257,7 @@ func TestTokensService_CheckUpgradeProof(t *testing.T) {
 		Format:        formatFabtoken16,
 	}}
 
-	tests := []struct {
-		name            string
-		ch              driver.TokensUpgradeChallenge
-		ledgerTokens    []token.LedgerToken
-		proof           func() driver.TokensUpgradeProof
-		wantErr         bool
-		errMsg          string
-		expected        bool
-		wantErrProcess  bool
-		processErrMsg   string
-		getDeserializer func() upgrade.Deserializer
-	}{
+	tests := []checkUpgradeProofTC{
 		{
 			name:            "challenge size mismatch",
 			ch:              []byte{0, 1, 2},
@@ -510,35 +514,7 @@ func TestTokensService_CheckUpgradeProof(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ts, err := upgrade.NewService(nil, 16, tt.getDeserializer(), nil, nil, nil)
-			require.NoError(t, err)
-			proof := tt.proof()
-			res, err := ts.CheckUpgradeProof(t.Context(), tt.ch, proof, tt.ledgerTokens)
-			if tt.wantErr {
-				require.Error(t, err)
-				require.EqualError(t, err, tt.errMsg)
-			} else {
-				require.NoError(t, err)
-				assert.Equal(t, tt.expected, res)
-			}
-
-			_, err = ts.ProcessTokensUpgradeRequest(t.Context(), &driver.TokenUpgradeRequest{
-				Challenge: tt.ch,
-				Tokens:    tt.ledgerTokens,
-				Proof:     proof,
-			})
-			if tt.wantErrProcess {
-				require.Error(t, err)
-				if len(tt.processErrMsg) != 0 {
-					require.EqualError(t, err, tt.processErrMsg)
-				}
-			} else {
-				if tt.wantErr {
-					require.Error(t, err)
-				} else {
-					require.NoError(t, err)
-				}
-			}
+			runCheckUpgradeProofCase(t, tt)
 		})
 	}
 
@@ -557,4 +533,42 @@ func TestTokensService_CheckUpgradeProof(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "unsupported token format [invalid]")
 	})
+}
+
+// runCheckUpgradeProofCase exercises a single checkUpgradeProofTC: it calls
+// CheckUpgradeProof and asserts the expected result/error, then calls
+// ProcessTokensUpgradeRequest with the same inputs and asserts its expected
+// result/error.
+func runCheckUpgradeProofCase(t *testing.T, tt checkUpgradeProofTC) {
+	t.Helper()
+
+	ts, err := upgrade.NewService(nil, 16, tt.getDeserializer(), nil, nil, nil)
+	require.NoError(t, err)
+	proof := tt.proof()
+	res, err := ts.CheckUpgradeProof(t.Context(), tt.ch, proof, tt.ledgerTokens)
+	if tt.wantErr {
+		require.Error(t, err)
+		require.EqualError(t, err, tt.errMsg)
+	} else {
+		require.NoError(t, err)
+		assert.Equal(t, tt.expected, res)
+	}
+
+	_, err = ts.ProcessTokensUpgradeRequest(t.Context(), &driver.TokenUpgradeRequest{
+		Challenge: tt.ch,
+		Tokens:    tt.ledgerTokens,
+		Proof:     proof,
+	})
+	if tt.wantErrProcess {
+		require.Error(t, err)
+		if len(tt.processErrMsg) != 0 {
+			require.EqualError(t, err, tt.processErrMsg)
+		}
+	} else {
+		if tt.wantErr {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+		}
+	}
 }
