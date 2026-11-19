@@ -86,6 +86,11 @@ func TestConfig_GetRetryInterval(t *testing.T) {
 			expected: defaultRetryInterval,
 		},
 		{
+			name:     "default when negative",
+			config:   &Config{RetryInterval: -time.Second},
+			expected: defaultRetryInterval,
+		},
+		{
 			name:     "custom value",
 			config:   &Config{RetryInterval: 10 * time.Second},
 			expected: 10 * time.Second,

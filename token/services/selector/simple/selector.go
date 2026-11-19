@@ -95,6 +95,9 @@ func (s *selector) selectByID(ctx context.Context, ownerFilter token.OwnerFilter
 		if unspentTokens != nil {
 			unspentTokens.Close()
 		}
+		if err := ctx.Err(); err != nil {
+			return nil, nil, errors.Wrap(err, "token selection aborted")
+		}
 		logger.DebugfContext(ctx, "start token selection, iteration [%d/%d]", i, s.numRetry)
 		unspentTokens, err = s.queryService.UnspentTokensIteratorBy(ctx, id, tokenType)
 		if err != nil {
@@ -196,6 +199,13 @@ func (s *selector) selectByID(ctx context.Context, ownerFilter token.OwnerFilter
 		// Unlock and check the conditions for a retry
 		s.locker.UnlockIDs(ctx, id, toBeSpent...)
 		s.locker.UnlockIDs(ctx, id, toBeCertified...)
+
+		// A caller that gave up during this attempt gets ctx.Err(), not a sentinel describing
+		// funds it no longer cares about. Checking here, before the backoff, also keeps a
+		// zero-length jitter timer from winning the select below against ctx.Done().
+		if err := ctx.Err(); err != nil {
+			return nil, nil, errors.Wrap(err, "token selection aborted")
+		}
 
 		if target.Cmp(potentialSumWithLocked) <= 0 && potentialSumWithLocked.Cmp(sum) != 0 {
 			// funds are potentially enough but they are locked
