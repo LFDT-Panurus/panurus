@@ -127,8 +127,10 @@ func (c *Config) GetNumRetries() int {
 	return defaultNumRetries
 }
 
+// GetRetryInterval returns the configured retry interval, or defaultRetryInterval when it is
+// not positive.
 func (c *Config) GetRetryInterval() time.Duration {
-	if c.RetryInterval != 0 {
+	if c.RetryInterval > 0 {
 		return c.RetryInterval
 	}
 

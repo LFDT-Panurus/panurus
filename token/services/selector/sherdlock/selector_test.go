@@ -87,6 +87,19 @@ func TestSelectorUnit(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "fetcher error")
 	})
+
+	t.Run("ContextCanceled", func(t *testing.T) {
+		mockFetcher := &mocks.FakeTokenFetcher{}
+		mockLocker := &mocks.FakeTokenLocker{}
+		s := sherdlock.NewSelector(sherdlock.Logger(), mockFetcher, mockLocker, 64, metrics)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+
+		_, _, err := s.Select(ctx, &unitTestMockOwnerFilter{id: "alice"}, "50", "ABC")
+		require.ErrorIs(t, err, context.Canceled)
+		assert.Zero(t, mockFetcher.UnspentTokensIteratorByCallCount(), "no selection work for a caller that already gave up")
+	})
 }
 
 func TestStubbornSelectorUnit(t *testing.T) {
@@ -132,7 +145,41 @@ func TestStubbornSelectorUnit(t *testing.T) {
 		mockFetcher.UnspentTokensIteratorByReturns(mockIt, nil)
 
 		_, _, err := s.Select(ctx, &unitTestMockOwnerFilter{id: "alice"}, "50", "ABC")
-		require.Error(t, err)
+		require.ErrorIs(t, err, context.Canceled)
+		assert.Zero(t, mockFetcher.UnspentTokensIteratorByCallCount(), "no selection work for a caller that already gave up")
+		assert.Zero(t, mockFetcher.HasEnoughSpendableTokensCallCount())
+	})
+
+	// A caller that gives up mid-selection stops the loop there and gets ctx.Err(), not the
+	// locked-funds/insufficient-funds sentinel, even with no backoff wait to notice it in.
+	t.Run("ContextCanceledDuringSelection", func(t *testing.T) {
+		mockFetcher := &mocks.FakeTokenFetcher{}
+		mockLocker := &mocks.FakeTokenLocker{}
+		s := sherdlock.NewStubbornSelector(sherdlock.Logger(), mockFetcher, mockLocker, 64, 0, 5, metrics)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		mockFetcher.UnspentTokensIteratorByStub = func(context.Context, string, token2.Type) (sherdlock.Iterator[*token2.UnspentTokenInWallet], error) {
+			it := &mocks.FakeIterator[*token2.UnspentTokenInWallet]{}
+			it.NextReturnsOnCall(0, &token2.UnspentTokenInWallet{Id: token2.ID{TxId: "tx1"}, Type: "ABC", Quantity: "100"}, nil)
+			it.NextReturnsOnCall(1, nil, nil)
+
+			return it, nil
+		}
+		mockLocker.TryLockStub = func(context.Context, *token2.ID, string) (bool, error) {
+			cancel()
+
+			return false, nil
+		}
+
+		_, _, err := s.Select(ctx, &unitTestMockOwnerFilter{id: "alice"}, "50", "ABC")
+		require.ErrorIs(t, err, context.Canceled)
+		require.NotErrorIs(t, err, token.SelectorInsufficientFunds)
+		require.NotErrorIs(t, err, token.SelectorSufficientButLockedFunds)
+		assert.Equal(t, 1, mockLocker.TryLockCallCount(), "no lock attempt after the caller gave up")
+		assert.Equal(t, 1, mockFetcher.UnspentTokensIteratorByCallCount(), "no refetch after the caller gave up")
+		assert.Positive(t, mockLocker.UnlockAllCallCount(), "locks must be released on abort")
 	})
 
 	t.Run("MaxRetriesExceeded", func(t *testing.T) {

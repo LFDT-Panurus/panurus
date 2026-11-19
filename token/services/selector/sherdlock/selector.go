@@ -96,9 +96,31 @@ func (m *StubbornSelector) Select(ctx context.Context, ownerFilter token.OwnerFi
 	// each inner leg reports its own count, and the caller wants the cost of the whole
 	// outer Select call rather than just that of its last leg.
 	totalImmediateRetries := 0
+	// aborted ends the call for a caller whose context is done. Every inner leg releases its
+	// locks before returning an error, but UnlockAll is idempotent, so it is called again here
+	// rather than relying on which path noticed the cancellation.
+	aborted := func(cause error) ([]*token2.ID, token2.Quantity, error) {
+		if err := m.locker.UnlockAll(ctx); err != nil {
+			m.logger.Errorf("failed to unlock tokens on context cancellation: %s", err)
+		}
+		m.metrics.SelectionDuration.Observe(time.Since(start).Seconds())
+		m.metrics.ImmediateRetries.Observe(float64(totalImmediateRetries))
+		m.metrics.SelectionOutcome.With(outcomeLabel, "error").Add(1)
+
+		return nil, nil, errors.Wrap(cause, "token selection aborted")
+	}
 	for retriesAfterBackoff := 0; retriesAfterBackoff <= m.maxRetriesAfterBackoff; retriesAfterBackoff++ {
+		if err := ctx.Err(); err != nil {
+			return aborted(err)
+		}
 		tokens, quantity, immediateRetries, err := m.selectWithoutMetrics(ctx, ownerFilter, q, tokenType, attempted)
 		totalImmediateRetries += immediateRetries
+		// A caller that gave up during this leg gets ctx.Err(), not a sentinel describing funds
+		// it no longer cares about. This also covers the backoff below: a zero-length timer
+		// and an already-done context are both ready at once, and the select would pick either.
+		if err != nil && ctx.Err() != nil {
+			return aborted(ctx.Err())
+		}
 		if err == nil || !errors.Is(err, token.SelectorSufficientButLockedFunds) {
 			m.metrics.SelectionDuration.Observe(time.Since(start).Seconds())
 			m.metrics.ImmediateRetries.Observe(float64(totalImmediateRetries))
@@ -128,14 +150,8 @@ func (m *StubbornSelector) Select(ctx context.Context, ownerFilter token.OwnerFi
 		case <-ctx.Done():
 			timer.Stop()
 			m.metrics.BackoffDuration.Observe(time.Since(backoffStart).Seconds())
-			if err := m.locker.UnlockAll(ctx); err != nil {
-				m.logger.Errorf("failed to unlock tokens on context cancellation: %s", err)
-			}
-			m.metrics.SelectionDuration.Observe(time.Since(start).Seconds())
-			m.metrics.ImmediateRetries.Observe(float64(totalImmediateRetries))
-			m.metrics.SelectionOutcome.With(outcomeLabel, "error").Add(1)
 
-			return nil, nil, ctx.Err()
+			return aborted(ctx.Err())
 		}
 		m.logger.DebugfContext(ctx, "Now it is our turn to retry...")
 	}
@@ -270,6 +286,9 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 	// told it is behind the store: see refreshCandidates.
 	fetched := false
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, immediateRetries, errors.Wrap(err, "token selection aborted")
+		}
 		remaining, remainingErr := quantity.Sub(sum)
 		if remainingErr != nil {
 			return nil, nil, immediateRetries, errors.Wrapf(remainingErr, "failed to compute remaining amount for [%s:%s]", owner.ID(), tokenType)
