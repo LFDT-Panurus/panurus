@@ -138,51 +138,68 @@ func (r *Result) printBlockingSummary() {
 	}
 }
 
-func (r *Result) printCPUSummary() {
-	type cpuEntry struct {
-		ID              trace.GoID
-		CPUTime         time.Duration
-		RunningTime     time.Duration
-		SyscallTime     time.Duration
-		Lifetime        time.Duration
-		AvgRunnableWait time.Duration
-		CreationStack   string
+type cpuEntry struct {
+	ID              trace.GoID
+	CPUTime         time.Duration
+	RunningTime     time.Duration
+	SyscallTime     time.Duration
+	Lifetime        time.Duration
+	AvgRunnableWait time.Duration
+	CreationStack   string
+}
+
+// buildCPUEntry builds a cpuEntry for stat, computing its lifetime (bounded by traceEndTime when
+// the goroutine never ended) and average runnable-wait. ok is false when stat has no measurable
+// CPU time and should be skipped.
+func buildCPUEntry(stat *GoroutineStats, traceEndTime trace.Time) (entry cpuEntry, ok bool) {
+	if stat.CPUTime <= 0 {
+		return cpuEntry{}, false
+	}
+	var lifetime time.Duration
+	if stat.StartTime != 0 {
+		end := stat.EndTime
+		if end == 0 && traceEndTime != 0 {
+			end = traceEndTime
+		}
+		if end > stat.StartTime {
+			lifetime = time.Duration(end - stat.StartTime)
+		}
+	}
+	var avgWait time.Duration
+	if stat.RunnableWaitCount > 0 {
+		avgWait = stat.RunnableWait / time.Duration(stat.RunnableWaitCount)
 	}
 
+	return cpuEntry{stat.ID, stat.CPUTime, stat.RunningTime, stat.SyscallTime, lifetime, avgWait, stat.CreationStack}, true
+}
+
+// printTopCPUEntries prints the top-5 (by CPU time) entries of cpuList.
+func printTopCPUEntries(cpuList []cpuEntry) {
+	fmt.Println("\nTop 5 CPU-Heavy Goroutines:")
+	if len(cpuList) == 0 {
+		fmt.Println("  No goroutines with measurable CPU time.")
+
+		return
+	}
+	limit := min(len(cpuList), 5)
+	for i := range limit {
+		e := cpuList[i]
+		fmt.Printf("  G%d: CPU=%v (run=%v, sys=%v), lifetime≈%v, avg run-q wait≈%v\n    Created at: %s\n",
+			e.ID, e.CPUTime, e.RunningTime, e.SyscallTime, e.Lifetime, e.AvgRunnableWait, e.CreationStack)
+	}
+}
+
+func (r *Result) printCPUSummary() {
 	var cpuList []cpuEntry
 	for _, stat := range r.GoroutineStats {
-		if stat.CPUTime > 0 {
-			var lifetime time.Duration
-			if stat.StartTime != 0 {
-				end := stat.EndTime
-				if end == 0 && r.TraceEndTime != 0 {
-					end = r.TraceEndTime
-				}
-				if end > stat.StartTime {
-					lifetime = time.Duration(end - stat.StartTime)
-				}
-			}
-			var avgWait time.Duration
-			if stat.RunnableWaitCount > 0 {
-				avgWait = stat.RunnableWait / time.Duration(stat.RunnableWaitCount)
-			}
-			cpuList = append(cpuList, cpuEntry{stat.ID, stat.CPUTime, stat.RunningTime, stat.SyscallTime, lifetime, avgWait, stat.CreationStack})
+		if entry, ok := buildCPUEntry(stat, r.TraceEndTime); ok {
+			cpuList = append(cpuList, entry)
 		}
 	}
 
 	sort.Slice(cpuList, func(i, j int) bool { return cpuList[i].CPUTime > cpuList[j].CPUTime })
 
-	fmt.Println("\nTop 5 CPU-Heavy Goroutines:")
-	if len(cpuList) == 0 {
-		fmt.Println("  No goroutines with measurable CPU time.")
-	} else {
-		limit := min(len(cpuList), 5)
-		for i := range limit {
-			e := cpuList[i]
-			fmt.Printf("  G%d: CPU=%v (run=%v, sys=%v), lifetime≈%v, avg run-q wait≈%v\n    Created at: %s\n",
-				e.ID, e.CPUTime, e.RunningTime, e.SyscallTime, e.Lifetime, e.AvgRunnableWait, e.CreationStack)
-		}
-	}
+	printTopCPUEntries(cpuList)
 }
 
 // analysisState holds the live state during the analysis of the trace.
