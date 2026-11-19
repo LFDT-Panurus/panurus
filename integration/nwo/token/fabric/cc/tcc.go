@@ -107,7 +107,7 @@ func (p *GenericBackend) PrepareNamespace(tms *topology3.TMS) {
 }
 
 // namespacePolicy returns the endorsement policy for the token namespace of tms: the raw
-// policy DSL string configured with fabric.WithNamespacePolicy, which the fabricx backend
+// policy DSL string configured with fabric.WithNamespacePolicy, which the Chaguar backend
 // also reads, or unanimity over orgs when none is configured.
 func namespacePolicy(tms *topology3.TMS, orgs []string) string {
 	if policy := fabric.GetNamespacePolicy(tms); len(policy) > 0 {
