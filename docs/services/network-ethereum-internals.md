@@ -44,7 +44,7 @@ in the endorser quorum. Security therefore reduces to endorser honesty and key c
 
 ## How it compares to the other drivers
 
-| Concern | Fabric | FabricX | EVM (this driver) |
+| Concern | Fabric | Chaguar | EVM (this driver) |
 |---|---|---|---|
 | Validation | chaincode on-chain | FSC off-chain + endorse | FSC off-chain + endorse |
 | Backend artifact | RWSet | RWSet (+ read deps) | typed `StateDelta` |
@@ -53,7 +53,7 @@ in the endorser quorum. Security therefore reduces to endorser honesty and key c
 | Re-validation at commit | MVCC | MVCC | the contract does it explicitly — there is no read-set |
 | Finality signal | push committer | notification queue | receipt + `eth_getTransactionByHash` polling, primarily; |
 
-The EVM driver follows FabricX structurally — off-chain validation, on-chain endorsement check — but emits a
+The EVM driver follows Chaguar structurally — off-chain validation, on-chain endorsement check — but emits a
 `StateDelta` instead of an RWSet and replaces MVCC re-validation with the explicit checks in
 `applyStateDelta` (see [The checks, in order](./network-ethereum.md#the-checks-in-order)).
 

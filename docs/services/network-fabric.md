@@ -284,8 +284,8 @@ The set of endorsers to contact is selected by `fsc_endorsement.policy.type`:
   error rather than falling back to a weaker policy. Where the policy requires more than
   one signer from the same MSP, each of those signer slots is filled with a *distinct*
   configured endorser, never the same endorser twice. See
-  [FabricX FSC Endorsement Service](network-fabricx.md#fsc-endorsement-service) for
-  the equivalent (query-service-based) mechanism on FabricX.
+  [Chaguar FSC Endorsement Service](network-chaguar.md#fsc-endorsement-service) for
+  the equivalent (query-service-based) mechanism on Chaguar.
 
 ### Public Parameters Setup/Update via FSC
 
@@ -675,7 +675,7 @@ func (n *Network) ComputeTxID(id *driver.TxID) string {
 
 - [Token Transaction Finality](./finality.md) - Deep-dive into finality detection and storage effects, including the delivery-based listener manager and the ledger-height retry above
 - [Network Service Overview](./network.md) - Generic network service concepts
-- [FabricX Implementation](./network-fabricx.md) - FSC-based endorsement
+- [Chaguar Implementation](./network-chaguar.md) - FSC-based endorsement
 - [Token Chaincode](../../token/services/network/fabric/tcc/) - Chaincode implementation
 - [TTX Service](./ttx.md) - Token transaction orchestration
 - [Public Parameters](../public_parameters.md) - Cryptographic setup

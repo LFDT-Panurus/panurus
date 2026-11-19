@@ -1,25 +1,25 @@
-# Network Service - FabricX Implementation
+# Network Service - Chaguar Implementation
 
-The FabricX network implementation ([`fabricx.Network`](../../token/services/network/fabricx/network.go)) is an optimized variant of Hyperledger Fabric where **FSC (Fabric Smart Client) nodes act as endorsers**, eliminating the need for traditional chaincode deployment on peers. This architecture provides higher performance and more flexible endorsement policies.
+The Chaguar network implementation ([`fabricx.Network`](../../token/services/network/fabricx/network.go)) is an optimized variant of Hyperledger Fabric where **FSC (Fabric Smart Client) nodes act as endorsers**, eliminating the need for traditional chaincode deployment on peers. This architecture provides higher performance and more flexible endorsement policies.
 
 ## Architecture Overview
 
-Unlike traditional Fabric, FabricX uses FSC nodes as endorsers instead of relying on chaincode running on Fabric peers. This fundamental architectural difference enables more efficient transaction processing and greater flexibility in endorsement logic.
+Unlike traditional Fabric, Chaguar uses FSC nodes as endorsers instead of relying on chaincode running on Fabric peers. This fundamental architectural difference enables more efficient transaction processing and greater flexibility in endorsement logic.
 
 ```mermaid
 graph TB
     subgraph "Application Node running FSC/Panurus stack"
         App[Application/TTX]
-        NetI[FabricX Network Service]
+        NetI[Chaguar Network Service]
     end
 
     subgraph "Endorser FSC Node 1"
-        NetE1[FabricX Network Service]
+        NetE1[Chaguar Network Service]
         Val1[Token Validator]
     end
 
     subgraph "Endorser FSC Node 2"
-        NetE2[FabricX Network Service]
+        NetE2[Chaguar Network Service]
         Val2[Token Validator]
     end
 
@@ -45,7 +45,7 @@ graph TB
 
 ### Key Architectural Differences from Fabric
 
-| Aspect | Traditional Fabric | FabricX                          |
+| Aspect | Traditional Fabric | Chaguar                          |
 |--------|-------------------|----------------------------------|
 | **Endorsers** | Fabric peers with chaincode | FSC nodes with validation logic  |
 | **Chaincode** | Required on all peers | Not required                     |
@@ -55,7 +55,7 @@ graph TB
 
 ## FSC Node as Endorser
 
-In FabricX, FSC nodes take on the role of endorsers, performing validation and signing operations that would traditionally be done by chaincode on Fabric peers.
+In Chaguar, FSC nodes take on the role of endorsers, performing validation and signing operations that would traditionally be done by chaincode on Fabric peers.
 
 ### Endorser Node Architecture
 
@@ -128,7 +128,7 @@ Here's a complete end-to-end flow for a token transfer:
 sequenceDiagram
     participant App as Application
     participant TTX as TTX Service
-    participant Net as FabricX Network
+    participant Net as Chaguar Network
     participant E1 as FSC Endorser 1
     participant E2 as FSC Endorser 2
     participant Ord as Orderer
@@ -178,11 +178,11 @@ sequenceDiagram
 
 ## FSC Endorsement Service
 
-The FSC Endorsement Service ([`fsc.EndorsementService`](../../token/services/network/fabric/endorsement/fsc/service.go)) manages the endorsement process for FabricX.
+The FSC Endorsement Service ([`fsc.EndorsementService`](../../token/services/network/fabric/endorsement/fsc/service.go)) manages the endorsement process for Chaguar.
 
 ### Endorsement Policies
 
-FabricX supports flexible endorsement policies:
+Chaguar supports flexible endorsement policies:
 
 #### All Policy
 Requires endorsements from all configured endorsers:
@@ -237,7 +237,7 @@ services:
           - endorser3.example.com
 ```
 
-On FabricX, the namespace's endorsement policy is fetched via the query service's
+On Chaguar, the namespace's endorsement policy is fetched via the query service's
 `GetNamespacePolicies` RPC, and endorser selection depends on which rule the policy uses:
 
 - **`msp_rule`** (an identity/MSP-based `SignaturePolicyEnvelope`): the policy is mapped
@@ -303,7 +303,7 @@ graph TB
 
 ## Finality Processing
 
-FabricX uses asynchronous finality processing with an event queue for high performance.
+Chaguar uses asynchronous finality processing with an event queue for high performance.
 
 ### Async Event Queue Architecture
 
@@ -345,7 +345,7 @@ error returns immediately.
 ```yaml
 token:
   finality:
-    type: notification  # FabricX uses notification mode
+    type: notification  # Chaguar uses notification mode
     notification:
       workers: 10       # Number of parallel workers
       queueSize: 1000   # Event queue capacity
@@ -353,7 +353,7 @@ token:
 
 ## Public Parameters Management
 
-On FabricX the public parameters live on the ledger under two keys written together
+On Chaguar the public parameters live on the ledger under two keys written together
 by every setup transaction: the setup key (the raw parameters) and the setup *hash*
 key (their SHA256 digest). Every token transaction an endorser translates carries a
 **versioned read dependency** on the setup hash key
@@ -404,7 +404,7 @@ Two consequences of reading the version rather than counting notifications:
   [#2255](https://github.com/LFDT-Panurus/panurus/issues/2255) the keeper treated
   its first observation as "initialization" and stayed behind by exactly the number
   of updates it had not witnessed, which permanently broke any endorser restarted
-  after a parameters update. The FabricX fungible suite
+  after a parameters update. The Chaguar fungible suite
   (`integration/token/fungible/dlogx`) has specs for this end to end: its
   public-parameters-update specs (T2, T2.1, T7) restart the endorser after the
   update and then transact against the new parameters. They are not run in CI yet
@@ -458,17 +458,17 @@ token:
 
 ## State Queries
 
-FabricX provides an optimized ledger implementation with advanced query capabilities.
+Chaguar provides an optimized ledger implementation with advanced query capabilities.
 
 ### Query Executor
 
-The FabricX ledger uses a specialized query executor ([`qe.QueryStatesExecutor`](../../token/services/network/fabricx/qe/)) for efficient state access:
+The Chaguar ledger uses a specialized query executor ([`qe.QueryStatesExecutor`](../../token/services/network/fabricx/qe/)) for efficient state access:
 
 ```mermaid
 sequenceDiagram
     participant App as Application
-    participant Net as FabricX Network
-    participant Ledger as FabricX Ledger
+    participant Net as Chaguar Network
+    participant Ledger as Chaguar Ledger
     participant QE as Query Executor
     participant State as Committer
 
@@ -487,7 +487,7 @@ sequenceDiagram
 
 ### 1. Parallel Endorsement Collection
 
-FabricX collects endorsements in parallel, reducing latency:
+Chaguar collects endorsements in parallel, reducing latency:
 
 ```go
 // Simplified parallel endorsement
@@ -509,7 +509,7 @@ Event queue decouples finality processing from the main event loop:
 
 ### 3. Optimized State Queries
 
-FabricX ledger implementation provides:
+Chaguar ledger implementation provides:
 
 - **Batch Queries**: Multiple keys fetched in single operation
 - **Efficient Serialization**: Optimized data encoding/decoding
@@ -517,7 +517,7 @@ FabricX ledger implementation provides:
 
 ## Configuration Examples
 
-### Complete FabricX Configuration
+### Complete Chaguar Configuration
 
 ```yaml
 # FSC Network Configuration
@@ -538,7 +538,7 @@ token:
         workers: 10
         queueSize: 1000
 
-   # FabricX-specific Configuration
+   # Chaguar-specific Configuration
   fabricx:
      lookup:
         permanent:
@@ -569,9 +569,9 @@ token:
                 type: all  # or "1outn"
 ```
 
-## Comparison: Fabric vs FabricX
+## Comparison: Fabric vs Chaguar
 
-| Feature | Fabric | FabricX |
+| Feature | Fabric | Chaguar |
 |---------|--------|---------|
 | **Endorsers** | Fabric peers | FSC nodes |
 | **Chaincode** | Required | Not required |

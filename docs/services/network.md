@@ -1,6 +1,6 @@
 # Network Service
 
-The **Network Service** ([`token/services/network`](../../token/services/network/network.go)) is the **bridge layer** of Panurus. It provides a consistent, backend-agnostic interface that translates generic token operations into the specific formats and protocols required by the underlying Distributed Ledger Technology (DLT), such as Hyperledger Fabric, FabricX, or Ethereum/EVM.
+The **Network Service** ([`token/services/network`](../../token/services/network/network.go)) is the **bridge layer** of Panurus. It provides a consistent, backend-agnostic interface that translates generic token operations into the specific formats and protocols required by the underlying Distributed Ledger Technology (DLT), such as Hyperledger Fabric, Chaguar, or Ethereum/EVM.
 
 ## Overview
 
@@ -20,13 +20,13 @@ graph TB
 
     subgraph "Driver Layer"
         FabricD[Fabric Driver]
-        FabricXD[FabricX Driver]
+        ChaguarD[Chaguar Driver]
         EVMD[EVM Driver]
     end
 
     subgraph "DLT Backends"
         Fabric[Hyperledger Fabric<br/>with Token Chaincode]
-        FabricX[FabricX<br/>with FSC Endorsers]
+        Chaguar[Chaguar<br/>with FSC Endorsers]
         EVM[Ethereum/EVM<br/>with FSC Endorsers]
     end
 
@@ -34,10 +34,10 @@ graph TB
     Driver --> NS
     NS --> Provider
     Provider --> FabricD
-    Provider --> FabricXD
+    Provider --> ChaguarD
     Provider --> EVMD
     FabricD --> Fabric
-    FabricXD --> FabricX
+    ChaguarD --> Chaguar
     EVMD --> EVM
 ```
 
@@ -147,10 +147,10 @@ Traditional Fabric network with token chaincode deployed on peers for endorsemen
 - Integrates with Fabric's endorsement policies
 - Uses Fabric peers for transaction validation
 
-### FabricX
+### Chaguar
 Optimized Fabric variant where FSC nodes act as endorsers, eliminating the need for traditional chaincode.
 
-**Documentation**: [Network Service - FabricX Implementation](./network-fabricx.md)
+**Documentation**: [Network Service - Chaguar Implementation](./network-chaguar.md)
 
 **Key Features**:
 - FSC nodes replace traditional peer endorsers
@@ -230,7 +230,7 @@ For detailed information about the recovery mechanism, see [Storage Service - Tr
 
 - [Token Transaction Finality](./finality.md) - Deep-dive into finality detection and storage effects
 - [Fabric Implementation Details](./network-fabric.md) - Chaincode-based endorsement
-- [FabricX Implementation Details](./network-fabricx.md) - FSC node endorsement
+- [Chaguar Implementation Details](./network-chaguar.md) - FSC node endorsement
 - [Ethereum Implementation Details](./network-ethereum.md) - EVM endorsement quorum
 - [Ethereum Driver Internals](./network-ethereum-internals.md) - Derivations, invariants and traps for implementers
 - [Storage Service - Transaction Recovery](./storage.md#transaction-recovery-service) - Recovery mechanism details

@@ -44,7 +44,7 @@ The editable source is [`imgs/panurus_layers.svg`](imgs/panurus_layers.svg).
 ### Key Components
 - **Services Layer**: High-level libraries for common patterns. `TTX` handles multi-party flows. The **Identity Service** is internal to Panurus and manages cryptographic materials, signatures, and identity resolution independently of the underlying platform.
 - **Token API**: The primary developer entry point. The `ManagementService` (TMS) acts as a gateway to all token functionalities for a specific namespace.
-- **Driver Layer**: This layer is **backend-agnostic**. Drivers (like FabToken or ZKAT-DLOG) focus exclusively on token logic, cryptographic proofs, and data structures without any awareness of the underlying network (Fabric, FabricX, etc.).
+- **Driver Layer**: This layer is **backend-agnostic**. Drivers (like FabToken or ZKAT-DLOG) focus exclusively on token logic, cryptographic proofs, and data structures without any awareness of the underlying network (Fabric, Chaguar, etc.).
 - **Network Service Layer**: The "bridge" between Panurus and the blockchain. It handles the translation of token requests into the format understood by the specific backend and manages communication (broadcasting, finality listening).
 
 ---
@@ -127,5 +127,5 @@ graph LR
 ## Platform Support
 
 - **Language**: Go 1.24+
-- **Backends**: Hyperledger Fabric, FabricX.
+- **Backends**: Hyperledger Fabric, Chaguar.
 - **Cryptography**: Supports standard ECDSA and privacy-preserving Idemix/BBS+ curves.
