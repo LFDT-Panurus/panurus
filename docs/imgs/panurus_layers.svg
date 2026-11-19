@@ -50,7 +50,7 @@
   <rect x="100" y="950" width="1020" height="140" rx="14" fill="#dcdcdc" stroke="#999" stroke-width="2.4"/>
   <text x="122" y="978" class="h">INFRASTRUCTURE</text>
   <rect x="195" y="1000" width="250" height="64" rx="8" class="i"/><text x="320" y="1026" class="t">HYPERLEDGER FABRIC</text><text x="320" y="1048" class="s">Token Chaincode</text>
-  <rect x="485" y="1000" width="250" height="64" rx="8" class="i"/><text x="610" y="1026" class="t">FABRICX</text><text x="610" y="1048" class="s">Fabric-X</text>
+  <rect x="485" y="1000" width="250" height="64" rx="8" class="i"/><text x="610" y="1026" class="t">CHAGUAR</text><text x="610" y="1048" class="s">Chaguar</text>
   <rect x="775" y="1000" width="250" height="64" rx="8" class="i"/><text x="900" y="1026" class="t">ETHEREUM / EVM</text><text x="900" y="1048" class="s">smart contracts</text>
 
   <!-- arrows -->

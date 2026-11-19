@@ -105,7 +105,7 @@ nav:
           - Driver Internals: services/network-ethereum-internals.md
           - Deployment Runbook: services/network-ethereum-deployment.md
       - Network Fabric: services/network-fabric.md
-      - Network Fabricx: services/network-fabricx.md
+      - Network Chaguar: services/network-chaguar.md
       - Network: services/network.md
       - NFT Tx: services/nfttx.md
       - Selector: services/selector.md

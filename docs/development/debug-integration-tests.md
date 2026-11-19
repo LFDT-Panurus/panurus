@@ -38,7 +38,7 @@ combos, e.g. `integration-tests-dlog-fabric-t1-websocket`, `-t1-libp2p`,
 the specs that share one network (`token.ShareNetwork`) it uses the grouped
 targets `integration-tests-dlog-fabric-aries-*` (T1, T17, T4, T5, T3, T2.1,
 T2), `integration-tests-dlog-fabric-t6-t7-*` and
-`integration-tests-fabtoken-fabric-all-*` (T1, T17, T4, T5, T3, T2); fabricx
+`integration-tests-fabtoken-fabric-all-*` (T1, T17, T4, T5, T3, T2); Chaguar
 uses `integration-tests-fabricx-dlog-extras` (T13, T4, T5, T3 of the dlogx
 "Extras" container, all three infra types in one job; `-extras-websocket`,
 `-extras-libp2p` and `-extras-replicas` run one type each) and the per-infra
@@ -61,9 +61,9 @@ are already covered by CI's parallel per-infra jobs.
   It saves one cleaned, timestamp-stripped log file per failed job under
   `pr_<PR_NUMBER>_failed_logs/`.
 
-## Public Parameters Setup Failures (fabricx)
+## Public Parameters Setup Failures (Chaguar)
 
-On a fabricx network the token public parameters are installed by invoking the
+On a Chaguar network the token public parameters are installed by invoking the
 `SetupPublicParams` view on the `issuer` FSC node
 (`integration/nwo/token/fabricx/factory.go`). Three things about how that failure is
 reported are worth knowing when a suite goes red:

@@ -68,7 +68,7 @@ graph LR
 
 ### Approach 2: Pre-Order Execution with FSC Endorsers
 
-FSC nodes perform validation off-chain and endorse state updates, similar to FabricX model.
+FSC nodes perform validation off-chain and endorse state updates, similar to Chaguar model.
 
 **Architecture:**
 ```mermaid
@@ -682,7 +682,7 @@ endorser set.
 
 The contract side above is the small, cheap half of the system. The Go side does the actual work: by the
 time a transaction reaches the chain, a quorum has already validated it off chain. This is the
-responder/initiator pair in `evm/endorsement`, the same shape as the Fabric and FabricX endorsement
+responder/initiator pair in `evm/endorsement`, the same shape as the Fabric and Chaguar endorsement
 views.
 
 **The responder** runs on every node that endorses, once per request:
@@ -909,7 +909,7 @@ when a namespace connects. It periodically re-asks the chain about transactions 
 longer than the configured TTL, using the same anchor lookup a fresh listener would have performed.
 
 - Settings load from `services.network.recovery` — the shared, network-agnostic key every driver reads
-  (Fabric and FabricX read the same one), not an EVM-specific one; a TMS with none uses the SDK defaults
+  (Fabric and Chaguar read the same one), not an EVM-specific one; a TMS with none uses the SDK defaults
   (enabled, 30s TTL, 5s scan interval). This key was formerly `services.network.fabric.recovery`, which
   is no longer read.
 - A failure to start recovery is logged, not fatal — the node still works, it just cannot rescue
@@ -1043,6 +1043,6 @@ contracts build for `paris`; a `shanghai` build reverts every contract creation.
 - [Ethereum Deployment Runbook](./network-ethereum-deployment.md) - Bootstrapping a TMS with the Approach-2 driver
 - [Network Service Overview](./network.md) - Generic network service concepts
 - [Fabric Implementation](./network-fabric.md) - Chaincode-based validation
-- [FabricX Implementation](./network-fabricx.md) - FSC endorser model
+- [Chaguar Implementation](./network-chaguar.md) - FSC endorser model
 - [Driver Interface](../../token/services/network/driver/network.go) - Network driver interface
 - [Panurus Architecture](../tokensdk.md) - Overall system design
