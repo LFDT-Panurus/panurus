@@ -25,6 +25,10 @@ type House struct {
 	Valuation uint64
 }
 
+func encodeRaw(payload string) token2.Type {
+	return token2.Type(base64.StdEncoding.EncodeToString([]byte(payload)))
+}
+
 func TestNewQueryExecutor(t *testing.T) {
 	assert.Panics(t, func() {
 		_, _ = nfttx.NewQueryExecutor(nil, "my-wallet", 64)
@@ -101,6 +105,24 @@ func TestQueryExecutor_QueryByKey_Success(t *testing.T) {
 	fakeVault.GetTokensReturns([]*token2.Token{}, nil)
 	err = qe.QueryByKey(t.Context(), &house, "LinearID", "123")
 	require.ErrorIs(t, err, nfttx.ErrNoResults)
+}
+
+func TestQueryExecutor_QueryByKey_ReportsCorruptStateAfterSkipping(t *testing.T) {
+	fakeSelector := &mock.Selector{}
+	fakeVault := &mock.Vault{}
+
+	qe := nfttx.NewTestQueryExecutor(fakeSelector, fakeVault, 64)
+	fakeSelector.FilterReturns([]*token2.ID{{TxId: "tx1", Index: 0}}, nil)
+	fakeVault.GetTokensReturns([]*token2.Token{
+		{Type: encodeRaw(`{"LinearID":"fungible"}`), Quantity: "0x05"},
+		{Type: encodeRaw("{not json"), Quantity: "0x01"},
+	}, nil)
+
+	var house House
+	err := qe.QueryByKey(t.Context(), &house, "LinearID", "123")
+	require.ErrorContains(t, err, "failed to unmarshal state")
+	require.NotErrorIs(t, err, nfttx.ErrNoResults, "the real failure must not be hidden")
+	assert.Equal(t, House{}, house)
 }
 
 func TestQueryExecutor_QueryByKey_BadQuantity(t *testing.T) {

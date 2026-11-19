@@ -7,11 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package nfttx
 
 import (
-	"bytes"
-	"encoding/base64"
-
 	"github.com/LFDT-Panurus/panurus/token"
-	"github.com/LFDT-Panurus/panurus/token/services/nfttx/marshaller"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
@@ -44,20 +40,8 @@ func (o *OutputStream) StateAt(index int, state any) error {
 	if index < 0 || index >= o.Count() {
 		return errors.Errorf("index [%d] out of range [0, %d)", index, o.Count())
 	}
-	output := o.At(index)
-	decoded, err := base64.StdEncoding.DecodeString(string(output.Type))
-	if err != nil {
-		return errors.Wrap(err, "failed to decode type")
-	}
-	// null unmarshals into anything without writing to it
-	if bytes.Equal(bytes.TrimSpace(decoded), []byte("null")) {
-		return errors.New("type carries no state")
-	}
-	if err := marshaller.Unmarshal(decoded, state); err != nil {
-		return errors.Wrap(err, "failed to unmarshal state")
-	}
 
-	return nil
+	return decodeState(o.At(index).Type, state)
 }
 
 func (o *OutputStream) Validate() error {
