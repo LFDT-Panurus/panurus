@@ -177,7 +177,7 @@ func (s *deployerService) deployPublicParametersRaw(tmsID token.TMSID, ppRaw []b
 	return s.nsSubmitter.Submit(tmsID.Network, tmsID.Channel, tx)
 }
 
-// createPublicParametersTx builds a FabricX transaction that writes the raw
+// createPublicParametersTx builds a Chaguar transaction that writes the raw
 // public parameters and their SHA256 hash to the ledger using the setup keys.
 func (s *deployerService) createPublicParametersTx(ppRaw []byte, namespaceID cdriver.Namespace, nsVersion uint64) (*applicationpb.Tx, error) {
 	key, err := s.keyTranslator.CreateSetupKey()

@@ -269,7 +269,7 @@ const maxFuzzThresholdRulePublicKeyBytes = 64 << 10
 
 // FuzzEndorserForThresholdRuleNoPanic hunts for malformed ThresholdRule public keys that
 // panic endorserForThresholdRule instead of returning an error. rule.PublicKey is
-// attacker-influenced: it arrives over the wire via the FabricX query service's
+// attacker-influenced: it arrives over the wire via the Chaguar query service's
 // GetNamespacePolicies RPC, so a malicious or buggy committer response must not crash the
 // endorser-selection path.
 func FuzzEndorserForThresholdRuleNoPanic(f *testing.F) {
