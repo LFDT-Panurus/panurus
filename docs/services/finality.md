@@ -8,7 +8,7 @@ complements, and cross-references rather than repeats:
 - [Network Service](./network.md) — the driver-based network abstraction.
 - [Network Service - Fabric Implementation](./network-fabric.md) — the Fabric delivery-based finality
   manager, its ledger-height retry budget, and the (currently stale) notification-mode config example.
-- [Network Service - FabricX Implementation](./network-fabricx.md) — FabricX's async, event-queue-based
+- [Network Service - Chaguar Implementation](./network-chaguar.md) — Chaguar's async, event-queue-based
   finality processing, which is architecturally distinct from Fabric's (§2.2 below).
 - [Storage Service](./storage.md) — schema for each database.
 - [Transaction Recovery Service](./storage/recovery.md) — the sweep described in §5 below.
@@ -17,7 +17,7 @@ Panurus is a fork of, and shares the package layout with, `hyperledger-labs/fabr
 (module `github.com/LFDT-Panurus/panurus`). This document mirrors the structure of that upstream project's
 `docs/services/finality.md`, adjusted throughout for Panurus's current code — most notably a shared
 batch-polling fallback (§3, §6) that replaces upstream's per-transaction polling, and first-class
-FabricX support (§2.2), which upstream does not have at all.
+Chaguar support (§2.2), which upstream does not have at all.
 
 ## 1. Definitions
 
@@ -99,16 +99,16 @@ config key to select an alternate mode for Fabric. See the callout in §6.1 abou
 `type: delivery|notification` / `committer.*` example still present in
 [network-fabric.md](./network-fabric.md#finality-configuration).
 
-### 2.2 FabricX — query-service polling with an async worker queue
+### 2.2 Chaguar — query-service polling with an async worker queue
 
-FabricX has no block-delivery stream to plug into; instead
+Chaguar has no block-delivery stream to plug into; instead
 [`network/fabricx/finality/finality.go`](../../token/services/network/fabricx/finality/finality.go)
 implements finality detection entirely differently, and this is the one part of this document with
 no upstream fabric-token-sdk equivalent at all:
 
 ```mermaid
 graph TB
-    QS["FabricX QueryService<br/>GetTransactionStatus(es), GetState(s)"]
+    QS["Chaguar QueryService<br/>GetTransactionStatus(es), GetState(s)"]
     NLM["NSListenerManager<br/>shared pending-tx map + pollLoop"]
     Queue["Queue [worker pool]"]
     Listener["ttx/finality.Listener<br/>OnStatus / runOnStatus"]
@@ -140,11 +140,11 @@ graph TB
   actually surfaces a timeout to the application; the poller dropping its bookkeeping slot early is not
   itself an error condition.
 
-Both `fabricXFSCStatus` (FabricX → `driver.ValidationCode`) and the Fabric driver's
+Both `fabricXFSCStatus` (Chaguar → `driver.ValidationCode`) and the Fabric driver's
 `committer.MapValidationCode` ultimately feed the same `network.Valid`/`Invalid`/`Busy`/`Unknown` set
 that `runOnStatus` (§3) switches on — this is the seam that lets §3 be backend-agnostic.
 
-See [Network Service - FabricX Implementation § Finality Processing](./network-fabricx.md#finality-processing)
+See [Network Service - Chaguar Implementation § Finality Processing](./network-chaguar.md#finality-processing)
 for the endorser-side event-queue architecture this polling layer sits behind; not repeated here.
 
 ### 2.3 Registration
@@ -203,10 +203,10 @@ never causes or implies the other leg's transition.
    concurrent transaction from double-spending the same UTXOs. See [Selector Service](./selector.md).
 2. **Signature & audit collection.** Owner/issuer signatures and (unless skipped) the auditor's approval
    are collected. See [TTX Service](./ttx.md).
-3. **Approval (endorsement).** The chaincode (Fabric) or native FSC-endorsement (FabricX, or Fabric with
+3. **Approval (endorsement).** The chaincode (Fabric) or native FSC-endorsement (Chaguar, or Fabric with
    `services.network.fabric.fsc_endorsement`) path writes the token-request hash into the on-ledger
    state — this is the artifact the hash check in step 8 will compare against. See [Network Service -
-   Fabric Implementation](./network-fabric.md) / [FabricX Implementation](./network-fabricx.md) for the
+   Fabric Implementation](./network-fabric.md) / [Chaguar Implementation](./network-chaguar.md) for the
    endorsement flow itself.
 4. **Record as Pending.** `ttx.Service.Append` writes the request and per-action records with
    `Status: Pending` and, in the same call, registers the finality listener described in §2.3. The
@@ -224,7 +224,7 @@ never causes or implies the other leg's transition.
    (default timeout **10 minutes**, `finalityTimeout` in `ordering.go`); `NewFinalityView` called
    standalone defaults to **5 minutes** (`finality.go`).
 7. **Ledger detection.** How the block/status is actually observed is backend-specific — see §2.1 for
-   Fabric's block-delivery scan (plus its LRU-eviction fallback) or §2.2 for FabricX's batched
+   Fabric's block-delivery scan (plus its LRU-eviction fallback) or §2.2 for Chaguar's batched
    query-service polling. Either way, the result handed to `OnStatus` is the same
    `(status, message, tokenRequestHash)` tuple.
 8. **Decision.** `ttx.finality.Listener.OnStatus`
@@ -361,7 +361,7 @@ designed to sweep up once its lease expires.
 ## 5. Recovery — when the listener is lost
 
 A process restart, or a listener that was never delivered a verdict (an LRU eviction on Fabric, or a
-`pendingTTL` expiry on FabricX, without a successful re-registration), can leave a `Pending` transaction
+`pendingTTL` expiry on Chaguar, without a successful re-registration), can leave a `Pending` transaction
 with no active listener anywhere. `TTXRecoveryHandler.Recover(ctx, txID)`
 ([`token/services/ttx/finality/recovery.go`](../../token/services/ttx/finality/recovery.go)) covers this
 — instead of waiting for a push event, it calls `Network.GetTransactionStatus(ctx, namespace, txID)`
@@ -402,16 +402,16 @@ there is no working config key to select a different mode for Fabric. **Caution:
 `type: delivery|notification` selector and a `committer.{maxRetries,retryWaitDuration}` block; neither
 is read anywhere under `token/services/network/fabric` today — that YAML snippet (and the accompanying
 "Notification Mode" narrative/diagram in the same file) describes a code path that does not exist for
-the Fabric driver. Real query/poll-based finality does exist in Panurus, but only for FabricX (§2.2,
+the Fabric driver. Real query/poll-based finality does exist in Panurus, but only for Chaguar (§2.2,
 §6.2) — don't conflate the two when reading that section.
 
-### 6.2 FabricX polling tuning
+### 6.2 Chaguar polling tuning
 
-FabricX's `NSListenerManager` is configured via
+Chaguar's `NSListenerManager` is configured via
 [`token/services/network/fabricx/finality/config.go`](../../token/services/network/fabricx/finality/config.go)
 and the async worker queue via
 [`token/services/network/fabricx/finality/queue/config.go`](../../token/services/network/fabricx/finality/queue/config.go).
-See [Network Service - FabricX Implementation § Finality Configuration](./network-fabricx.md#finality-configuration)
+See [Network Service - Chaguar Implementation § Finality Configuration](./network-chaguar.md#finality-configuration)
 for the current key names, defaults, and YAML example — not repeated here to avoid the two docs
 drifting apart.
 
@@ -448,11 +448,11 @@ observable behavior at the `finalityView.Call` boundary (§3 step 10) is unchang
 
 | Scenario | Observed status | Recovery path |
 |---|---|---|
-| Chaincode/ordering rejects the tx, or FabricX marks it non-committed | `Invalid` → `Deleted` | none needed — verdict is definitive |
+| Chaincode/ordering rejects the tx, or Chaguar marks it non-committed | `Invalid` → `Deleted` | none needed — verdict is definitive |
 | On-ledger request hash ≠ local request | `Valid` but hash mismatch → `Deleted` (no dedicated status today, §1) | none needed for the transaction itself, but worth investigating — see `HashMismatches` metric (§4) |
 | Listener registered but node crashes/restarts before a verdict | still `Pending` | recovery sweep (§5) re-derives status directly from the ledger/query service |
 | Fabric: listener evicted from the delivery LRU before its block arrives | still `Pending` locally, but detectable | `DeliveryScanQueryByID` fallback (§2.1), and/or the recovery sweep |
-| FabricX: pending waiter exceeds `pendingTTL` before a terminal status is polled | still `Pending`; the poller drops its own bookkeeping, no error surfaced there | the caller's own `finalityView` timeout (§6.3) surfaces this to the application; the recovery sweep also covers it |
+| Chaguar: pending waiter exceeds `pendingTTL` before a terminal status is polled | still `Pending`; the poller drops its own bookkeeping, no error surfaced there | the caller's own `finalityView` timeout (§6.3) surfaces this to the application; the recovery sweep also covers it |
 | Broadcast never reached the ordering service | permanently `Pending` (ledger never sees it) | recovery sweep marks it `Orphan` after its grace period, see [Transaction Recovery Service](./storage/recovery.md) |
 | Duplicate finality notification for the same tx | idempotent | `TransactionExists`-style guard in `AppendValid` |
 | `runOnStatus` errors 3 times in a row on `network.Invalid` (e.g. a transient storage failure while writing `Deleted`) | still `Pending`; `RetryExhausted` metric incremented, `OnError` logs, selection locks released once (a rejected transaction never spent its inputs) | recovery sweep (§5) re-derives status directly from the ledger on its own schedule — no automatic re-registration of this listener |
@@ -467,7 +467,7 @@ observable behavior at the `finalityView.Call` boundary (§3 step 10) is unchang
 - [TTX Service](./ttx.md)
 - [Network Service](./network.md)
 - [Network Service - Fabric Implementation](./network-fabric.md)
-- [Network Service - FabricX Implementation](./network-fabricx.md)
+- [Network Service - Chaguar Implementation](./network-chaguar.md)
 - [Storage Service](./storage.md)
 - [Transaction Recovery Service](./storage/recovery.md)
 - [Tokens Service](./tokens.md)

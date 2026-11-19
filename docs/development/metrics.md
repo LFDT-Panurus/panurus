@@ -400,9 +400,9 @@ store a sweep covers; `outcome` is `completed`, `not_leader`, `canceled` or `fai
 
 Source: `token/services/storage/services/checks/metrics.go`.
 
-## Fabric-X finality queue
+## Chaguar finality queue
 
-Recorded by the Fabric-X event queue that dispatches finality notifications to workers.
+Recorded by the Chaguar event queue that dispatches finality notifications to workers.
 `pending_events` is the backlog gauge: it counts events accepted by the queue and not yet taken by a
 worker. A caller blocked in `EnqueueBlocking` on a full buffer is counted as soon as it starts waiting, so
 the gauge can exceed the configured queue size (`token.finality.notification.queueSize`); a value above it
@@ -587,7 +587,7 @@ policy and format failures.
 
 ### 4. Standard Fabric network path
 
-The Fabric-X finality queue is instrumented; the standard Fabric network driver
+The Chaguar finality queue is instrumented; the standard Fabric network driver
 (`token/services/network/fabric/`) has no equivalent, and the approval path — `EndorserService` in
 `token/services/network/fabric/endorsement/provider.go` — is not timed. On Fabric deployments the
 approval round trip is therefore invisible.
@@ -639,7 +639,7 @@ Smaller consistency issues, worth fixing together since each one changes exporte
   `panurus_services_ttx_finality_finality_listener_*` and
   `panurus_services_network_fabricx_finality_queue_finality_queue_*` repeat their package in the metric
   name.
-- **Missing TMS labels.** The auditor, finality-listener, sherdlock and Fabric-X queue families carry no
+- **Missing TMS labels.** The auditor, finality-listener, sherdlock and Chaguar queue families carry no
   `network`/`channel`/`namespace` labels, so on a node hosting several TMSs their values are aggregated
   and cannot be attributed. The certification client metrics carry `channel` and `namespace` but not
   `network`.

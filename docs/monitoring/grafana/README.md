@@ -4,7 +4,7 @@
 
 A single overview dashboard covering every metric Panurus exports: 23 panels across 10 rows, one row per
 subsystem (driver services, transaction lifecycle, finality listener, envelope sessions, auditor, token
-selection, certification and identity caches, signer resolution and cache provisioning, Fabric-X finality
+selection, certification and identity caches, signer resolution and cache provisioning, Chaguar finality
 queue, storage connection pool).
 
 ### Import

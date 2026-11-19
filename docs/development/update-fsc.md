@@ -68,13 +68,13 @@ they must be kept on the same tag as core. So:
 
 ### 3. Align pinned infra versions with FSC's Makefile
 
-FSC's own `Makefile` pins the Fabric/Fabric-X versions its integration-test tooling
+FSC's own `Makefile` pins the Fabric/Chaguar versions its integration-test tooling
 (binaries, Docker images) is built and tested against — currently `FABRIC_VERSION`,
 `FABRIC_TWO_DIGIT_VERSION` (derived from it), `FABRIC_X_TOOLS_VERSION`, and
 `FABRIC_X_COMMITTER_VERSION`, declared near the top under `# pinned versions`.
 Panurus's root `Makefile` (lines 1-7) and `fabricx.mk` mirror these same variables
 independently — they are **not** inherited from the Go module, so a bump can silently
-leave Panurus testing against a stale Fabric/Fabric-X version even though the code
+leave Panurus testing against a stale Fabric/Chaguar version even though the code
 compiles fine. This matters specifically for integration tests, which are what
 actually exercise the pinned binaries/images.
 
