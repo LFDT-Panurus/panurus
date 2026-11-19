@@ -19,7 +19,7 @@ import (
 )
 
 // SetupPublicParams describes a request to submit new or updated public parameters for a
-// namespace through the FSC endorsement flow, as an alternative to the FabricX
+// namespace through the FSC endorsement flow, as an alternative to the Fabric-X
 // chaincode-bypass deployment path.
 type SetupPublicParams struct {
 	// Network is the name of the target network.
