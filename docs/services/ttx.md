@@ -438,6 +438,10 @@ sequenceDiagram
     end
 ```
 
+The initiator sends one signature request per distinct signer per group — the issue actions, the transfer actions, and the components of each composite (multisig or policy) identity are separate groups. So an identity signing two transfers is asked once, while one signing an issue and a transfer is asked twice.
+
+The responder derives the same list but treats it as an **upper bound**: the initiator may send fewer, since `WithPolicySigners` can narrow a policy identity to one OR branch. Collection therefore ends when the initiator starts distributing the transaction, and each request is matched against the outstanding signers so an unexpected identity gets no signature.
+
 `EndorseView` (`endorse.go`) is the responder for the signature-request leg; before acknowledging the final distribution it requires the token actions, TMS identity, network transaction creator/nonce, signer, and transient data to match the transaction it reviewed. `AcceptView` (`accept.go`) responds to the transaction-distribution leg with a signed acknowledgement. `ReceiveTransactionView` (`receivetx.go`) unwraps the envelope and accepts `TypeTransaction`, `TypeTransactionResponse`, or `TypeSignatureRequest`. Transaction and transient ASN.1 decoders reject trailing data, duplicate transient keys, and key/value cardinality mismatches.
 
 ## Auditor Approval Flow
@@ -605,6 +609,9 @@ phases are additive. The phase bound is `AnswerCollectionTimeout`, not the per-s
 signature verification around it fall outside that window.
 
 **Invariant:** `responder receive > 2 x signature phase + audit + approval`
+
+The responder reads signature requests under this same budget: that receive may be the one
+that takes the distributed transaction, so it cannot carry a shorter deadline.
 
 | Leg | Constant | Value |
 |---|---|---|
