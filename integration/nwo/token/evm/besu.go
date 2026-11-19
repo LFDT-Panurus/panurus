@@ -9,13 +9,11 @@ package evm
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/http"
 	"net/netip"
 	"os"
 	"runtime"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/common/docker"
@@ -233,26 +231,13 @@ func besuArgs(cfg BesuConfig) []string {
 func (b *Besu) waitReady(ctx context.Context) error {
 	deadline := time.Now().Add(b.cfg.StartTimeout)
 	client := &http.Client{Timeout: 2 * time.Second}
-	body := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}`)
 
 	for time.Now().Before(deadline) {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(b.cfg.Port)), time.Second); err == nil {
-			_ = conn.Close()
-
-			req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.endpoint, body)
-			if err == nil {
-				req.Header.Set("Content-Type", "application/json")
-				if resp, err := client.Do(req); err == nil {
-					_ = resp.Body.Close()
-					if resp.StatusCode == http.StatusOK {
-						return nil
-					}
-				}
-			}
-			body = strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}`)
+		if answersChainID(ctx, client, b.cfg.Port, b.endpoint) {
+			return nil
 		}
 		time.Sleep(500 * time.Millisecond)
 	}

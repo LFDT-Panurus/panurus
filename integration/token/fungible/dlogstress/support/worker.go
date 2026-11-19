@@ -39,65 +39,71 @@ func NewPool(label string, numWorkers int) *Pool {
 	pool.wg.Add(numWorkers)
 	pool.stop.Store(false)
 	for range numWorkers {
-		go func() {
-			counter := atomic.Int64{}
-			var taskDurations []time.Duration
-			workerStart := time.Now()
-
-			defer func() {
-				fmt.Printf("Context done for [%s], shutdown after, computing statistics\n", pool.label)
-				workerEnd := time.Since(workerStart)
-				var sum int64
-				numTasks := counter.Load()
-				for _, duration := range taskDurations {
-					sum += duration.Milliseconds()
-				}
-				avgDuration := sum / numTasks
-				throughput := workerEnd.Milliseconds() / numTasks
-
-				fmt.Printf(
-					"Context done for [%s], shutdown after # task [%d], avg duration [%d], throughput (%d,%d): [%v] \n",
-					pool.label,
-					numTasks,
-					avgDuration,
-					throughput,
-					workerEnd.Milliseconds(),
-					taskDurations,
-				)
-				pool.wg.Done()
-			}()
-			for {
-				select {
-				case <-pool.ctx.Done():
-					fmt.Printf("Context done for [%s], shutdown after # %d workers\n", pool.label, numWorkers)
-					pool.stop.Store(true)
-
-					return
-				case task := <-pool.taskQueue:
-					if pool.stop.Load() {
-						fmt.Printf("No more tasks for [%s] to run...\n", pool.label)
-
-						return
-					}
-					if task == nil {
-						fmt.Printf("Got nil task for [%s], shutdown...\n", pool.label)
-
-						return
-					}
-					fmt.Printf("Schedule new task for [%s]: [%d]\n", pool.label, counter.Add(1))
-					start := time.Now()
-					task()
-					end := time.Since(start)
-					taskDurations = append(taskDurations, end)
-					fmt.Printf("Task for [%s][%d], took [%v]\n", pool.label, counter.Load(), end.Milliseconds())
-				default:
-					fmt.Printf("Nothing to do for [%s]\n", pool.label)
-				}
-			}
-		}()
+		go pool.work(numWorkers)
 	}
 
 	return pool
+}
+
+// work runs tasks from the queue until the pool is stopped, then reports its statistics.
+func (p *Pool) work(numWorkers int) {
+	counter := atomic.Int64{}
+	var taskDurations []time.Duration
+	workerStart := time.Now()
+
+	defer func() {
+		p.reportStats(time.Since(workerStart), counter.Load(), taskDurations)
+		p.wg.Done()
+	}()
+	for {
+		select {
+		case <-p.ctx.Done():
+			fmt.Printf("Context done for [%s], shutdown after # %d workers\n", p.label, numWorkers)
+			p.stop.Store(true)
+
+			return
+		case task := <-p.taskQueue:
+			if p.stop.Load() {
+				fmt.Printf("No more tasks for [%s] to run...\n", p.label)
+
+				return
+			}
+			if task == nil {
+				fmt.Printf("Got nil task for [%s], shutdown...\n", p.label)
+
+				return
+			}
+			fmt.Printf("Schedule new task for [%s]: [%d]\n", p.label, counter.Add(1))
+			start := time.Now()
+			task()
+			end := time.Since(start)
+			taskDurations = append(taskDurations, end)
+			fmt.Printf("Task for [%s][%d], took [%v]\n", p.label, counter.Load(), end.Milliseconds())
+		default:
+			fmt.Printf("Nothing to do for [%s]\n", p.label)
+		}
+	}
+}
+
+// reportStats prints a worker's task count, average task duration and throughput.
+func (p *Pool) reportStats(workerEnd time.Duration, numTasks int64, taskDurations []time.Duration) {
+	fmt.Printf("Context done for [%s], shutdown after, computing statistics\n", p.label)
+	var sum int64
+	for _, duration := range taskDurations {
+		sum += duration.Milliseconds()
+	}
+	avgDuration := sum / numTasks
+	throughput := workerEnd.Milliseconds() / numTasks
+
+	fmt.Printf(
+		"Context done for [%s], shutdown after # task [%d], avg duration [%d], throughput (%d,%d): [%v] \n",
+		p.label,
+		numTasks,
+		avgDuration,
+		throughput,
+		workerEnd.Milliseconds(),
+		taskDurations,
+	)
 }
 
 func (p *Pool) ScheduleTask(task Task) {
