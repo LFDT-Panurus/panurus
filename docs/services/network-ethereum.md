@@ -393,6 +393,7 @@ endorser signs over that hash.
 | `publicParamsHash` / `publicParamsVersion` | The parameters the endorsers validated against | Staleness check |
 | `isSetup` | Marks a parameters-update delta rather than a token transfer | Selects which branch applies |
 | `setupParameters` | The new public parameters, present only when `isSetup` | Stored by the setup branch |
+| `validUntil` | The last block number at which the delta may be applied, proposed by the requester and bounded by every endorser (see [the deadline](#the-deadline)) | Expiry check |
 
 Two things about this struct trip people up.
 
@@ -575,6 +576,26 @@ in the meantime on its own. `applyStateDelta` is that missing re-validation, mad
 spend state and the public-parameters version itself, in the contract, at apply time. The gates below are
 what that re-validation looks like.
 
+#### The deadline
+
+`validUntil` gives every delta an expiry. Without one, a transaction whose anchor never appears on chain
+could still land at any time: it can sit in a mempool, and since the contract does not check `msg.sender`,
+anyone holding the endorsed delta and its signatures can submit it later. Once a block past `validUntil` is
+final, nobody can apply the delta any more, so a missing anchor at that point means the transaction will
+never land.
+
+It is a block number rather than a timestamp, because `block.number` is exact on chain while
+`block.timestamp` is whatever the block producer says. The requester proposes its latest block plus
+`endorsement.deadline.blocks`. Every endorser must sign byte-identical deltas, so they cannot each pick a
+value; each one instead refuses to sign unless the proposal is more than `minBlocks` and at most
+`maxBlocks` past its own latest block, and the initiator rejects a reply whose delta carries any other
+deadline. The value is covered by the endorsers' EIP-712 signatures, so a submitter cannot extend it.
+
+Adding the field changed the EIP-712 type, so the domain version went from `1` to `2`: an endorser and a
+contract that disagree on the struct fail on the domain rather than with an opaque signature mismatch.
+Existing TokenState clones are pinned to the old implementation and cannot pick the check up, so a TMS
+needs a fresh deployment.
+
 #### The checks, in order
 
 `applyStateDelta` runs these gates in sequence. There is no partial success: any failure reverts the whole
@@ -583,9 +604,10 @@ transaction, so state is either fully applied or completely untouched.
 ```mermaid
 flowchart TB
     G1["1 - contract is initialized"] --> G2["2 - anchor has never been processed"]
-    G2 --> G3["3 - metadata keys and values are the same length"]
-    G3 --> G4["4 - endorser quorum verifies against the digest"]
-    G4 --> G5["5 - public parameters are still current"]
+    G2 --> G2b["3 - block.number is not past validUntil"]
+    G2b --> G3["4 - metadata keys and values are the same length"]
+    G3 --> G4["5 - endorser quorum verifies against the digest"]
+    G4 --> G5["6 - public parameters are still current"]
     G5 --> G6{"isSetup?"}
     G6 -->|"yes"| S["store new parameters<br/>bump the version"]
     G6 -->|"no"| T["consume spentRefs<br/>write outputs<br/>write metadata"]
@@ -607,6 +629,7 @@ the table to reach for when a transaction reverts.
 |---|---|---|
 | `NotInitialized` | The clone was never seeded | Deployment did not go through the factory |
 | `AnchorAlreadyProcessed` | This anchor was applied before | A resubmitted transaction, or a genuine replay attempt |
+| `DeltaExpired` | The block is past the delta's `validUntil` | The transaction was submitted, or mined, too late; it can never be applied now |
 | `MetadataLengthMismatch` | Key and value lists differ in length | A malformed delta; the endorser's translator builds these aligned |
 | `InsufficientEndorsements` | Fewer signatures than the threshold | An endorser was unreachable when the quorum was collected |
 | `UnauthorizedSigner` | A signature came from a non-endorser | The driver's endorser set has drifted from the contract's |

@@ -91,6 +91,8 @@ type EVMClient interface {
 	ChainID(ctx context.Context) (*big.Int, error)
 	// Ping checks that the node is reachable.
 	Ping(ctx context.Context) error
+	// BlockNumber returns the number of the node's latest block.
+	BlockNumber(ctx context.Context) (uint64, error)
 
 	// Call performs a read-only contract call at the given block tag and returns the raw result.
 	Call(ctx context.Context, to Address, data []byte, blockTag string) ([]byte, error)

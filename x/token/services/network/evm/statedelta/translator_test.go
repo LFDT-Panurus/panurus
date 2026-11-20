@@ -21,6 +21,9 @@ import (
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/keys"
 )
 
+// testValidUntil is the deadline the test translators stamp their deltas with.
+const testValidUntil uint64 = 1_000
+
 var (
 	testPP      = []byte("test-public-params")
 	testRequest = []byte("test-token-request")
@@ -83,7 +86,7 @@ func transferAction(inputs []*token.ID, serializedInputs [][]byte, outputs [][]b
 
 func TestIssueMapping(t *testing.T) {
 	anchor := testAnchor(0x11)
-	tr := NewTranslator(anchor, testPP, 3)
+	tr := NewTranslator(anchor, testPP, 3, testValidUntil)
 	require.NoError(t, tr.Write(context.Background(), issueAction([][]byte{[]byte("out-0"), []byte("out-1")}, map[string][]byte{"mk": []byte("mv")})))
 	d := finish(t, tr)
 
@@ -113,7 +116,7 @@ func TestIssueGraphHidingReadOncePerAction(t *testing.T) {
 	a.IsGraphHidingReturnsOnCall(0, false)
 	a.IsGraphHidingReturnsOnCall(1, true)
 
-	tr := NewTranslator(testAnchor(0x44), testPP, 0)
+	tr := NewTranslator(testAnchor(0x44), testPP, 0, testValidUntil)
 	require.NoError(t, tr.Write(context.Background(), a))
 	d := finish(t, tr)
 
@@ -129,7 +132,7 @@ func TestTransferGraphHidingReadOncePerAction(t *testing.T) {
 	a.IsGraphHidingReturnsOnCall(0, false)
 	a.IsGraphHidingReturnsOnCall(1, true)
 
-	tr := NewTranslator(testAnchor(0x55), testPP, 0)
+	tr := NewTranslator(testAnchor(0x55), testPP, 0, testValidUntil)
 	require.NoError(t, tr.Write(context.Background(), a))
 	d := finish(t, tr)
 
@@ -147,7 +150,7 @@ func TestTransferMapping(t *testing.T) {
 	serialized := [][]byte{[]byte("input-token-bytes")}
 
 	anchor := testAnchor(0x33)
-	tr := NewTranslator(anchor, testPP, 0)
+	tr := NewTranslator(anchor, testPP, 0, testValidUntil)
 	require.NoError(t, tr.Write(context.Background(), transferAction(
 		inputs, serialized,
 		[][]byte{[]byte("keep-0"), []byte("redeemed"), []byte("keep-2")},
@@ -173,7 +176,7 @@ func TestTransferMapping(t *testing.T) {
 // by NumOutputs() including redeem slots (verified against the Fabric translator).
 func TestCounterAcrossActions(t *testing.T) {
 	anchor := testAnchor(0x44)
-	tr := NewTranslator(anchor, testPP, 0)
+	tr := NewTranslator(anchor, testPP, 0, testValidUntil)
 	require.NoError(t, tr.Write(context.Background(), issueAction([][]byte{[]byte("i0"), []byte("i1")}, nil)))
 	require.NoError(t, tr.Write(context.Background(), transferAction(
 		nil, nil,
@@ -201,7 +204,7 @@ func TestGraphHidingSpendsBySerial(t *testing.T) {
 	a.GetSerializedInputsReturns(nil, nil)
 	a.GetMetadataReturns(nil)
 
-	tr := NewTranslator(testAnchor(0x55), testPP, 0)
+	tr := NewTranslator(testAnchor(0x55), testPP, 0, testValidUntil)
 	require.NoError(t, tr.Write(context.Background(), a))
 	d := finish(t, tr)
 
@@ -212,7 +215,7 @@ func TestGraphHidingSpendsBySerial(t *testing.T) {
 }
 
 func TestSetupMapping(t *testing.T) {
-	tr := NewTranslator(testAnchor(0x66), testPP, 4)
+	tr := NewTranslator(testAnchor(0x66), testPP, 4, testValidUntil)
 	require.NoError(t, tr.Write(context.Background(), &fakeSetup{params: []byte("pp-v5")}))
 	d := finish(t, tr)
 
@@ -227,42 +230,42 @@ func TestErrorPaths(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("unknown action type", func(t *testing.T) {
-		tr := NewTranslator(testAnchor(1), testPP, 0)
+		tr := NewTranslator(testAnchor(1), testPP, 0, testValidUntil)
 		require.Error(t, tr.Write(ctx, struct{}{}))
 	})
 
 	t.Run("setup mixed with transfer", func(t *testing.T) {
-		tr := NewTranslator(testAnchor(1), testPP, 0)
+		tr := NewTranslator(testAnchor(1), testPP, 0, testValidUntil)
 		require.NoError(t, tr.Write(ctx, &fakeSetup{params: []byte("pp")}))
 		require.Error(t, tr.Write(ctx, transferAction(nil, nil, nil, nil, nil)))
 	})
 
 	t.Run("transfer then setup", func(t *testing.T) {
-		tr := NewTranslator(testAnchor(1), testPP, 0)
+		tr := NewTranslator(testAnchor(1), testPP, 0, testValidUntil)
 		require.NoError(t, tr.Write(ctx, issueAction([][]byte{[]byte("o")}, nil)))
 		require.Error(t, tr.Write(ctx, &fakeSetup{params: []byte("pp")}))
 	})
 
 	t.Run("duplicate setup", func(t *testing.T) {
-		tr := NewTranslator(testAnchor(1), testPP, 0)
+		tr := NewTranslator(testAnchor(1), testPP, 0, testValidUntil)
 		require.NoError(t, tr.Write(ctx, &fakeSetup{params: []byte("pp")}))
 		require.Error(t, tr.Write(ctx, &fakeSetup{params: []byte("pp2")}))
 	})
 
 	t.Run("inputs and serialized inputs length mismatch", func(t *testing.T) {
-		tr := NewTranslator(testAnchor(1), testPP, 0)
+		tr := NewTranslator(testAnchor(1), testPP, 0, testValidUntil)
 		a := transferAction([]*token.ID{{TxId: hex.EncodeToString(make([]byte, 32)), Index: 0}}, nil, nil, nil, nil)
 		require.Error(t, tr.Write(ctx, a))
 	})
 
 	t.Run("non-anchor input txid", func(t *testing.T) {
-		tr := NewTranslator(testAnchor(1), testPP, 0)
+		tr := NewTranslator(testAnchor(1), testPP, 0, testValidUntil)
 		a := transferAction([]*token.ID{{TxId: "not-hex", Index: 0}}, [][]byte{[]byte("b")}, nil, nil, nil)
 		require.Error(t, tr.Write(ctx, a))
 	})
 
 	t.Run("finalize without pp dependency", func(t *testing.T) {
-		tr := NewTranslator(testAnchor(1), testPP, 0)
+		tr := NewTranslator(testAnchor(1), testPP, 0, testValidUntil)
 		_, err := tr.CommitTokenRequest(testRequest, true)
 		require.NoError(t, err)
 		_, err = tr.StateDelta()
@@ -270,14 +273,14 @@ func TestErrorPaths(t *testing.T) {
 	})
 
 	t.Run("finalize without token request hash", func(t *testing.T) {
-		tr := NewTranslator(testAnchor(1), testPP, 0)
+		tr := NewTranslator(testAnchor(1), testPP, 0, testValidUntil)
 		require.NoError(t, tr.AddPublicParamsDependency())
 		_, err := tr.StateDelta()
 		require.Error(t, err)
 	})
 
 	t.Run("empty token request", func(t *testing.T) {
-		tr := NewTranslator(testAnchor(1), testPP, 0)
+		tr := NewTranslator(testAnchor(1), testPP, 0, testValidUntil)
 		_, err := tr.CommitTokenRequest(nil, true)
 		require.Error(t, err)
 	})
@@ -303,7 +306,7 @@ func TestTransferReadsNumOutputsOnce(t *testing.T) {
 	first.SerializeOutputAtCalls(func(i int) ([]byte, error) { return []byte("out-" + strconv.Itoa(i)), nil })
 	first.IsGraphHidingReturns(false)
 
-	tr := NewTranslator(anchor, testPP, 1)
+	tr := NewTranslator(anchor, testPP, 1, testValidUntil)
 	require.NoError(t, tr.Write(context.Background(), first))
 	require.NoError(t, tr.Write(context.Background(),
 		transferAction(nil, nil, [][]byte{[]byte("second")}, nil, nil)))
@@ -319,7 +322,7 @@ func TestTransferReadsNumOutputsOnce(t *testing.T) {
 // baseline (a TokenState deployed with empty EVM_PP0), which AddPublicParamsDependency refuses for an
 // ordinary delta.
 func TestAddSetupBaselineAcceptsEmptyPublicParams(t *testing.T) {
-	tr := NewTranslator([32]byte{1}, nil, 0)
+	tr := NewTranslator([32]byte{1}, nil, 0, testValidUntil)
 	require.Error(t, tr.AddPublicParamsDependency())
 
 	tr.AddSetupBaseline()

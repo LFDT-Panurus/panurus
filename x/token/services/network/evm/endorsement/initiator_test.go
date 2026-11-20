@@ -41,6 +41,7 @@ func endorsedDelta(t *testing.T) *statedelta.StateDelta {
 	pph[0] = 0x22
 
 	return &statedelta.StateDelta{
+		ValidUntil:          testValidUntil,
 		Anchor:              requestAnchor(t),
 		TokenRequestHash:    trh,
 		PublicParamsHash:    pph,
@@ -405,6 +406,11 @@ func TestInitiatorBindChecksSetupParameters(t *testing.T) {
 	matching.IsSetup = true
 	matching.SetupParameters = req.PublicParamsRaw
 
+	otherDeadline := endorsedDelta(t)
+	otherDeadline.IsSetup = true
+	otherDeadline.SetupParameters = req.PublicParamsRaw
+	otherDeadline.ValidUntil = req.ValidUntil + 1
+
 	wrongParams := endorsedDelta(t)
 	wrongParams.IsSetup = true
 	wrongParams.SetupParameters = []byte("other-public-parameters")
@@ -417,6 +423,8 @@ func TestInitiatorBindChecksSetupParameters(t *testing.T) {
 		{"matching setup delta", matching, false},
 		{"non-setup delta", endorsedDelta(t), true},
 		{"different parameters", wrongParams, true},
+		// the deadline is the requester's to propose: an endorser must not sign another one
+		{"different validUntil", otherDeadline, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

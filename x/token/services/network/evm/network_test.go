@@ -265,6 +265,34 @@ func TestRequestApprovalDoesNotTouchTheChain(t *testing.T) {
 	assert.Zero(t, evm.SendRawTransactionCallCount(), "a failed approval must not broadcast")
 }
 
+// TestRequestsProposeADeadline checks a request proposes the latest block plus the configured
+// endorsement.deadline.blocks as the delta's validUntil, and that a failed block read stops the
+// request rather than sending one without a deadline. RequestApproval and SetupPublicParams both
+// get it from proposeValidUntil; SetupPublicParams is driven end to end since it needs no
+// management service.
+func TestRequestsProposeADeadline(t *testing.T) {
+	evm := &mock.EVMClient{}
+	evm.BlockNumberReturns(5000, nil)
+	stub := &stubEndorser{err: errors.New("no quorum")}
+	n := testNetwork(t, evm, stub)
+
+	validUntil, err := n.proposeValidUntil(t.Context(), testNamespace)
+	require.NoError(t, err)
+	assert.Equal(t, 5000+DefaultDeadlineBlocks, validUntil)
+	_, err = n.proposeValidUntil(t.Context(), "no-such-tms")
+	require.Error(t, err)
+
+	_, _ = n.SetupPublicParams(nil, token2.TMSID{Network: "evm", Namespace: testNamespace}, []byte("pp"), nil, driverTxID())
+	require.NotNil(t, stub.seen)
+	assert.Equal(t, 5000+DefaultDeadlineBlocks, stub.seen.ValidUntil)
+
+	stub.seen = nil
+	evm.BlockNumberReturns(0, errors.New("node down"))
+	_, err = n.SetupPublicParams(nil, token2.TMSID{Network: "evm", Namespace: testNamespace}, []byte("pp"), nil, driverTxID())
+	require.ErrorContains(t, err, "node down")
+	assert.Nil(t, stub.seen, "nothing may be sent to the endorsers without a deadline")
+}
+
 func TestRequestApprovalWithoutEndorsementService(t *testing.T) {
 	n := testNetwork(t, nil, nil)
 	_, err := n.RequestApproval(nil, &token2.ManagementService{}, []byte("request"), nil, driverTxID(), nil)

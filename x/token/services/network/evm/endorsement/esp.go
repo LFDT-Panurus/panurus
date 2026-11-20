@@ -71,6 +71,8 @@ type TMSConfig struct {
 	// Authorizer is this TMS's allowlist of requesters, the identities this node endorses for on its
 	// behalf. Nil means this node is not an endorser for the TMS, and every request for it is refused.
 	Authorizer *Authorizer
+	// Deadline bounds the validUntil this node signs a delta for this TMS with.
+	Deadline DeadlineWindow
 }
 
 // NewServiceFactory returns a factory for the given network. Register must be called once per TMS
@@ -216,7 +218,7 @@ func (f *ServiceFactory) NewResponder(
 				return nil, err
 			}
 
-			return NewDeltaFactory(validator, tms.PublicParametersManager(), cfg.PublicParams, f.client, cfg.TokenState, cfg.BlockTag), nil
+			return NewDeltaFactory(validator, tms.PublicParametersManager(), cfg.PublicParams, f.client, cfg.TokenState, cfg.BlockTag, cfg.Deadline), nil
 		},
 		func(tmsID token2.TMSID) (*SetupDeltaFactory, error) {
 			// Deliberately does not call resolve: a first-time setup request runs before any TMS exists
@@ -228,7 +230,7 @@ func (f *ServiceFactory) NewResponder(
 				return nil, err
 			}
 
-			return NewSetupDeltaFactory(f.ppValidator, cfg.PublicParams), nil
+			return NewSetupDeltaFactory(f.ppValidator, cfg.PublicParams, f.client, cfg.Deadline), nil
 		},
 		signer,
 		func(tmsID token2.TMSID) (eip712.Domain, error) {

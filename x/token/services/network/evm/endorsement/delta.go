@@ -37,9 +37,11 @@ type DeltaFactory struct {
 	client     client.EVMClient
 	tokenState client.Address
 	blockTag   string
+	deadline   DeadlineWindow
 }
 
-// NewDeltaFactory assembles a DeltaFactory. An empty blockTag defaults to DefaultBlockTag.
+// NewDeltaFactory assembles a DeltaFactory. An empty blockTag defaults to DefaultBlockTag. deadline
+// bounds the validUntil the factory agrees to build a delta with.
 //
 // localPP is the public parameters manager of the TMS that validator itself validates against - the
 // same one validator was built from. Build cross-checks its hash against the chain's before signing,
@@ -52,6 +54,7 @@ func NewDeltaFactory(
 	evmClient client.EVMClient,
 	tokenState client.Address,
 	blockTag string,
+	deadline DeadlineWindow,
 ) *DeltaFactory {
 	if blockTag == "" {
 		blockTag = DefaultBlockTag
@@ -64,6 +67,7 @@ func NewDeltaFactory(
 		client:     evmClient,
 		tokenState: tokenState,
 		blockTag:   blockTag,
+		deadline:   deadline,
 	}
 }
 
@@ -78,7 +82,14 @@ func NewDeltaFactory(
 // this endorser validated under parameters it never actually used - the exact false statement
 // statedelta/types.go documents PublicParamsHash as ruling out. Refusing instead costs the requester a
 // retry, which is what ErrStalePublicParams is for.
+//
+// It refuses a requested validUntil outside the endorser's window before any of that: see
+// DeadlineWindow.
 func (f *DeltaFactory) Build(ctx context.Context, req *EndorseRequest) (*statedelta.StateDelta, error) {
+	if err := f.deadline.checkDeadline(ctx, f.client, req.ValidUntil); err != nil {
+		return nil, err
+	}
+
 	ppRaw, ppVersion, err := f.pp.PublicParams(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to load public parameters")
@@ -108,7 +119,7 @@ func (f *DeltaFactory) Build(ctx context.Context, req *EndorseRequest) (*statede
 		return nil, errors.Wrapf(err, "invalid anchor [%s]", req.Anchor)
 	}
 
-	tr := statedelta.NewTranslator(anchor, ppRaw, ppVersion)
+	tr := statedelta.NewTranslator(anchor, ppRaw, ppVersion, req.ValidUntil)
 	for i, action := range actions {
 		if err := tr.Write(ctx, action); err != nil {
 			return nil, errors.Wrapf(err, "failed to translate action %d", i)
@@ -153,13 +164,16 @@ func (a *setupAction) GetSetupParameters() ([]byte, error) {
 type SetupDeltaFactory struct {
 	ppValidator PublicParamsValidator
 	current     PublicParamsProvider
+	chain       BlockNumberReader
+	deadline    DeadlineWindow
 }
 
 // NewSetupDeltaFactory assembles a SetupDeltaFactory. current supplies the chain's currently active
 // public parameters (whatever a namespace's TokenState was deployed or last updated with), the baseline
-// the new setup delta's optimistic-concurrency check binds to.
-func NewSetupDeltaFactory(ppValidator PublicParamsValidator, current PublicParamsProvider) *SetupDeltaFactory {
-	return &SetupDeltaFactory{ppValidator: ppValidator, current: current}
+// the new setup delta's optimistic-concurrency check binds to. chain and deadline bound the validUntil
+// the factory agrees to build a delta with, exactly as for DeltaFactory.
+func NewSetupDeltaFactory(ppValidator PublicParamsValidator, current PublicParamsProvider, chain BlockNumberReader, deadline DeadlineWindow) *SetupDeltaFactory {
+	return &SetupDeltaFactory{ppValidator: ppValidator, current: current, chain: chain, deadline: deadline}
 }
 
 // Build validates req's new public parameters and returns the StateDelta to sign, binding it to the
@@ -170,6 +184,10 @@ func (f *SetupDeltaFactory) Build(ctx context.Context, req *EndorseRequest) (*st
 	anchor, err := keys.AnchorFromTxID(req.Anchor)
 	if err != nil {
 		return nil, errors.Wrapf(err, "invalid anchor [%s]", req.Anchor)
+	}
+
+	if err := f.deadline.checkDeadline(ctx, f.chain, req.ValidUntil); err != nil {
+		return nil, err
 	}
 
 	newPP, err := f.ppValidator.PublicParametersFromBytes(req.PublicParamsRaw)
@@ -188,7 +206,7 @@ func (f *SetupDeltaFactory) Build(ctx context.Context, req *EndorseRequest) (*st
 		return nil, errors.Wrap(err, "failed to load the chain's current public parameters")
 	}
 
-	tr := statedelta.NewTranslator(anchor, currentRaw, currentVersion)
+	tr := statedelta.NewTranslator(anchor, currentRaw, currentVersion, req.ValidUntil)
 	if err := tr.Write(ctx, &setupAction{publicParamsRaw: req.PublicParamsRaw}); err != nil {
 		return nil, errors.Wrap(err, "failed to translate setup action")
 	}

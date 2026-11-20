@@ -48,6 +48,11 @@ contract TokenStateTest is Test {
 
     // --- delta builders / signing ------------------------------------------------------------------
 
+    /// @dev A deadline comfortably ahead of the current block, so tests not about it are unaffected.
+    function _live() internal view returns (uint64) {
+        return uint64(block.number + 1000);
+    }
+
     function _issue(bytes32 anchor, bytes memory tokenData) internal view returns (StateDelta memory d) {
         d.anchor = anchor;
         d.outputs = new OutputToken[](1);
@@ -56,6 +61,7 @@ contract TokenStateTest is Test {
         d.tokenRequestHash = keccak256(abi.encodePacked("req", anchor));
         d.publicParamsHash = sha256(pp0);
         d.publicParamsVersion = 0;
+        d.validUntil = _live();
     }
 
     function _spend(bytes32 anchor, bytes32 spentMarker, bytes memory newData)
@@ -72,6 +78,7 @@ contract TokenStateTest is Test {
         d.tokenRequestHash = keccak256(abi.encodePacked("req", anchor));
         d.publicParamsHash = sha256(pp0);
         d.publicParamsVersion = 0;
+        d.validUntil = _live();
     }
 
     function _digest(StateDelta memory d) internal view returns (bytes32) {
@@ -102,11 +109,48 @@ contract TokenStateTest is Test {
         d.tokenRequestHash = keccak256(abi.encodePacked("setup", anchor));
         d.publicParamsHash = sha256(pp0); // asserts the current params being replaced
         d.publicParamsVersion = 0;
+        d.validUntil = _live();
     }
 
     function _one(uint256 key, bytes32 digest) internal pure returns (bytes memory) {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(key, digest);
         return abi.encodePacked(r, s, v);
+    }
+
+    // --- deadline ----------------------------------------------------------------------------------
+
+    /// @dev Past validUntil nobody can apply the delta, however well it is endorsed: that is what lets
+    ///      a node conclude a transaction that never landed never will (#2598).
+    function test_DeltaExpired_RevertsPastValidUntil() public {
+        StateDelta memory d = _issue(keccak256("late"), "tok-A");
+        d.validUntil = uint64(block.number + 5);
+        bytes[] memory sigs = _sign(d);
+
+        vm.roll(block.number + 6);
+        vm.expectRevert(abi.encodeWithSelector(TokenState.DeltaExpired.selector, d.validUntil, block.number));
+        ts.applyStateDelta(d, sigs);
+        assertEq(ts.getToken(_tokenID(d.anchor, 0)), bytes(""), "an expired delta must write nothing");
+    }
+
+    /// @dev validUntil is the last block the delta may be applied in, inclusive.
+    function test_DeltaExpired_LastBlockIsInclusive() public {
+        StateDelta memory d = _issue(keccak256("just-in-time"), "tok-A");
+        d.validUntil = uint64(block.number + 5);
+        bytes[] memory sigs = _sign(d);
+
+        vm.roll(block.number + 5);
+        assertTrue(ts.applyStateDelta(d, sigs));
+    }
+
+    /// @dev The deadline is covered by the endorsers' signatures: a submitter cannot extend it.
+    function test_DeltaExpired_DeadlineIsSigned() public {
+        StateDelta memory d = _issue(keccak256("extended"), "tok-A");
+        d.validUntil = uint64(block.number + 5);
+        bytes[] memory sigs = _sign(d);
+
+        d.validUntil = uint64(block.number + 1000);
+        vm.expectRevert(); // UnauthorizedSigner (the signatures recover to addresses that are not endorsers)
+        ts.applyStateDelta(d, sigs);
     }
 
     // --- happy paths -------------------------------------------------------------------------------
@@ -335,6 +379,7 @@ contract TokenStateTest is Test {
         d.tokenRequestHash = keccak256("req");
         d.publicParamsHash = sha256(pp0);
         d.publicParamsVersion = 0;
+        d.validUntil = _live();
         gh.applyStateDelta(d, _signFor(gh, d));
         assertTrue(gh.isSerialUsed(serial));
 
@@ -346,6 +391,7 @@ contract TokenStateTest is Test {
         d2.tokenRequestHash = keccak256("req");
         d2.publicParamsHash = sha256(pp0);
         d2.publicParamsVersion = 0;
+        d2.validUntil = _live();
         vm.expectPartialRevert(TokenState.DoubleSpend.selector);
         gh.applyStateDelta(d2, _signFor(gh, d2));
     }
@@ -366,6 +412,7 @@ contract TokenStateTest is Test {
         d.tokenRequestHash = keccak256("req");
         d.publicParamsHash = sha256(pp0);
         d.publicParamsVersion = 0;
+        d.validUntil = _live();
         gh.applyStateDelta(d, _signFor(gh, d));
 
         assertEq(gh.getToken(_tokenID(a1, 0)), bytes("tok-A"));

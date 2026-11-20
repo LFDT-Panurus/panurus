@@ -168,12 +168,12 @@ func TestNewSignerFromBytesRejectsInvalid(t *testing.T) {
 // with ethers v6). The Solidity side accepts the same bytes in test/GoEndorsement.t.sol, closing the
 // Go -> contract signature loop the forge suites previously simulated with vm.sign.
 func TestGoldenFixtureEndorsement(t *testing.T) {
-	digest, err := hexTo32("c9326b72636896424aabe0039efef420df6cd18811b82db3237260110f39b64d")
+	digest, err := hexTo32("40126b61e08efb5a33787c559f3e7178ad5c006fb7429062b54d442c6a0680e8")
 	require.NoError(t, err)
 
 	expected := []string{
-		"61f5eef325cc3086223597422c5217d0dfdc88ee5dfe9d223b54d9030ff3900b08f17c1fa26cf286bab6ef7d83e69c2ee58da218bd51cd6ffd31af44e561ecbd1c",
-		"c81abb08a72fe90d3658b2e819aebb1a02e1be82001d46d4a9ccdd7747efb46e6267065c0a8ac036ed2a4a9bb94a9384956c00e2878dfc50562ebe323778663e1c",
+		"a5d457ae780201b59f8db4f289d8da196efa221af4238f9ffa91c6fd3c9911a91fa9e818dad23a0f90c63b169d7eec329aab8dc57000a2fe89ee6075a8cc28e11b",
+		"1eb6b84df3e54f94499db60106da76fc74bef5b3ba81d4def15dd5fa84b88a52597013c0464375e0a09b15cb1c32b621fc1ecad44771b0d3fd2b3aa5909fd8b11b",
 	}
 	for i, low := range []byte{1, 2} {
 		sig, err := testSigner(t, low).Sign(digest)

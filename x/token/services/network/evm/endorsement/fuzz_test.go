@@ -9,6 +9,7 @@ package endorsement
 import (
 	"context"
 	"encoding/json"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client/mock"
 	"math/big"
 	"testing"
 
@@ -79,10 +80,11 @@ func FuzzSetupDeltaBuild(f *testing.F) {
 	f.Add([]byte("new-pp"), anchorHex(0xC1)[:10], []byte("current-pp"))
 
 	f.Fuzz(func(t *testing.T, newPP []byte, anchor string, currentPP []byte) {
-		factory := NewSetupDeltaFactory(&fakePPValidator{pp: &fakePublicParameters{}}, &fakePP{raw: currentPP})
+		factory := NewSetupDeltaFactory(&fakePPValidator{pp: &fakePublicParameters{}}, &fakePP{raw: currentPP}, &mock.EVMClient{}, testDeadline)
 
 		delta, err := factory.Build(context.Background(), &EndorseRequest{
-			Kind: KindSetup, PublicParamsRaw: newPP, TMSID: testTMSID(), Anchor: anchor,
+			ValidUntil: testValidUntil,
+			Kind:       KindSetup, PublicParamsRaw: newPP, TMSID: testTMSID(), Anchor: anchor,
 		})
 		if err != nil {
 			return

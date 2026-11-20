@@ -18,16 +18,18 @@ library EIP712 {
     /// @dev The primary type is listed first, then referenced structs alphabetically (only OutputToken),
     ///      matching eip712/hashstruct.go and the ethers encoder.
     bytes32 internal constant STATE_DELTA_TYPEHASH = keccak256(
-        "StateDelta(bytes32 anchor,bytes32[] spentRefs,OutputToken[] outputs,bytes32[] metadataKeys,bytes[] metadataVals,bytes32 tokenRequestHash,bytes32 publicParamsHash,uint64 publicParamsVersion,bool isSetup,bytes setupParameters)OutputToken(bytes32 tokenID,bytes32 snMarker,bytes tokenData)"
+        "StateDelta(bytes32 anchor,bytes32[] spentRefs,OutputToken[] outputs,bytes32[] metadataKeys,bytes[] metadataVals,bytes32 tokenRequestHash,bytes32 publicParamsHash,uint64 publicParamsVersion,bool isSetup,bytes setupParameters,uint64 validUntil)OutputToken(bytes32 tokenID,bytes32 snMarker,bytes tokenData)"
     );
 
     /// @dev keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")
     bytes32 internal constant DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
-    /// @dev Domain name/version; must match eip712/domain.go (DomainName="Panurus", DomainVersion="1").
+    /// @dev Domain name/version; must match eip712/domain.go (DomainName="Panurus", DomainVersion="2").
+    ///      Version 2 added StateDelta.validUntil. Bumping it makes an endorser and a contract that
+    ///      disagree on the struct fail on the domain, not on an opaque signature mismatch.
     bytes32 internal constant DOMAIN_NAME_HASH = keccak256(bytes("Panurus"));
-    bytes32 internal constant DOMAIN_VERSION_HASH = keccak256(bytes("1"));
+    bytes32 internal constant DOMAIN_VERSION_HASH = keccak256(bytes("2"));
 
     /// @notice The EIP-712 domain separator binding chainId + verifyingContract (the per-TMS TokenState
     ///         clone), so a signature cannot be replayed on another chain or against another contract.
@@ -61,7 +63,8 @@ library EIP712 {
     /// @notice hashStruct(StateDelta). Each member is encoded as a 32-byte word: atomic values directly;
     ///         dynamic `bytes` as keccak256(value); `bytes32[]` as keccak256 of the concatenated words;
     ///         `bytes[]`/`OutputToken[]` per the helpers above. `uint64 publicParamsVersion` is widened to
-    ///         a full word (matching the Go uint64Word), and `bool` occupies a full word.
+    ///         a full word (matching the Go uint64Word), as is `uint64 validUntil`, and `bool` occupies
+    ///         a full word.
     function hashStruct(StateDelta memory d) internal pure returns (bytes32) {
         return keccak256(
             abi.encode(
@@ -75,7 +78,8 @@ library EIP712 {
                 d.publicParamsHash,
                 uint256(d.publicParamsVersion),
                 d.isSetup,
-                keccak256(d.setupParameters)
+                keccak256(d.setupParameters),
+                uint256(d.validUntil)
             )
         );
     }

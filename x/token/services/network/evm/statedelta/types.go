@@ -78,6 +78,12 @@ type StateDelta struct {
 	// SetupParameters carries the new public parameters.
 	IsSetup         bool
 	SetupParameters []byte
+
+	// ValidUntil is the last block number at which the delta may be applied: TokenState reverts with
+	// DeltaExpired past it. Once a block past it is final, nobody can apply the delta any more, so a
+	// transaction that never landed is known never to land. The requester proposes it and every
+	// endorser checks it is within its configured window before signing.
+	ValidUntil uint64
 }
 
 // Validate checks the structural invariants a well-formed StateDelta must satisfy. The translator
@@ -131,6 +137,11 @@ func (d *StateDelta) Validate() error {
 		if bytes.Compare(d.MetadataKeys[i-1][:], d.MetadataKeys[i][:]) >= 0 {
 			return errors.Errorf("metadata keys must be strictly ascending (canonical order), violated at index %d", i)
 		}
+	}
+	if d.ValidUntil == 0 {
+		// block 0 is the genesis block, so a zero deadline is one no delta can ever meet: it means the
+		// field was never set.
+		return errors.Errorf("delta has no validUntil")
 	}
 	if d.IsSetup {
 		if len(d.SpentRefs) != 0 || len(d.Outputs) != 0 || len(d.MetadataKeys) != 0 {

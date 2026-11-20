@@ -438,6 +438,10 @@ func (d *Driver) installEndorsement(n *Network, namespaces []NamespaceConfig, ev
 			BlockTag:     nc.Config.Finality.BlockTag,
 			PublicParams: pp.NewChainProvider(evmClient, tokenState, client.BlockTagLatest),
 			Authorizer:   authorizer,
+			Deadline: endorsement.DeadlineWindow{
+				MinBlocks: nc.Config.Endorsement.Deadline.MinBlocks,
+				MaxBlocks: nc.Config.Endorsement.Deadline.MaxBlocks,
+			},
 		}); err != nil {
 			return errors.Wrapf(err, "evm: tms [%s]", nc.Namespace)
 		}

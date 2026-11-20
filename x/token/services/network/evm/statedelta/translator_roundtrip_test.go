@@ -33,7 +33,7 @@ func TestDeterminismShuffledMetadata(t *testing.T) {
 		for i := range 12 {
 			metadata[fmt.Sprintf("key-%d", i)] = fmt.Appendf(nil, "val-%d", i)
 		}
-		tr := NewTranslator(testAnchor(0x77), testPP, 1)
+		tr := NewTranslator(testAnchor(0x77), testPP, 1, testValidUntil)
 		require.NoError(t, tr.Write(context.Background(), issueAction([][]byte{[]byte("o0"), []byte("o1")}, metadata)))
 
 		return finish(t, tr)
@@ -56,7 +56,7 @@ func TestFabtokenContentBindingRoundTrip(t *testing.T) {
 	// issue the token at (issueAnchor, 0)
 	issueAnchor := testAnchor(0xA1)
 	issue := &fabactions.IssueAction{Outputs: []*fabactions.Output{tok}}
-	trIssue := NewTranslator(issueAnchor, testPP, 0)
+	trIssue := NewTranslator(issueAnchor, testPP, 0, testValidUntil)
 	require.NoError(t, trIssue.Write(context.Background(), issue))
 	issued := finish(t, trIssue)
 	require.Len(t, issued.Outputs, 1)
@@ -70,7 +70,7 @@ func TestFabtokenContentBindingRoundTrip(t *testing.T) {
 		}},
 		Outputs: []*fabactions.Output{{Owner: []byte("bob"), Type: "TOK", Quantity: "0x0a"}},
 	}
-	trSpend := NewTranslator(testAnchor(0xA2), testPP, 0)
+	trSpend := NewTranslator(testAnchor(0xA2), testPP, 0, testValidUntil)
 	require.NoError(t, trSpend.Write(context.Background(), transfer))
 	spent := finish(t, trSpend)
 
@@ -85,7 +85,7 @@ func TestFabtokenContentBindingRoundTrip(t *testing.T) {
 			Input: &fabactions.Output{Owner: []byte("alice"), Type: "TOK", Quantity: "0xff"},
 		}},
 	}
-	trForged := NewTranslator(testAnchor(0xA3), testPP, 0)
+	trForged := NewTranslator(testAnchor(0xA3), testPP, 0, testValidUntil)
 	require.NoError(t, trForged.Write(context.Background(), forged))
 	forgedDelta := finish(t, trForged)
 
@@ -105,7 +105,7 @@ func TestZkatdlogContentBindingRoundTrip(t *testing.T) {
 
 	issueAnchor := testAnchor(0xB1)
 	issue := &zissue.Action{Outputs: []*ztoken.Token{tok}}
-	trIssue := NewTranslator(issueAnchor, testPP, 0)
+	trIssue := NewTranslator(issueAnchor, testPP, 0, testValidUntil)
 	require.NoError(t, trIssue.Write(context.Background(), issue))
 	issued := finish(t, trIssue)
 	require.Len(t, issued.Outputs, 1)
@@ -117,7 +117,7 @@ func TestZkatdlogContentBindingRoundTrip(t *testing.T) {
 			Token: tok,
 		}},
 	}
-	trSpend := NewTranslator(testAnchor(0xB2), testPP, 0)
+	trSpend := NewTranslator(testAnchor(0xB2), testPP, 0, testValidUntil)
 	require.NoError(t, trSpend.Write(context.Background(), transfer))
 	spent := finish(t, trSpend)
 
@@ -133,7 +133,7 @@ func TestZkatdlogContentBindingRoundTrip(t *testing.T) {
 			Token: forgedTok,
 		}},
 	}
-	trForged := NewTranslator(testAnchor(0xB3), testPP, 0)
+	trForged := NewTranslator(testAnchor(0xB3), testPP, 0, testValidUntil)
 	require.NoError(t, trForged.Write(context.Background(), forged))
 	forgedDelta := finish(t, trForged)
 

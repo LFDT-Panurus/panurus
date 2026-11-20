@@ -2,7 +2,7 @@
   "_comment": "Golden EIP-712 fixtures produced by the Go eip712 package and independently validated against ethers v6 (eip712_check.js). The Solidity EIP712 library MUST reproduce every expected value (test/EIP712.t.sol). Two vectors: stateDelta (transfer-shaped: non-empty arrays, isSetup=false) and setupDelta (PP-update-shaped: empty arrays, isSetup=true, non-empty setupParameters) — together they pin both delta shapes endorsers ever sign. Keep in sync with x/token/services/network/evm/eip712/eip712_test.go.",
   "domain": {
     "name": "Panurus",
-    "version": "1",
+    "version": "2",
     "chainId": 1,
     "verifyingContract": "0x1234567890123456789012345678901234567890"
   },
@@ -29,7 +29,8 @@
     "publicParamsHash": "0x6161616161616161616161616161616161616161616161616161616161616161",
     "publicParamsVersion": 3,
     "isSetup": false,
-    "setupParameters": "0x"
+    "setupParameters": "0x",
+    "validUntil": 1000000
   },
   "setupDelta": {
     "anchor": "0x7777777777777777777777777777777777777777777777777777777777777777",
@@ -41,15 +42,16 @@
     "publicParamsHash": "0x9999999999999999999999999999999999999999999999999999999999999999",
     "publicParamsVersion": 4,
     "isSetup": true,
-    "setupParameters": "0x70702d7634"
+    "setupParameters": "0x70702d7634",
+    "validUntil": 2000000
   },
   "expected": {
     "outputTokenTypeHash": "0x9ce134f0b91dfef3fdcab70824f54671fc844cbc57c8310ae4e027e6935afc2b",
-    "stateDeltaTypeHash": "0x09fd59eaff1424386ce5076c92a3e0c3556cce1c4c25a62c3331876f58a8e41f",
-    "domainSeparator": "0xc36531b9deae2efb80b130be2e33982d0d4bf31bf64f5a5b94c65fce64f9b5f7",
-    "digest": "0xc9326b72636896424aabe0039efef420df6cd18811b82db3237260110f39b64d",
-    "setupHashStruct": "0xaef849354e919674c879039b642d9c01720e23c7e971f403a79aa330580d08dc",
-    "setupDigest": "0xdca9a011c43cf475b62f274c4b970ba2755982cad95a09198332cb211ac50a76"
+    "stateDeltaTypeHash": "0x91f5f6b4847848d600e10535c09b8d5e26b66bfd3957205d9c382c7bf3efa904",
+    "domainSeparator": "0x4719d2d854e6ca15b92ab4e3d87627be3732f8bb93220f4c6ac3fa25be174115",
+    "digest": "0x40126b61e08efb5a33787c559f3e7178ad5c006fb7429062b54d442c6a0680e8",
+    "setupHashStruct": "0x460c829180212053c6a7f59ef2236a7bd94588092718c00e203747d69640f064",
+    "setupDigest": "0xd862368ccdab2b857e53dc33f8b0ad59b4bb2a6ff8f9202e01828ba5d1f80c71"
   },
   "endorsement": {
     "_comment": "Real signatures over expected.digest produced by the Go eip712.Signer (RFC 6979, so reproducible) with the well-known test keys 1 and 2. Independently validated with ethers v6 recoverAddress. The Solidity EndorsementVerifier must accept them (test/GoEndorsement.t.sol); the Go side must reproduce them byte for byte (eip712 signer golden test). Never hand-edit.",
@@ -58,8 +60,8 @@
       "0x2b5ad5c4795c026514f8317c7a215e218dccd6cf"
     ],
     "signatures": [
-      "0x61f5eef325cc3086223597422c5217d0dfdc88ee5dfe9d223b54d9030ff3900b08f17c1fa26cf286bab6ef7d83e69c2ee58da218bd51cd6ffd31af44e561ecbd1c",
-      "0xc81abb08a72fe90d3658b2e819aebb1a02e1be82001d46d4a9ccdd7747efb46e6267065c0a8ac036ed2a4a9bb94a9384956c00e2878dfc50562ebe323778663e1c"
+      "0xa5d457ae780201b59f8db4f289d8da196efa221af4238f9ffa91c6fd3c9911a91fa9e818dad23a0f90c63b169d7eec329aab8dc57000a2fe89ee6075a8cc28e11b",
+      "0x1eb6b84df3e54f94499db60106da76fc74bef5b3ba81d4def15dd5fa84b88a52597013c0464375e0a09b15cb1c32b621fc1ecad44771b0d3fd2b3aa5909fd8b11b"
     ],
     "threshold": 2
   }

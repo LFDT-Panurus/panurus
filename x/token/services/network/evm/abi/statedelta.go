@@ -13,10 +13,10 @@ import (
 // ApplyStateDeltaMethod is the canonical ABI signature of the TokenState write the driver makes. It
 // is the flattened form of applyStateDelta(StateDelta calldata, bytes[] calldata): structs become
 // parenthesized tuples, in declaration order. Taken from the compiled contract ABI, so the selector
-// (0xe7920565) matches what the contract dispatches on; the field order matches StateDelta.sol and
+// (0x23c97da0) matches what the contract dispatches on; the field order matches StateDelta.sol and
 // the EIP-712 type, and must stay in lockstep with both.
 const ApplyStateDeltaMethod = "applyStateDelta(" +
-	"(bytes32,bytes32[],(bytes32,bytes32,bytes)[],bytes32[],bytes[],bytes32,bytes32,uint64,bool,bytes)," +
+	"(bytes32,bytes32[],(bytes32,bytes32,bytes)[],bytes32[],bytes[],bytes32,bytes32,uint64,bool,bytes,uint64)," +
 	"bytes[])"
 
 // EncodeApplyStateDelta returns the calldata for applyStateDelta(delta, signatures): the endorsed
@@ -49,5 +49,6 @@ func StateDeltaValue(delta *statedelta.StateDelta) Value {
 		Uint64(delta.PublicParamsVersion),
 		Bool(delta.IsSetup),
 		Bytes(delta.SetupParameters),
+		Uint64(delta.ValidUntil),
 	)
 }

@@ -61,6 +61,10 @@ type EndorseRequest struct {
 	Anchor string `json:"anchor"`
 	// Metadata is the optional approval metadata forwarded from the initiator.
 	Metadata map[string][]byte `json:"metadata,omitempty"`
+	// ValidUntil is the deadline the requester proposes for the delta: the last block at which it may
+	// be applied (StateDelta.ValidUntil). Every endorser must sign the same delta, so they cannot each
+	// pick one; each checks it is within its own window instead (see DeadlineWindow).
+	ValidUntil uint64 `json:"valid_until"`
 }
 
 // Validate checks the request carries the fields an endorser needs before it does any work.
@@ -70,6 +74,9 @@ func (r *EndorseRequest) Validate() error {
 	}
 	if len(r.TMSID.Network) == 0 || len(r.TMSID.Namespace) == 0 {
 		return errors.Errorf("endorse request: incomplete tms id [%s]", r.TMSID)
+	}
+	if r.ValidUntil == 0 {
+		return errors.New("endorse request: no validUntil")
 	}
 	switch r.Kind {
 	case KindApproval:

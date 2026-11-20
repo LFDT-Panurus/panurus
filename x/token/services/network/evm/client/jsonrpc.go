@@ -189,6 +189,16 @@ func (c *JSONRPCClient) GetLogs(ctx context.Context, q LogFilter) ([]Log, error)
 	return out, nil
 }
 
+// BlockNumber returns the number of the node's latest block.
+func (c *JSONRPCClient) BlockNumber(ctx context.Context) (uint64, error) {
+	var out string
+	if err := c.call(ctx, "eth_blockNumber", &out); err != nil {
+		return 0, err
+	}
+
+	return parseHexUint(out)
+}
+
 // PendingNonceAt returns the next nonce for account, including pending transactions.
 func (c *JSONRPCClient) PendingNonceAt(ctx context.Context, account Address) (uint64, error) {
 	var out string

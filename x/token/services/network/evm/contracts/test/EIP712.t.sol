@@ -53,6 +53,7 @@ contract EIP712Test is Test {
         d.publicParamsVersion = 3;
         d.isSetup = false;
         d.setupParameters = hex"";
+        d.validUntil = 1000000;
     }
 
     /// @dev The fixture setup delta (mirrors the `setupDelta` object in the JSON): the PP-update shape,
@@ -68,6 +69,7 @@ contract EIP712Test is Test {
         d.publicParamsVersion = 4;
         d.isSetup = true;
         d.setupParameters = hex"70702d7634"; // "pp-v4"
+        d.validUntil = 2000000;
     }
 
     function test_OutputTokenTypeHash_matchesFixture() public view {

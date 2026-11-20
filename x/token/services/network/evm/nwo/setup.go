@@ -146,9 +146,15 @@ func (u *SetupUpdater) buildDelta(ctx context.Context, ppRaw []byte) (*statedelt
 	if err != nil {
 		return nil, errors.Wrap(err, "evm nwo: failed to read the current public parameters")
 	}
+	head, err := u.client.BlockNumber(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "evm nwo: failed to read the latest block")
+	}
 
 	delta := &statedelta.StateDelta{
-		Anchor: setupAnchor(ppRaw, version),
+		// The update is applied right away by this harness, so the deadline only has to outlast that.
+		ValidUntil: head + setupDeadlineBlocks,
+		Anchor:     setupAnchor(ppRaw, version),
 		// There is no token request behind an administrative update, so the field records what the
 		// update carried instead of a request that does not exist.
 		TokenRequestHash:    sha256.Sum256(ppRaw),
@@ -163,6 +169,10 @@ func (u *SetupUpdater) buildDelta(ctx context.Context, ppRaw []byte) (*statedelt
 
 	return delta, nil
 }
+
+// setupDeadlineBlocks is how many blocks past the latest one a setup delta built here stays
+// applicable for. See StateDelta.ValidUntil.
+const setupDeadlineBlocks = 600
 
 // endorse signs the delta with as many endorser keys as the quorum requires.
 func (u *SetupUpdater) endorse(delta *statedelta.StateDelta) ([][]byte, error) {

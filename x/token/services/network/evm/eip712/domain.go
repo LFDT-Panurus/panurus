@@ -16,7 +16,7 @@ import (
 const (
 	// DomainName and DomainVersion identify the signing domain and must match the Solidity contract.
 	DomainName    = "Panurus"
-	DomainVersion = "1"
+	DomainVersion = "2"
 )
 
 // domainTypeHash = keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)").
