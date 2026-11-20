@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -64,6 +65,12 @@ var errSkippedInFlight = errors.New("recovery: transaction skipped, previous att
 // itself can be drawn, so it must not be counted, logged, or alerted on as a
 // timeout or a failure.
 var errSkippedShutdown = errors.New("recovery: transaction skipped, attempt interrupted by shutdown")
+
+// ErrNoProgress is returned by a sweep in which every claimed transaction was skipped
+// because a previous attempt for it is still running past TransactionTimeout. Nothing
+// failed, but nothing was recovered either: a sweep that keeps returning it is wedged on
+// transactions whose ledger status query never returns, see StuckTransactions.
+var ErrNoProgress = errors.New("recovery: sweep made no progress, every claimed transaction is still in flight")
 
 //go:generate counterfeiter -o mock/storage.go -fake-name Storage . Storage
 
@@ -129,7 +136,10 @@ type Manager struct {
 	// Commit). It is also what runSweep checks to decide whether recovery
 	// leadership must be held across sweeps rather than released at the end
 	// of this one: see the leadership field below.
-	inFlight   map[string]struct{}
+	//
+	// The value is when the attempt started, which is what StuckTransactions
+	// reports.
+	inFlight   map[string]time.Time
 	inFlightMu sync.Mutex
 
 	// leadership is the recovery leadership lease currently held by this
@@ -186,7 +196,7 @@ func NewManager(
 		config:               config,
 		configuredInstanceID: config.InstanceID,
 		timeoutCounts:        make(map[string]timeoutEntry),
-		inFlight:             make(map[string]struct{}),
+		inFlight:             make(map[string]time.Time),
 	}
 }
 
@@ -322,6 +332,11 @@ func (m *Manager) recoveryLoop() {
 func (m *Manager) logSweepError(what string, err error) {
 	if errors.Is(err, context.Canceled) {
 		m.logger.Debugf("%s stopped: %v", what, err)
+
+		return
+	}
+	if errors.Is(err, ErrNoProgress) {
+		m.logger.Warnf("%s made no progress: %v; stuck transactions: %v", what, err, m.StuckTransactions())
 
 		return
 	}
@@ -554,7 +569,12 @@ func (m *Manager) recoverTransactions(ctx context.Context) error {
 		// without it, a fan-out cancelled mid-batch after dispatching only
 		// skips would also print "all skipped", overstating what the sweep
 		// even attempted.
-		m.logger.Warnf("completed recovery sweep: claimed=%d, all skipped (previous attempts still in flight), no progress made", len(records))
+		//
+		// It is returned as ErrNoProgress rather than logged here, so the caller
+		// of a sweep can tell it apart from a clean one: returning nil made a
+		// sweep that is wedged on stuck transactions read as healthy to anything
+		// driven off the result.
+		return errors.Wrapf(ErrNoProgress, "claimed=%d, all skipped", len(records))
 	case failures > 0 || skipped > 0 || considered < len(records):
 		// skipped > 0 here means a mix of skips and real outcomes, or a
 		// cancelled fan-out (the all-skipped case above already returned
@@ -788,9 +808,61 @@ func (m *Manager) tryMarkInFlight(txID string) bool {
 	if _, ok := m.inFlight[txID]; ok {
 		return false
 	}
-	m.inFlight[txID] = struct{}{}
+	m.inFlight[txID] = time.Now()
 
 	return true
+}
+
+// StuckTransaction is a transaction whose Recover call is still running past
+// TransactionTimeout.
+type StuckTransaction struct {
+	// TxID is the transaction being recovered.
+	TxID string
+	// Since is when the attempt that is still running started.
+	Since time.Time
+}
+
+// String returns the transaction id and how long its attempt has been running.
+func (s StuckTransaction) String() string {
+	return fmt.Sprintf("%s (for %s)", s.TxID, time.Since(s.Since).Truncate(time.Second))
+}
+
+// StuckTransactions returns the transactions whose Recover call has been running for
+// longer than TransactionTimeout, oldest first, for health checks and diagnostics.
+//
+// Such a transaction stays Pending, keeps its claim, and is skipped by every sweep until
+// the call returns, which may be never: nothing gives it a terminal status, because a call
+// that never returned says nothing about whether the transaction reached the ledger. It
+// also keeps one of the BatchSize claim slots of every sweep, so enough of them can starve
+// newer transactions out of recovery entirely (#2307). A sweep that claimed nothing else
+// returns ErrNoProgress.
+//
+// It is a snapshot, and it is empty when TransactionTimeout is 0, since attempts are then
+// never abandoned.
+func (m *Manager) StuckTransactions() []StuckTransaction {
+	if m.config.TransactionTimeout <= 0 {
+		return nil
+	}
+	cutoff := time.Now().Add(-m.config.TransactionTimeout)
+
+	m.inFlightMu.Lock()
+	stuck := make([]StuckTransaction, 0, len(m.inFlight))
+	for txID, since := range m.inFlight {
+		if since.Before(cutoff) {
+			stuck = append(stuck, StuckTransaction{TxID: txID, Since: since})
+		}
+	}
+	m.inFlightMu.Unlock()
+
+	sort.Slice(stuck, func(i, j int) bool {
+		if !stuck[i].Since.Equal(stuck[j].Since) {
+			return stuck[i].Since.Before(stuck[j].Since)
+		}
+
+		return stuck[i].TxID < stuck[j].TxID
+	})
+
+	return stuck
 }
 
 func (m *Manager) clearInFlight(txID string) {
