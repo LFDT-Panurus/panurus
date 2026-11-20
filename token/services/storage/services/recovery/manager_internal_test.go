@@ -8,11 +8,11 @@ package recovery
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
-	"github.com/LFDT-Panurus/panurus/token/services/storage"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/assert"
@@ -26,8 +26,9 @@ import (
 // file needs the internal-test package for direct access to unexported
 // Manager fields and methods.
 type stubStorage struct {
-	releaseFn   func(ctx context.Context, txID, owner, message string) error
-	setStatusFn func(ctx context.Context, txID string, status storage.TxStatus, message string) error
+	releaseFn    func(ctx context.Context, txID, owner, message string) error
+	renewFn      func(ctx context.Context, txID, owner string, lease time.Duration) (bool, error)
+	markOrphanFn func(ctx context.Context, txID, owner, message string) (bool, error)
 }
 
 func (s *stubStorage) AcquireRecoveryLeadership(context.Context) (Leadership, bool, error) {
@@ -46,12 +47,20 @@ func (s *stubStorage) ReleaseRecoveryClaim(ctx context.Context, txID, owner, mes
 	return nil
 }
 
-func (s *stubStorage) SetStatus(ctx context.Context, txID string, status storage.TxStatus, message string) error {
-	if s.setStatusFn != nil {
-		return s.setStatusFn(ctx, txID, status, message)
+func (s *stubStorage) RenewRecoveryClaim(ctx context.Context, txID, owner string, lease time.Duration) (bool, error) {
+	if s.renewFn != nil {
+		return s.renewFn(ctx, txID, owner, lease)
 	}
 
-	return nil
+	return true, nil
+}
+
+func (s *stubStorage) MarkRecoveryOrphan(ctx context.Context, txID, owner, message string) (bool, error) {
+	if s.markOrphanFn != nil {
+		return s.markOrphanFn(ctx, txID, owner, message)
+	}
+
+	return true, nil
 }
 
 // TestFinishAbandonedRecovery_ClearsInFlightOnlyAfterReleaseCompletes is the
@@ -85,7 +94,7 @@ func TestFinishAbandonedRecovery_ClearsInFlightOnlyAfterReleaseCompletes(t *test
 
 	done := make(chan struct{})
 	go func() {
-		m.finishAbandonedRecovery(m.ctx, "inst", txID, time.Time{}, resultCh, cancelRecover)
+		m.finishAbandonedRecovery("inst", txID, time.Time{}, resultCh, cancelRecover, func() {})
 		close(done)
 	}()
 
@@ -109,45 +118,170 @@ func TestFinishAbandonedRecovery_ClearsInFlightOnlyAfterReleaseCompletes(t *test
 	assert.True(t, m.tryMarkInFlight(txID), "inFlight must be cleared once the release has actually completed")
 }
 
-// TestFinishAbandonedRecovery_SkipsOrphanPromotionAfterStop is the regression
-// test for round 8 review finding 3: SetStatus is unconditional and
-// owner-blind, unlike the owner-scoped release beside it, so once Stop() has
-// released leadership a live peer could have already resolved txID (e.g. to
-// Confirmed) by the time this detached finisher's NotFound result arrives.
-// Promoting to Orphan in that case would stomp a real outcome with a stale
-// one; finishAbandonedRecovery must skip the promotion once it observes the
-// manager already stopped.
-func TestFinishAbandonedRecovery_SkipsOrphanPromotionAfterStop(t *testing.T) {
-	setStatusCalls := 0
+// TestFinishAbandonedRecovery_PromotesOrphanOnlyThroughTheClaim covers #2322: an attempt
+// that finishes after Stop() released leadership used to skip the Orphan promotion
+// altogether, since an unconditional SetStatus could stomp an outcome a peer wrote after
+// taking the claim over. The promotion now goes through MarkRecoveryOrphan, which only
+// writes while the transaction is still Pending and still claimed by this instance, so it
+// is attempted, scoped to the claim's owner, and its verdict decides how the claim is
+// released.
+func TestFinishAbandonedRecovery_PromotesOrphanOnlyThroughTheClaim(t *testing.T) {
+	notFound := errors.New("rpc error: code = NotFound desc = transaction ID [tx1]: not found in index: tx not found")
+	storedAt := time.Now().Add(-time.Hour) // well past the 1ms grace period
+
+	for _, tc := range []struct {
+		name        string
+		marked      bool
+		wantRelease string
+	}{
+		{name: "still ours: promoted", marked: true, wantRelease: "tx marked Orphan after NotFound grace period"},
+		{name: "taken over or resolved meanwhile: left alone", marked: false, wantRelease: "recovery failed: " + notFound.Error()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var markOwner, releaseMessage string
+			store := &stubStorage{
+				markOrphanFn: func(_ context.Context, _ string, owner, _ string) (bool, error) {
+					markOwner = owner
+
+					return tc.marked, nil
+				},
+				releaseFn: func(_ context.Context, _ string, _ string, message string) error {
+					releaseMessage = message
+
+					return nil
+				},
+			}
+			m := NewManager(logging.MustGetLogger(), store, nil, Config{InstanceID: "inst", NotFoundGracePeriod: time.Millisecond})
+			//nolint:fatcontext // test double for Start's own field assignment, not a per-request context
+			m.ctx, m.cancel = context.WithCancel(context.Background())
+			m.cancel() // Stop() already ran before this attempt returns
+
+			const txID = "tx1"
+			m.tryMarkInFlight(txID)
+			resultCh := make(chan error, 1)
+			resultCh <- notFound
+			_, cancelRecover := context.WithCancel(context.Background())
+
+			m.finishAbandonedRecovery("inst-at-claim-time", txID, storedAt, resultCh, cancelRecover, func() {})
+
+			assert.Equal(t, "inst-at-claim-time", markOwner, "the promotion must be scoped to the owner that made the claim")
+			assert.Equal(t, tc.wantRelease, releaseMessage)
+			assert.True(t, m.tryMarkInFlight(txID), "inFlight must be cleared once the attempt is finalized")
+		})
+	}
+}
+
+// TestFinishAbandonedRecovery_StopsRenewalBeforeReleasing checks the claim renewal for an
+// abandoned attempt is stopped before its claim is released: a renewal racing the release
+// would otherwise be pointless at best.
+func TestFinishAbandonedRecovery_StopsRenewalBeforeReleasing(t *testing.T) {
+	var events []string
 	store := &stubStorage{
-		setStatusFn: func(context.Context, string, storage.TxStatus, string) error {
-			setStatusCalls++
+		releaseFn: func(context.Context, string, string, string) error {
+			events = append(events, "release")
 
 			return nil
 		},
 	}
-
-	m := NewManager(logging.MustGetLogger(), store, nil, Config{
-		InstanceID:          "inst",
-		NotFoundGracePeriod: time.Millisecond,
-	})
-	//nolint:fatcontext // test double for Start's own field assignment, not a per-request context
-	m.ctx, m.cancel = context.WithCancel(context.Background())
-	m.cancel() // simulate Stop() having already run before this attempt returns
-
-	const txID = "tx1"
-	m.tryMarkInFlight(txID)
+	m := NewManager(logging.MustGetLogger(), store, nil, Config{InstanceID: "inst"})
 
 	resultCh := make(chan error, 1)
-	resultCh <- errors.New("rpc error: code = NotFound desc = transaction ID [tx1]: not found in index: tx not found")
+	resultCh <- nil
 	_, cancelRecover := context.WithCancel(context.Background())
+	m.finishAbandonedRecovery("inst", "tx1", time.Time{}, resultCh, cancelRecover, func() { events = append(events, "stop renewal") })
 
-	storedAt := time.Now().Add(-time.Hour) // well past the 1ms grace period
+	assert.Equal(t, []string{"stop renewal", "release"}, events)
+}
 
-	m.finishAbandonedRecovery(m.ctx, "inst", txID, storedAt, resultCh, cancelRecover)
+// renewRecorder records RenewRecoveryClaim calls and answers them from a script.
+type renewRecorder struct {
+	mu      sync.Mutex
+	calls   int
+	answers []renewAnswer
+	called  chan struct{}
+}
 
-	assert.Equal(t, 0, setStatusCalls,
-		"must not promote to Orphan once Stop() has already run: a live peer may have since resolved txID and SetStatus has no owner/status guard to protect that outcome")
+type renewAnswer struct {
+	renewed bool
+	err     error
+}
+
+func newRenewRecorder(answers ...renewAnswer) *renewRecorder {
+	return &renewRecorder{answers: answers, called: make(chan struct{}, 100)}
+}
+
+func (r *renewRecorder) renew(_ context.Context, txID, owner string, lease time.Duration) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	answer := renewAnswer{renewed: true}
+	if r.calls < len(r.answers) {
+		answer = r.answers[r.calls]
+	}
+	r.calls++
+	r.called <- struct{}{}
+
+	return answer.renewed, answer.err
+}
+
+func (r *renewRecorder) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.calls
+}
+
+func (r *renewRecorder) waitCalls(t *testing.T, n int) {
+	t.Helper()
+	for range n {
+		select {
+		case <-r.called:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("expected %d renewal(s), got %d", n, r.count())
+		}
+	}
+}
+
+// TestRenewClaimUntilStopped_RenewsUntilStopped is the other half of #2322: the lease of an
+// abandoned attempt is renewed directly, right away and then every third of the lease, for
+// as long as the attempt runs, without any sweep or leadership involved.
+func TestRenewClaimUntilStopped_RenewsUntilStopped(t *testing.T) {
+	recorder := newRenewRecorder()
+	var gotOwner, gotTx string
+	var gotLease time.Duration
+	store := &stubStorage{renewFn: func(ctx context.Context, txID, owner string, lease time.Duration) (bool, error) {
+		gotOwner, gotTx, gotLease = owner, txID, lease
+
+		return recorder.renew(ctx, txID, owner, lease)
+	}}
+	m := NewManager(logging.MustGetLogger(), store, nil, Config{InstanceID: "inst"})
+
+	stop := m.renewClaimUntilStopped("owner-1", "tx1", 30*time.Millisecond)
+	recorder.waitCalls(t, 3)
+	stop()
+
+	assert.Equal(t, "owner-1", gotOwner)
+	assert.Equal(t, "tx1", gotTx)
+	assert.Equal(t, 30*time.Millisecond, gotLease)
+	after := recorder.count()
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, after, recorder.count(), "no renewal may happen once stopped")
+}
+
+// TestRenewClaimUntilStopped_GivesUpOnceTheClaimIsGone checks renewal stops on its own once
+// the store reports the claim is no longer this instance's, and keeps going through errors.
+func TestRenewClaimUntilStopped_GivesUpOnceTheClaimIsGone(t *testing.T) {
+	recorder := newRenewRecorder(
+		renewAnswer{renewed: true},
+		renewAnswer{err: errors.New("connection reset")},
+		renewAnswer{renewed: false},
+	)
+	m := NewManager(logging.MustGetLogger(), &stubStorage{renewFn: recorder.renew}, nil, Config{InstanceID: "inst"})
+
+	stop := m.renewClaimUntilStopped("owner-1", "tx1", 30*time.Millisecond)
+	recorder.waitCalls(t, 3)
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, 3, recorder.count(), "renewal must stop once the claim is gone, after retrying through the error")
+	stop() // still safe to call after the renewal ended by itself
 }
 
 // TestPreferResult exercises the tie-break directly, without relying on real
@@ -180,4 +314,20 @@ func TestIsPowerOfTwo(t *testing.T) {
 	assert.True(t, isPowerOfTwo(4))
 	assert.False(t, isPowerOfTwo(5))
 	assert.True(t, isPowerOfTwo(8))
+}
+
+// TestRenewClaimUntilStopped_RenewsRightAway checks the first renewal does not wait a whole
+// interval: by the time an attempt is abandoned it has already used up TransactionTimeout of
+// the lease it was claimed with, which can be most of it.
+func TestRenewClaimUntilStopped_RenewsRightAway(t *testing.T) {
+	recorder := newRenewRecorder()
+	m := NewManager(logging.MustGetLogger(), &stubStorage{renewFn: recorder.renew}, nil, Config{InstanceID: "inst"})
+
+	stop := m.renewClaimUntilStopped("owner-1", "tx1", time.Minute) // first tick would be 20s away
+	defer stop()
+	select {
+	case <-recorder.called:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the claim was not renewed right away")
+	}
 }

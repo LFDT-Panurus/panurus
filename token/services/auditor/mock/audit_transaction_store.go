@@ -137,6 +137,22 @@ type AuditTransactionStore struct {
 		result1 map[string][]byte
 		result2 error
 	}
+	MarkRecoveryOrphanStub        func(context.Context, string, string, string) (bool, error)
+	markRecoveryOrphanMutex       sync.RWMutex
+	markRecoveryOrphanArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+		arg4 string
+	}
+	markRecoveryOrphanReturns struct {
+		result1 bool
+		result2 error
+	}
+	markRecoveryOrphanReturnsOnCall map[int]struct {
+		result1 bool
+		result2 error
+	}
 	NewTransactionStoreTransactionStub        func() (driver.TransactionStoreTransaction, error)
 	newTransactionStoreTransactionMutex       sync.RWMutex
 	newTransactionStoreTransactionArgsForCall []struct {
@@ -230,6 +246,22 @@ type AuditTransactionStore struct {
 	}
 	releaseRecoveryClaimReturnsOnCall map[int]struct {
 		result1 error
+	}
+	RenewRecoveryClaimStub        func(context.Context, string, string, time.Duration) (bool, error)
+	renewRecoveryClaimMutex       sync.RWMutex
+	renewRecoveryClaimArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+		arg4 time.Duration
+	}
+	renewRecoveryClaimReturns struct {
+		result1 bool
+		result2 error
+	}
+	renewRecoveryClaimReturnsOnCall map[int]struct {
+		result1 bool
+		result2 error
 	}
 	ResolveFindingsNotSeenSinceStub        func(context.Context, []string, time.Time) (int64, error)
 	resolveFindingsNotSeenSinceMutex       sync.RWMutex
@@ -867,6 +899,73 @@ func (fake *AuditTransactionStore) GetTokenRequestsReturnsOnCall(i int, result1 
 	}{result1, result2}
 }
 
+func (fake *AuditTransactionStore) MarkRecoveryOrphan(arg1 context.Context, arg2 string, arg3 string, arg4 string) (bool, error) {
+	fake.markRecoveryOrphanMutex.Lock()
+	ret, specificReturn := fake.markRecoveryOrphanReturnsOnCall[len(fake.markRecoveryOrphanArgsForCall)]
+	fake.markRecoveryOrphanArgsForCall = append(fake.markRecoveryOrphanArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+		arg4 string
+	}{arg1, arg2, arg3, arg4})
+	stub := fake.MarkRecoveryOrphanStub
+	fakeReturns := fake.markRecoveryOrphanReturns
+	fake.recordInvocation("MarkRecoveryOrphan", []interface{}{arg1, arg2, arg3, arg4})
+	fake.markRecoveryOrphanMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3, arg4)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *AuditTransactionStore) MarkRecoveryOrphanCallCount() int {
+	fake.markRecoveryOrphanMutex.RLock()
+	defer fake.markRecoveryOrphanMutex.RUnlock()
+	return len(fake.markRecoveryOrphanArgsForCall)
+}
+
+func (fake *AuditTransactionStore) MarkRecoveryOrphanCalls(stub func(context.Context, string, string, string) (bool, error)) {
+	fake.markRecoveryOrphanMutex.Lock()
+	defer fake.markRecoveryOrphanMutex.Unlock()
+	fake.MarkRecoveryOrphanStub = stub
+}
+
+func (fake *AuditTransactionStore) MarkRecoveryOrphanArgsForCall(i int) (context.Context, string, string, string) {
+	fake.markRecoveryOrphanMutex.RLock()
+	defer fake.markRecoveryOrphanMutex.RUnlock()
+	argsForCall := fake.markRecoveryOrphanArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
+}
+
+func (fake *AuditTransactionStore) MarkRecoveryOrphanReturns(result1 bool, result2 error) {
+	fake.markRecoveryOrphanMutex.Lock()
+	defer fake.markRecoveryOrphanMutex.Unlock()
+	fake.MarkRecoveryOrphanStub = nil
+	fake.markRecoveryOrphanReturns = struct {
+		result1 bool
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *AuditTransactionStore) MarkRecoveryOrphanReturnsOnCall(i int, result1 bool, result2 error) {
+	fake.markRecoveryOrphanMutex.Lock()
+	defer fake.markRecoveryOrphanMutex.Unlock()
+	fake.MarkRecoveryOrphanStub = nil
+	if fake.markRecoveryOrphanReturnsOnCall == nil {
+		fake.markRecoveryOrphanReturnsOnCall = make(map[int]struct {
+			result1 bool
+			result2 error
+		})
+	}
+	fake.markRecoveryOrphanReturnsOnCall[i] = struct {
+		result1 bool
+		result2 error
+	}{result1, result2}
+}
+
 func (fake *AuditTransactionStore) NewTransactionStoreTransaction() (driver.TransactionStoreTransaction, error) {
 	fake.newTransactionStoreTransactionMutex.Lock()
 	ret, specificReturn := fake.newTransactionStoreTransactionReturnsOnCall[len(fake.newTransactionStoreTransactionArgsForCall)]
@@ -1307,6 +1406,73 @@ func (fake *AuditTransactionStore) ReleaseRecoveryClaimReturnsOnCall(i int, resu
 	fake.releaseRecoveryClaimReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
+}
+
+func (fake *AuditTransactionStore) RenewRecoveryClaim(arg1 context.Context, arg2 string, arg3 string, arg4 time.Duration) (bool, error) {
+	fake.renewRecoveryClaimMutex.Lock()
+	ret, specificReturn := fake.renewRecoveryClaimReturnsOnCall[len(fake.renewRecoveryClaimArgsForCall)]
+	fake.renewRecoveryClaimArgsForCall = append(fake.renewRecoveryClaimArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+		arg4 time.Duration
+	}{arg1, arg2, arg3, arg4})
+	stub := fake.RenewRecoveryClaimStub
+	fakeReturns := fake.renewRecoveryClaimReturns
+	fake.recordInvocation("RenewRecoveryClaim", []interface{}{arg1, arg2, arg3, arg4})
+	fake.renewRecoveryClaimMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3, arg4)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *AuditTransactionStore) RenewRecoveryClaimCallCount() int {
+	fake.renewRecoveryClaimMutex.RLock()
+	defer fake.renewRecoveryClaimMutex.RUnlock()
+	return len(fake.renewRecoveryClaimArgsForCall)
+}
+
+func (fake *AuditTransactionStore) RenewRecoveryClaimCalls(stub func(context.Context, string, string, time.Duration) (bool, error)) {
+	fake.renewRecoveryClaimMutex.Lock()
+	defer fake.renewRecoveryClaimMutex.Unlock()
+	fake.RenewRecoveryClaimStub = stub
+}
+
+func (fake *AuditTransactionStore) RenewRecoveryClaimArgsForCall(i int) (context.Context, string, string, time.Duration) {
+	fake.renewRecoveryClaimMutex.RLock()
+	defer fake.renewRecoveryClaimMutex.RUnlock()
+	argsForCall := fake.renewRecoveryClaimArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
+}
+
+func (fake *AuditTransactionStore) RenewRecoveryClaimReturns(result1 bool, result2 error) {
+	fake.renewRecoveryClaimMutex.Lock()
+	defer fake.renewRecoveryClaimMutex.Unlock()
+	fake.RenewRecoveryClaimStub = nil
+	fake.renewRecoveryClaimReturns = struct {
+		result1 bool
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *AuditTransactionStore) RenewRecoveryClaimReturnsOnCall(i int, result1 bool, result2 error) {
+	fake.renewRecoveryClaimMutex.Lock()
+	defer fake.renewRecoveryClaimMutex.Unlock()
+	fake.RenewRecoveryClaimStub = nil
+	if fake.renewRecoveryClaimReturnsOnCall == nil {
+		fake.renewRecoveryClaimReturnsOnCall = make(map[int]struct {
+			result1 bool
+			result2 error
+		})
+	}
+	fake.renewRecoveryClaimReturnsOnCall[i] = struct {
+		result1 bool
+		result2 error
+	}{result1, result2}
 }
 
 func (fake *AuditTransactionStore) ResolveFindingsNotSeenSince(arg1 context.Context, arg2 []string, arg3 time.Time) (int64, error) {
