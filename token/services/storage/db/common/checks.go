@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
@@ -53,6 +54,17 @@ const (
 	// ledger produced for this node that never landed in the local store.
 	CheckerLocalCompleteness = "Local Completeness Check"
 )
+
+// progressSafetyLag is how far behind the start of a sweep CheckLocalCompleteness
+// keeps its resume point, even when it has verified everything up to now.
+//
+// A transaction's stored_at is taken when it is written, not when its database
+// transaction commits, and replicas sharing a database do not share a clock. A
+// row can therefore become visible with a stored_at slightly older than rows a
+// sweep has already read. Keeping the resume point this far back means such a
+// row is still ahead of it on the next sweep instead of silently behind it. The
+// cost is re-checking this much recent history on every sweep.
+const progressSafetyLag = 10 * time.Minute
 
 // DefaultBatchSize is how many tokens a checker resolves against the ledger in a
 // single round trip. It matches the batch size the token pruning sweep uses.
@@ -101,6 +113,12 @@ type NamedFindingChecker struct {
 	Name string
 	// Checker is the check itself.
 	Checker FindingChecker
+	// Commit, if set, is called once the findings of the latest run of this check
+	// have been stored. A check that resumes where its previous run stopped uses it
+	// to record its new starting point: doing that before its findings are stored
+	// would skip, for good, the transactions those findings are about if storing
+	// them failed.
+	Commit func(ctx context.Context) error
 	// Complete reports whether one run of this check looks at everything the check
 	// could ever report on.
 	//
@@ -280,6 +298,35 @@ func (a *FindingsService) Check(ctx context.Context) ([]Finding, error) {
 	return findings, nil
 }
 
+// CommitProgress lets every check that keeps a resume point record it. It is to
+// be called after the findings of the latest Check have been stored, and only
+// then. It tries every check and returns their errors joined.
+func (a *FindingsService) CommitProgress(ctx context.Context) error {
+	var errs []error
+	for _, checker := range a.checkers {
+		if checker.Commit == nil {
+			continue
+		}
+		if err := checker.Commit(ctx); err != nil {
+			errs = append(errs, errors.WithMessagef(err, "failed committing the progress of check [%s]", checker.Name))
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+// CheckProgressStore is where CheckLocalCompleteness keeps its resume point, and
+// where it reads back the findings it still has open.
+type CheckProgressStore interface {
+	// GetCheckProgress returns the resume point last recorded for checker, and
+	// false if there is none.
+	GetCheckProgress(ctx context.Context, checker string) (time.Time, bool, error)
+	// SetCheckProgress records the resume point of checker.
+	SetCheckProgress(ctx context.Context, checker string, resumeFrom time.Time) error
+	// QueryFindings returns the stored findings matching params.
+	QueryFindings(ctx context.Context, params driver.QueryFindingsParams) ([]*driver.FindingRecord, error)
+}
+
 // CheckerOption customises how the default checkers query the ledger.
 type CheckerOption func(*DefaultCheckers)
 
@@ -299,6 +346,17 @@ func WithBatchSize(size int) CheckerOption {
 func WithTransactionWindow(window time.Duration) CheckerOption {
 	return func(c *DefaultCheckers) {
 		c.window = window
+	}
+}
+
+// WithCheckProgress lets CheckLocalCompleteness resume where its previous sweep
+// stopped instead of re-parsing the whole transaction history every time.
+//
+// It only applies when no transaction window is set: a windowed check already
+// bounds its own cost, and it never claimed to cover the whole history.
+func WithCheckProgress(store CheckProgressStore) CheckerOption {
+	return func(c *DefaultCheckers) {
+		c.progress = store
 	}
 }
 
@@ -328,6 +386,17 @@ type DefaultCheckers struct {
 	maxPageSize int
 	batchSize   int
 	window      time.Duration
+	// progress, when set, is where CheckLocalCompleteness keeps its resume point.
+	progress CheckProgressStore
+	// now is the clock, replaceable in tests.
+	now func() time.Time
+
+	// mu guards nextProgress.
+	mu sync.Mutex
+	// nextProgress is the resume point the latest CheckLocalCompleteness run
+	// earned, waiting for its findings to be stored before it is recorded. Nil
+	// when there is nothing to record.
+	nextProgress *time.Time
 }
 
 // NewDefaultFindingCheckers returns the checks that are cheap enough to run while
@@ -360,7 +429,12 @@ func NewSweepFindingCheckers(tmsProvider TokenManagementServiceProvider, network
 		{Name: CheckerTransactions, Checker: checkers.CheckTransactions, Complete: checkers.window <= 0},
 		{Name: CheckerUnspentTokens, Checker: checkers.CheckUnspentTokens, Complete: true},
 		{Name: CheckerTokenSpendability, Checker: checkers.CheckTokenSpendability, Complete: true},
-		{Name: CheckerLocalCompleteness, Checker: checkers.CheckLocalCompleteness, Complete: checkers.window <= 0},
+		{
+			Name:     CheckerLocalCompleteness,
+			Checker:  checkers.CheckLocalCompleteness,
+			Commit:   checkers.commitLocalCompletenessProgress,
+			Complete: checkers.window <= 0,
+		},
 	}
 }
 
@@ -372,6 +446,7 @@ func newDefaultCheckers(tmsProvider TokenManagementServiceProvider, networkProvi
 		tokenDB:         tokenDB,
 		tmsID:           tmsID,
 		batchSize:       DefaultBatchSize,
+		now:             time.Now,
 	}
 	for _, opt := range opts {
 		opt(checkers)
@@ -940,9 +1015,15 @@ func checkSpendability(
 // ledger decides how bad it is: still unspent means the node is holding money it
 // cannot see, already spent means the books are wrong but nothing is lost.
 //
-// This walks the whole transaction history unless WithTransactionWindow narrows
-// it, so it is meant for a background sweep rather than a request path.
+// Without WithCheckProgress this walks the whole transaction history on every
+// run unless WithTransactionWindow narrows it, so it is meant for a background
+// sweep rather than a request path. With it, a run only does work for what is
+// new since the previous one; see walkSinceProgress.
 func (a *DefaultCheckers) CheckLocalCompleteness(ctx context.Context) ([]Finding, error) {
+	// whatever an earlier run earned and did not get to record is stale now: this
+	// run's findings are the ones about to be stored
+	a.setNextProgress(nil)
+
 	var findings []Finding
 
 	tms, err := a.tmsProvider.GetManagementService(token.WithTMSID(a.tmsID))
@@ -955,9 +1036,6 @@ func (a *DefaultCheckers) CheckLocalCompleteness(ctx context.Context) ([]Finding
 	}
 	qe := tms.Vault().NewQueryEngine()
 
-	params := a.transactionQuery()
-	params.Statuses = []driver.TxStatus{driver.Confirmed}
-
 	batch := newTokenIDBatcher(a.batchSize, func(ids []*token2.ID) error {
 		res, err := a.checkPresenceBatch(ctx, tms, net, qe, ids)
 		if err != nil {
@@ -968,8 +1046,8 @@ func (a *DefaultCheckers) CheckLocalCompleteness(ctx context.Context) ([]Finding
 		return nil
 	})
 
-	err = a.walkTransactions(ctx, tms.ID(), params, func(transactionRecord *driver.TransactionRecord) error {
-		expected, finding, err := a.expectedTokens(ctx, tms, transactionRecord.TxID)
+	check := func(txID string) error {
+		expected, finding, err := a.expectedTokens(ctx, tms, txID)
 		if err != nil {
 			return err
 		}
@@ -985,7 +1063,18 @@ func (a *DefaultCheckers) CheckLocalCompleteness(ctx context.Context) ([]Finding
 		}
 
 		return nil
-	})
+	}
+
+	var next *time.Time
+	if a.resumable() {
+		next, err = a.walkSinceProgress(ctx, tms.ID(), check)
+	} else {
+		params := a.transactionQuery()
+		params.Statuses = []driver.TxStatus{driver.Confirmed}
+		err = a.walkTransactions(ctx, tms.ID(), params, func(transactionRecord *driver.TransactionRecord) error {
+			return check(transactionRecord.TxID)
+		})
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -993,7 +1082,143 @@ func (a *DefaultCheckers) CheckLocalCompleteness(ctx context.Context) ([]Finding
 		return nil, err
 	}
 
+	// a run that could not reach a verdict on something has not verified it, so it
+	// must not move the resume point past it
+	if next != nil && !hasInconclusive(findings) {
+		a.setNextProgress(next)
+	}
+
 	return findings, nil
+}
+
+// resumable reports whether CheckLocalCompleteness keeps a resume point.
+func (a *DefaultCheckers) resumable() bool {
+	return a.progress != nil && a.window <= 0
+}
+
+// walkSinceProgress calls check for every transaction CheckLocalCompleteness has
+// not verified yet, and returns the resume point the next sweep may start from
+// if every call succeeds.
+//
+// That is two sets of transactions:
+//   - the ones with an open finding of this check, wherever they are in the
+//     history, so a finding closes once the problem is gone. That is what keeps
+//     the check Complete even though it no longer walks the whole history.
+//   - the ones stored at or after the resume point the previous sweep recorded.
+//
+// Everything stored before the resume point was confirmed when it was checked,
+// found complete, and stays that way: a confirmed transaction does not change
+// status, and the local store never removes a token, it only marks it spent.
+//
+// The new resume point is held back to the oldest transaction that is still
+// pending, because a pending transaction can still be confirmed and then needs
+// checking. A transaction that stays pending for good therefore pins the resume
+// point; the sweep then costs what it did before there was one, from that point
+// on, and no more.
+func (a *DefaultCheckers) walkSinceProgress(ctx context.Context, tmsID token.TMSID, check func(txID string) error) (*time.Time, error) {
+	// taken before reading anything, so a row that turns up while the walk runs
+	// is either read by it or ahead of the resume point it returns
+	cutoff := a.now().Add(-progressSafetyLag).UTC().Truncate(time.Microsecond)
+
+	resumeFrom, resuming, err := a.progress.GetCheckProgress(ctx, CheckerLocalCompleteness)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed reading the progress of [%s][%s]", CheckerLocalCompleteness, tmsID)
+	}
+
+	open, err := a.progress.QueryFindings(ctx, driver.QueryFindingsParams{Checkers: []string{CheckerLocalCompleteness}})
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed reading the open findings of [%s][%s]", CheckerLocalCompleteness, tmsID)
+	}
+	rechecked := make(map[string]struct{}, len(open))
+	for _, finding := range open {
+		if finding.TxID == "" {
+			// not about one transaction, a failed check for instance; the walk below
+			// is what settles those
+			continue
+		}
+		if _, done := rechecked[finding.TxID]; done {
+			continue
+		}
+		rechecked[finding.TxID] = struct{}{}
+		if err := check(finding.TxID); err != nil {
+			return nil, err
+		}
+	}
+
+	params := driver.QueryTransactionsParams{
+		// Deleted and Orphan are final and never produce tokens, so they are left out
+		Statuses:        []driver.TxStatus{driver.Unknown, driver.Pending, driver.Confirmed},
+		SearchDirection: driver.FromBeginning,
+	}
+	if resuming {
+		params.From = &resumeFrom
+	}
+
+	var oldestPending *time.Time
+	err = a.walkTransactions(ctx, tmsID, params, func(transactionRecord *driver.TransactionRecord) error {
+		if transactionRecord.Status != driver.Confirmed {
+			// rows come oldest first, so the first one seen is the oldest
+			if oldestPending == nil {
+				pendingSince := transactionRecord.Timestamp.UTC()
+				oldestPending = &pendingSince
+			}
+
+			return nil
+		}
+		if _, done := rechecked[transactionRecord.TxID]; done {
+			return nil
+		}
+
+		return check(transactionRecord.TxID)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	next := cutoff
+	if oldestPending != nil && oldestPending.Before(next) {
+		next = *oldestPending
+	}
+	if resuming && next.Before(resumeFrom) {
+		// a clock that went backwards must not make the next sweep redo verified work
+		// for nothing, nor can a pending transaction sit before the old resume point
+		next = resumeFrom
+	}
+
+	return &next, nil
+}
+
+// setNextProgress replaces the resume point waiting to be committed.
+func (a *DefaultCheckers) setNextProgress(next *time.Time) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.nextProgress = next
+}
+
+// commitLocalCompletenessProgress records the resume point the latest
+// CheckLocalCompleteness run earned, if it earned one.
+func (a *DefaultCheckers) commitLocalCompletenessProgress(ctx context.Context) error {
+	a.mu.Lock()
+	next := a.nextProgress
+	a.nextProgress = nil
+	a.mu.Unlock()
+
+	if next == nil || a.progress == nil {
+		return nil
+	}
+
+	return a.progress.SetCheckProgress(ctx, CheckerLocalCompleteness, *next)
+}
+
+// hasInconclusive reports whether any of findings means part of a check reached no verdict.
+func hasInconclusive(findings []Finding) bool {
+	for _, finding := range findings {
+		if IsInconclusive(finding.Code) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // expectedTokens returns the ids of the tokens the passed transaction should have

@@ -90,4 +90,13 @@ type FindingsStore interface {
 	// a sweep runs but does not touch every open finding (an inconclusive
 	// checker, for instance, neither closes nor re-observes one).
 	CountOpenFindings(ctx context.Context) (map[int]int64, error)
+
+	// GetCheckProgress returns the resume point a history-walking check last
+	// recorded with SetCheckProgress, and false if it has not recorded one yet.
+	GetCheckProgress(ctx context.Context, checker string) (time.Time, bool, error)
+
+	// SetCheckProgress records that checker has verified every transaction stored
+	// strictly before resumeFrom, so its next sweep may start there instead of at
+	// the beginning of the history. It replaces any previous value.
+	SetCheckProgress(ctx context.Context, checker string, resumeFrom time.Time) error
 }

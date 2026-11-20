@@ -35,9 +35,38 @@ the store does not have. When one is missing, the ledger decides how serious it
 is: still unspent means the node owns money it cannot see, already spent means the
 books are wrong but nothing is lost.
 
-Because it rebuilds every confirmed transaction, that check is more expensive than
+Because it rebuilds confirmed transactions, that check is more expensive than
 the others. It runs in the background sweep only; the on-demand `Check` call keeps
 running the three cheap ones.
+
+### Resuming where the last sweep stopped
+
+Rebuilding the whole history on every sweep would cost more each hour as the
+history grows, so the Local Completeness Check records a resume point per store:
+a time before which every transaction has been verified. A sweep only rebuilds
+
+- the transactions stored at or after the resume point, and
+- the transactions it still has an open finding about, wherever they are in the
+  history, so a finding closes once the missing token lands.
+
+Everything before the resume point stays verified: a confirmed transaction does
+not change status, and the local store never removes a token, it only marks it
+spent. A steady-state sweep therefore does work in proportion to what is new, and
+the check still closes its own findings.
+
+The resume point only moves forward when a sweep reached a verdict on everything
+it looked at, and only after its findings are stored. It is held back:
+
+- to the oldest transaction that is still pending, since it can still be
+  confirmed. A transaction that stays pending for good pins the resume point, and
+  the check then costs, from that transaction on, what it did before;
+- ten minutes behind the start of the sweep, so a transaction that becomes visible
+  a little late, with a `stored_at` older than rows already read, is still ahead
+  of it.
+
+The first sweep after an upgrade has no resume point and walks the whole history
+once. To force a full walk again, delete the check's row from the progress table
+(below). The resume point is not used when `transactionWindow` is set.
 
 ## Findings
 
@@ -104,6 +133,11 @@ Findings are stored in the transaction store, in a table keyed by the finding ke
 | `last_seen` | When it was last observed |
 | `occurrences` | How many sweeps have observed it |
 | `resolved_at` | When it stopped being observed, `NULL` while open |
+
+The resume point of the Local Completeness Check is stored next to the findings, in
+a table with one row per check: `checker` (the primary key), `resume_from`, and
+`updated_at`. It is created at startup like every other table, so upgrading needs
+no migration step. Its short code for table name overrides is `chk_progress`.
 
 A sweep upserts everything it found with the same timestamp, then closes the open
 findings that timestamp did not touch. A finding observed again after being closed

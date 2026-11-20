@@ -75,6 +75,14 @@ func (s *auditGetTokenRequestsStub) ResolveFindingsNotSeenSince(_ context.Contex
 func (s *auditGetTokenRequestsStub) CountOpenFindings(_ context.Context) (map[int]int64, error) {
 	panic("unexpected")
 }
+
+func (s *auditGetTokenRequestsStub) GetCheckProgress(_ context.Context, _ string) (time.Time, bool, error) {
+	panic("unexpected")
+}
+
+func (s *auditGetTokenRequestsStub) SetCheckProgress(_ context.Context, _ string, _ time.Time) error {
+	panic("unexpected")
+}
 func (s *auditGetTokenRequestsStub) ClaimPendingTransactions(_ context.Context, _ dbdriver.RecoveryClaimParams) ([]*dbdriver.RecoveryClaim, error) {
 	panic("unexpected")
 }
