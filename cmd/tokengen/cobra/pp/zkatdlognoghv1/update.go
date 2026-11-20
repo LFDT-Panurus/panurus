@@ -52,7 +52,7 @@ func UpdateCmd() *cobra.Command {
 	flags.StringVarP(&OutputDir, "output", "o", ".", "output folder")
 	flags.StringSliceVarP(&Auditors, "auditors", "a", nil, "list of auditor MSP directories containing the corresponding auditor certificate")
 	flags.StringSliceVarP(&Issuers, "issuers", "s", nil, "list of issuer MSP directories containing the corresponding issuer certificate")
-	flags.Uint32VarP(&Version, "version", "v", 0, "allows the caller of tokengen to override the version number put in the public params")
+	flags.Uint32VarP(&Version, "version", "v", 0, "allows the caller of tokengen to override the version number put in the public params; if 0, the version of the input file is kept")
 	flags.StringArrayVarP(&Extras, "extra", "x", []string{}, "extra data in key=value format, where is the path to a file containing the data to load and store in the key")
 
 	return cmd
@@ -96,12 +96,17 @@ func Update(args *UpdateArgs) (err error) {
 		return errors.Wrapf(err, "failed to read input file at [%s]", args.InputFile)
 	}
 
-	inputVersion, err := driverVersion(oldraw)
+	container, err := ppencoding.Unmarshal(oldraw)
+	if err != nil {
+		return errors.Wrapf(err, "failed to deserialize public parameters from [%s]", args.InputFile)
+	}
+	inputVersion, err := driverVersion(container.Identifier)
 	if err != nil {
 		return errors.Wrapf(err, "failed to read driver version from [%s]", args.InputFile)
 	}
-	pp, err := v1.NewPublicParamsFromBytes(oldraw, v1.DLogNoGHDriverName, inputVersion)
-	if err != nil {
+	// the identifier, driver name included, is checked against the expected one here
+	pp := &v1.PublicParams{DriverName: v1.DLogNoGHDriverName, DriverVersion: inputVersion}
+	if err := pp.DeserializeContainer(container); err != nil {
 		return errors.Wrapf(err, "failed to unmarshal pp from [%s]", args.InputFile)
 	}
 	if err := pp.Validate(); err != nil {
@@ -156,21 +161,17 @@ func Update(args *UpdateArgs) (err error) {
 	return nil
 }
 
-// driverVersion returns the driver version encoded in the identifier of the serialized public parameters.
-// The identifier has the form <driver name>.v<driver version>, and the driver name must be the
-// zkatdlog nogh one.
-func driverVersion(raw []byte) (driver.TokenDriverVersion, error) {
-	container, err := ppencoding.Unmarshal(raw)
-	if err != nil {
-		return 0, errors.Wrap(err, "failed to deserialize public parameters")
+// driverVersion returns the driver version encoded in a public parameters identifier of the form
+// <driver name>.v<driver version>. The driver name is not checked here: it is checked, together with
+// the rest of the identifier, when the public parameters are deserialized.
+func driverVersion(identifier string) (driver.TokenDriverVersion, error) {
+	i := strings.LastIndex(identifier, ".v")
+	if i < 0 {
+		return 0, errors.Errorf("invalid driver version in identifier [%s]", identifier)
 	}
-	prefix := string(v1.DLogNoGHDriverName) + ".v"
-	if !strings.HasPrefix(container.Identifier, prefix) {
-		return 0, errors.Errorf("invalid identifier, expecting prefix [%s], got [%s]", prefix, container.Identifier)
-	}
-	ver, err := strconv.ParseUint(strings.TrimPrefix(container.Identifier, prefix), 10, 32)
+	ver, err := strconv.ParseUint(identifier[i+len(".v"):], 10, 32)
 	if err != nil {
-		return 0, errors.Wrapf(err, "invalid driver version in identifier [%s]", container.Identifier)
+		return 0, errors.Wrapf(err, "invalid driver version in identifier [%s]", identifier)
 	}
 
 	return driver.TokenDriverVersion(ver), nil

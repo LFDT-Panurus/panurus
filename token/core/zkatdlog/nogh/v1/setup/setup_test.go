@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	math3 "github.com/IBM/mathlib"
+	ppencoding "github.com/LFDT-Panurus/panurus/token/core/common/encoding/pp"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/stretchr/testify/assert"
@@ -457,6 +458,34 @@ func TestSerializationEdgeCases(t *testing.T) {
 	// Test deserialize with invalid proto
 	_, err = NewPublicParamsFromBytes([]byte{0, 1, 2, 3}, DLogNoGHDriverName, ProtocolV1)
 	require.Error(t, err)
+}
+
+func TestDeserializeContainer(t *testing.T) {
+	issuerPK := testingHelper(t)
+	pp, err := Setup(32, issuerPK, math3.BN254)
+	require.NoError(t, err)
+	raw, err := pp.Serialize()
+	require.NoError(t, err)
+	container, err := ppencoding.Unmarshal(raw)
+	require.NoError(t, err)
+
+	// same result as deserializing the raw bytes
+	pp2 := &PublicParams{DriverName: DLogNoGHDriverName, DriverVersion: ProtocolV1}
+	require.NoError(t, pp2.DeserializeContainer(container))
+	require.NoError(t, pp2.Validate())
+	assert.Equal(t, pp.Curve, pp2.Curve)
+	assert.Equal(t, pp.DriverVersion, pp2.DriverVersion)
+
+	// identifier mismatch
+	pp3 := &PublicParams{DriverName: DLogNoGHDriverName, DriverVersion: 2}
+	err = pp3.DeserializeContainer(container)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid identifier")
+
+	// nil container
+	err = (&PublicParams{}).DeserializeContainer(nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nil public parameters container")
 }
 
 func TestPublicParamsString(t *testing.T) {
