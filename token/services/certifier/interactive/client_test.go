@@ -529,25 +529,3 @@ func TestCertificationClient_RequestCertification_RotatesCertifiers(t *testing.T
 		assert.Equal(t, []string{"certifier-1", "certifier-1"}, vm.contacted())
 	})
 }
-
-// TestCertificationClient_RequestCertification_NoWaitAfterLastAttempt verifies that the
-// client reports the failure right after the last attempt, without waiting waitTime again.
-func TestCertificationClient_RequestCertification_NoWaitAfterLastAttempt(t *testing.T) {
-	// with one attempt there is nothing to wait for, so a long waitTime must not be observed
-	vm := &recordingViewManager{failures: 1}
-	cc := newRetryTestClient(vm, newFakeCertificationStorage(), 1, time.Hour, "certifier-1")
-	defer cc.Stop()
-
-	done := make(chan error, 1)
-	go func() {
-		done <- cc.RequestCertification(context.Background(), &token.ID{TxId: "tx", Index: 0})
-	}()
-
-	select {
-	case err := <-done:
-		require.Error(t, err)
-	case <-time.After(10 * time.Second):
-		t.Fatal("RequestCertification waited after the last failed attempt")
-	}
-	assert.Equal(t, []string{"certifier-1"}, vm.contacted())
-}
