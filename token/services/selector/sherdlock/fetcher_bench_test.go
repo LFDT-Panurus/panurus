@@ -176,18 +176,7 @@ func TestNewPermutation_FullDrainYieldsEveryElementExactlyOnce(t *testing.T) {
 	items := permutationItems(n, "uniform")
 
 	for trial := range 50 {
-		perm := newBucketedIterator(items).NewPermutation()
-		seen := make(map[string]int, n)
-		for {
-			item, err := perm.Next()
-			if err != nil {
-				t.Fatalf("trial %d: unexpected error: %v", trial, err)
-			}
-			if item == nil {
-				break
-			}
-			seen[item.Id.TxId]++
-		}
+		seen := drainPermutation(t, trial, newBucketedIterator(items).NewPermutation())
 		if len(seen) != n {
 			t.Fatalf("trial %d: got %d distinct elements, want %d", trial, len(seen), n)
 		}
@@ -196,6 +185,23 @@ func TestNewPermutation_FullDrainYieldsEveryElementExactlyOnce(t *testing.T) {
 				t.Fatalf("trial %d: element %s seen %d times, want exactly 1", trial, txID, count)
 			}
 		}
+	}
+}
+
+// drainPermutation reads perm to exhaustion and counts how many times each transaction id
+// came out of it.
+func drainPermutation(t *testing.T, trial int, perm Iterator[*token2.UnspentTokenInWallet]) map[string]int {
+	t.Helper()
+	seen := make(map[string]int)
+	for {
+		item, err := perm.Next()
+		if err != nil {
+			t.Fatalf("trial %d: unexpected error: %v", trial, err)
+		}
+		if item == nil {
+			return seen
+		}
+		seen[item.Id.TxId]++
 	}
 }
 

@@ -75,179 +75,195 @@ func (s *selector) concurrencyCheck(ctx context.Context, ids []*token2.ID) error
 // the number of concurrent selectors - observed against #2395's hot-token workload
 // (TestHotTokenContentionSimpleDriver) with MaxOpenConns=10 and 30 concurrent selects.
 func (s *selector) selectByID(ctx context.Context, ownerFilter token.OwnerFilter, q string, tokenType token2.Type) ([]*token2.ID, token2.Quantity, error) {
-	var toBeSpent []*token2.ID
-	var sum token2.Quantity
-	var potentialSumWithLocked token2.Quantity
 	target, err := token2.ToQuantity(q, s.precision)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "failed to convert quantity")
 	}
 	id := ownerFilter.ID()
 
-	i := 0
-	var unspentTokens driver.UnspentTokensIterator
-	defer func() {
-		if unspentTokens != nil {
-			unspentTokens.Close()
-		}
-	}()
-	for {
-		if unspentTokens != nil {
-			unspentTokens.Close()
-		}
+	for i := 0; ; i++ {
 		logger.DebugfContext(ctx, "start token selection, iteration [%d/%d]", i, s.numRetry)
-		unspentTokens, err = s.queryService.UnspentTokensIteratorBy(ctx, id, tokenType)
+		res, err := s.scan(ctx, id, q, tokenType, target, s.numRetry == 1 || i > 0)
 		if err != nil {
-			return nil, nil, errors.Wrap(err, "token selection failed")
-		}
-		logger.DebugfContext(ctx, "select token for a quantity of [%s] of type [%s]", q, tokenType)
-
-		// First select only certified
-		sum = token2.NewZeroQuantity(s.precision)
-		potentialSumWithLocked = token2.NewZeroQuantity(s.precision)
-		toBeSpent = nil
-		var toBeCertified []*token2.ID
-
-		reclaim := s.numRetry == 1 || i > 0
-		numNext := 0
-		for {
-			t, err := unspentTokens.Next()
-			numNext++
-			if err != nil {
-				return nil, nil, errors.Wrap(err, "token selection failed")
-			}
-			if t == nil {
-				break
-			}
-
-			q, err := token2.ToQuantity(t.Quantity, s.precision)
-			if err != nil {
-				s.locker.UnlockIDs(ctx, id, toBeSpent...)
-				s.locker.UnlockIDs(ctx, id, toBeCertified...)
-
-				return nil, nil, errors.Wrap(err, "failed to convert quantity")
-			}
-
-			// lock the token on behalf of the selecting wallet
-			if _, lockErr := s.locker.Lock(ctx, id, &t.Id, s.txID, reclaim); lockErr != nil {
-				// A rate-limit denial from the Locker is a hard stop: abort instead of retrying.
-				if errors.Is(lockErr, token.SelectorRateLimited) {
-					s.locker.UnlockIDs(ctx, id, toBeSpent...)
-					s.locker.UnlockIDs(ctx, id, toBeCertified...)
-
-					return nil, nil, lockErr
-				}
-
-				var addErr error
-				potentialSumWithLocked, addErr = potentialSumWithLocked.Add(q)
-				if addErr != nil {
-					s.locker.UnlockIDs(ctx, id, toBeSpent...)
-					s.locker.UnlockIDs(ctx, id, toBeCertified...)
-
-					return nil, nil, errors.Wrap(addErr, "failed to add locked quantity")
-				}
-
-				logger.DebugfContext(ctx, "token [%s,%v] cannot be locked [%s]", q, tokenType, lockErr)
-
-				continue
-			}
-
-			// Append token
-			logger.DebugfContext(ctx, "adding quantity [%s]", q.Decimal())
-			toBeSpent = append(toBeSpent, &t.Id)
-			sum, err = sum.Add(q)
-			if err != nil {
-				s.locker.UnlockIDs(ctx, id, toBeSpent...)
-				s.locker.UnlockIDs(ctx, id, toBeCertified...)
-
-				return nil, nil, errors.Wrap(err, "failed to add quantity")
-			}
-			potentialSumWithLocked, err = potentialSumWithLocked.Add(q)
-			if err != nil {
-				s.locker.UnlockIDs(ctx, id, toBeSpent...)
-				s.locker.UnlockIDs(ctx, id, toBeCertified...)
-
-				return nil, nil, errors.Wrap(err, "failed to add quantity")
-			}
-
-			if target.Cmp(sum) <= 0 {
-				break
-			}
+			return nil, nil, err
 		}
 
-		// Release the cursor before concurrencyCheck issues its own query. The scan loop
-		// above is done with the iterator - the retry path at the top of the outer loop
-		// opens a fresh one - so closing it here costs nothing and keeps this selector down
-		// to a single connection checkout at any instant, which is what stops a bounded
-		// pool from deadlocking under concurrent selects (#2395).
-		unspentTokens.Close()
-		unspentTokens = nil
-
-		concurrencyIssue := false
-		if target.Cmp(sum) <= 0 {
-			err := s.concurrencyCheck(ctx, toBeSpent)
-			if err == nil {
-				return toBeSpent, sum, nil
-			}
-			concurrencyIssue = true
-			logger.Errorf("concurrency issue, some of the tokens might not exist anymore [%s]", err)
+		done, concurrencyIssue := s.settle(ctx, res, target)
+		if done {
+			return res.toBeSpent, res.sum, nil
 		}
 
 		// Unlock and check the conditions for a retry
-		s.locker.UnlockIDs(ctx, id, toBeSpent...)
-		s.locker.UnlockIDs(ctx, id, toBeCertified...)
+		s.locker.UnlockIDs(ctx, id, res.toBeSpent...)
 
-		if target.Cmp(potentialSumWithLocked) <= 0 && potentialSumWithLocked.Cmp(sum) != 0 {
+		if res.sufficientButLocked(target) {
 			// funds are potentially enough but they are locked
 			logger.DebugfContext(ctx, "token selection: sufficient funds but partially locked")
 		}
 
-		i++
-		if i >= s.numRetry {
-			// it is time to fail but how?
-			if concurrencyIssue {
-				logger.DebugfContext(ctx, "concurrency issue, some of the tokens might not exist anymore")
-
-				return nil, nil, errors.WithMessagef(
-					token.SelectorSufficientFundsButConcurrencyIssue,
-					"token selection failed: sufficient funds but concurrency issue, potential [%s] tokens of type [%s] were available", potentialSumWithLocked, tokenType,
-				)
-			}
-
-			if target.Cmp(potentialSumWithLocked) <= 0 && potentialSumWithLocked.Cmp(sum) != 0 {
-				// funds are potentially enough but they are locked
-				logger.DebugfContext(ctx, "token selection: it is time to fail but how, sufficient funds but locked")
-
-				return nil, nil, errors.WithMessagef(
-					token.SelectorSufficientButLockedFunds,
-					"token selection failed: sufficient but partially locked funds, potential [%s] tokens of type [%s] are available", potentialSumWithLocked.Decimal(), tokenType,
-				)
-			}
-
-			// funds are insufficient
-			logger.DebugfContext(ctx, "token selection: it is time to fail but how, insufficient funds")
-
-			return nil, nil, errors.WithMessagef(
-				token.SelectorInsufficientFunds,
-				"token selection failed: insufficient funds, only [%s] tokens of type [%s] are available", sum.Decimal(), tokenType,
-			)
+		if i+1 >= s.numRetry {
+			return nil, nil, selectionFailure(ctx, res, target, tokenType, concurrencyIssue)
 		}
 
-		backoff := s.retryBackoff()
-		logger.DebugfContext(ctx, "token selection: let's wait [%v] before retry...", backoff)
-		if s.timeout > 0 {
-			backoffStart := time.Now()
-			timer := time.NewTimer(backoff)
-			select {
-			case <-timer.C:
-				s.observeBackoff(backoffStart)
-			case <-ctx.Done():
-				timer.Stop()
-				s.observeBackoff(backoffStart)
-
-				return nil, nil, errors.Wrap(ctx.Err(), "token selection aborted while backing off")
-			}
+		if err := s.waitBeforeRetry(ctx); err != nil {
+			return nil, nil, err
 		}
+	}
+}
+
+// settle reports whether res covers target with tokens that all still exist. concurrencyIssue
+// is true when res covered target but some of its tokens were gone by the time they were
+// checked.
+func (s *selector) settle(ctx context.Context, res *scanResult, target token2.Quantity) (done bool, concurrencyIssue bool) {
+	if target.Cmp(res.sum) > 0 {
+		return false, false
+	}
+	if err := s.concurrencyCheck(ctx, res.toBeSpent); err != nil {
+		logger.Errorf("concurrency issue, some of the tokens might not exist anymore [%s]", err)
+
+		return false, true
+	}
+
+	return true, false
+}
+
+// scanResult is what one scan of the wallet's unspent tokens locked and saw.
+type scanResult struct {
+	// toBeSpent are the tokens the scan locked.
+	toBeSpent []*token2.ID
+	// sum is the total of toBeSpent.
+	sum token2.Quantity
+	// potentialSumWithLocked also counts the tokens the scan could not lock.
+	potentialSumWithLocked token2.Quantity
+}
+
+// sufficientButLocked reports whether the scan saw enough funds to cover target, but some
+// of them were locked by someone else.
+func (r *scanResult) sufficientButLocked(target token2.Quantity) bool {
+	return target.Cmp(r.potentialSumWithLocked) <= 0 && r.potentialSumWithLocked.Cmp(r.sum) != 0
+}
+
+// scan walks the wallet's unspent tokens once, locking them until they cover target.
+//
+// The cursor is closed when scan returns, before the caller's concurrencyCheck issues its
+// own query. The retry path opens a fresh one, so closing it here costs nothing and keeps
+// this selector down to a single connection checkout at any instant, which is what stops a
+// bounded pool from deadlocking under concurrent selects (#2395).
+func (s *selector) scan(ctx context.Context, id string, q string, tokenType token2.Type, target token2.Quantity, reclaim bool) (*scanResult, error) {
+	unspentTokens, err := s.queryService.UnspentTokensIteratorBy(ctx, id, tokenType)
+	if err != nil {
+		return nil, errors.Wrap(err, "token selection failed")
+	}
+	defer unspentTokens.Close()
+	logger.DebugfContext(ctx, "select token for a quantity of [%s] of type [%s]", q, tokenType)
+
+	res := &scanResult{
+		sum:                    token2.NewZeroQuantity(s.precision),
+		potentialSumWithLocked: token2.NewZeroQuantity(s.precision),
+	}
+	for {
+		t, err := unspentTokens.Next()
+		if err != nil {
+			return nil, errors.Wrap(err, "token selection failed")
+		}
+		if t == nil {
+			return res, nil
+		}
+		if err := s.lockAndAdd(ctx, id, t, tokenType, reclaim, res); err != nil {
+			s.locker.UnlockIDs(ctx, id, res.toBeSpent...)
+
+			return nil, err
+		}
+		if target.Cmp(res.sum) <= 0 {
+			return res, nil
+		}
+	}
+}
+
+// lockAndAdd tries to lock t on behalf of the selecting wallet. A token it locks is added
+// to res.toBeSpent; one it cannot lock only counts towards res.potentialSumWithLocked.
+// Only a rate-limit denial or a malformed quantity is returned as an error.
+func (s *selector) lockAndAdd(ctx context.Context, id string, t *token2.UnspentToken, tokenType token2.Type, reclaim bool, res *scanResult) error {
+	q, err := token2.ToQuantity(t.Quantity, s.precision)
+	if err != nil {
+		return errors.Wrap(err, "failed to convert quantity")
+	}
+
+	if _, lockErr := s.locker.Lock(ctx, id, &t.Id, s.txID, reclaim); lockErr != nil {
+		// A rate-limit denial from the Locker is a hard stop: abort instead of retrying.
+		if errors.Is(lockErr, token.SelectorRateLimited) {
+			return lockErr
+		}
+		if res.potentialSumWithLocked, err = res.potentialSumWithLocked.Add(q); err != nil {
+			return errors.Wrap(err, "failed to add locked quantity")
+		}
+		logger.DebugfContext(ctx, "token [%s,%v] cannot be locked [%s]", q, tokenType, lockErr)
+
+		return nil
+	}
+
+	logger.DebugfContext(ctx, "adding quantity [%s]", q.Decimal())
+	res.toBeSpent = append(res.toBeSpent, &t.Id)
+	if res.sum, err = res.sum.Add(q); err != nil {
+		return errors.Wrap(err, "failed to add quantity")
+	}
+	if res.potentialSumWithLocked, err = res.potentialSumWithLocked.Add(q); err != nil {
+		return errors.Wrap(err, "failed to add quantity")
+	}
+
+	return nil
+}
+
+// selectionFailure is the error selectByID gives up with once it has run out of retries.
+func selectionFailure(ctx context.Context, res *scanResult, target token2.Quantity, tokenType token2.Type, concurrencyIssue bool) error {
+	if concurrencyIssue {
+		logger.DebugfContext(ctx, "concurrency issue, some of the tokens might not exist anymore")
+
+		return errors.WithMessagef(
+			token.SelectorSufficientFundsButConcurrencyIssue,
+			"token selection failed: sufficient funds but concurrency issue, potential [%s] tokens of type [%s] were available", res.potentialSumWithLocked, tokenType,
+		)
+	}
+
+	if res.sufficientButLocked(target) {
+		// funds are potentially enough but they are locked
+		logger.DebugfContext(ctx, "token selection: it is time to fail but how, sufficient funds but locked")
+
+		return errors.WithMessagef(
+			token.SelectorSufficientButLockedFunds,
+			"token selection failed: sufficient but partially locked funds, potential [%s] tokens of type [%s] are available", res.potentialSumWithLocked.Decimal(), tokenType,
+		)
+	}
+
+	// funds are insufficient
+	logger.DebugfContext(ctx, "token selection: it is time to fail but how, insufficient funds")
+
+	return errors.WithMessagef(
+		token.SelectorInsufficientFunds,
+		"token selection failed: insufficient funds, only [%s] tokens of type [%s] are available", res.sum.Decimal(), tokenType,
+	)
+}
+
+// waitBeforeRetry backs off for retryBackoff before the next scan, and returns an error if
+// the context is done first.
+func (s *selector) waitBeforeRetry(ctx context.Context) error {
+	backoff := s.retryBackoff()
+	logger.DebugfContext(ctx, "token selection: let's wait [%v] before retry...", backoff)
+	if s.timeout <= 0 {
+		return nil
+	}
+	backoffStart := time.Now()
+	timer := time.NewTimer(backoff)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		s.observeBackoff(backoffStart)
+
+		return nil
+	case <-ctx.Done():
+		s.observeBackoff(backoffStart)
+
+		return errors.Wrap(ctx.Err(), "token selection aborted while backing off")
 	}
 }
 
