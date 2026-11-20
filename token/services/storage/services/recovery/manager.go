@@ -438,6 +438,28 @@ func (m *Manager) runSweep(ctx context.Context) error {
 	return sweepErr
 }
 
+// claimLimit is how many transactions a sweep claims: BatchSize, plus one for every attempt
+// of this instance still running past its TransactionTimeout.
+//
+// The claim takes the oldest Pending rows first, and a transaction whose Recover call never
+// returns stays Pending and among the oldest for good. Its row has to keep being claimed,
+// since that is what renews its lease while the attempt runs (see the inFlight field), but
+// every sweep then skips it straight away. With a plain BatchSize limit, BatchSize such
+// transactions would fill every claim, and every newer transaction, however recoverable,
+// would never make it into a sweep again (#2307). Claiming one extra row per in-flight
+// attempt leaves BatchSize slots for real work no matter how many are stuck: the extra rows
+// cost a skip each, not a Recover call.
+//
+// At the start of a sweep every attempt within its deadline has finished, since the
+// previous sweep waited for its workers, so what is left in inFlight is exactly the
+// abandoned attempts.
+func (m *Manager) claimLimit() int {
+	m.inFlightMu.Lock()
+	defer m.inFlightMu.Unlock()
+
+	return m.config.BatchSize + len(m.inFlight)
+}
+
 // hasInFlight reports whether any txID currently has a callHandler goroutine
 // running past its TransactionTimeout deadline.
 func (m *Manager) hasInFlight() bool {
@@ -470,14 +492,15 @@ func (m *Manager) recoverTransactions(ctx context.Context) error {
 	// fix shape as sweepCtx on finishAbandonedRecovery.
 	ownerID := m.config.InstanceID
 
-	m.logger.Debugf("claiming pending transactions older than %s (batch size: %d, lease duration: %s, owner: %s)",
-		m.config.TTL, m.config.BatchSize, m.config.LeaseDuration, ownerID)
+	limit := m.claimLimit()
+	m.logger.Debugf("claiming pending transactions older than %s (limit: %d, batch size: %d, lease duration: %s, owner: %s)",
+		m.config.TTL, limit, m.config.BatchSize, m.config.LeaseDuration, ownerID)
 
 	records, err := m.storage.ClaimPendingTransactions(
 		ctx,
 		m.config.TTL,
 		m.config.LeaseDuration,
-		m.config.BatchSize,
+		limit,
 		ownerID,
 	)
 	if err != nil {

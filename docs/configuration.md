@@ -298,6 +298,8 @@ token:
               scanInterval: 5s
               
               # batchSize is the maximum number of pending transactions claimed per scan. Default: 16.
+              # A scan also claims one extra transaction per recovery attempt still running past
+              # transactionTimeout, so stuck transactions never take up these slots.
               # Limits the number of transactions processed in a single recovery sweep to prevent
               # overwhelming the system. Increase for high-throughput environments with many pending transactions.
               # Performance impact: Larger batches reduce scan overhead but increase memory usage and processing time per sweep.

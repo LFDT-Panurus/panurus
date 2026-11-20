@@ -1192,3 +1192,76 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, 5*time.Minute, config.LeaseDuration)
 	assert.Equal(t, 60*time.Second, config.TransactionTimeout)
 }
+
+// TestManager_StuckTransactionsDoNotStarveNewerOnes is the regression test for #2307. The
+// claim takes the oldest Pending rows first, and a stuck transaction stays the oldest for
+// good. With batchSize 1, the stuck one used to take the only slot of every sweep, so the
+// newer, perfectly recoverable transaction behind it was never claimed at all.
+func TestManager_StuckTransactionsDoNotStarveNewerOnes(t *testing.T) {
+	logger := logging.MustGetLogger()
+	mockDB := &mock2.Storage{}
+	mockHandler := &mock2.Handler{}
+	config := recovery2.Config{
+		Enabled:            true,
+		TTL:                5 * time.Millisecond,
+		ScanInterval:       15 * time.Millisecond,
+		BatchSize:          1,
+		WorkerCount:        1,
+		LeaseDuration:      time.Second,
+		TransactionTimeout: 20 * time.Millisecond,
+		InstanceID:         "test-instance",
+	}
+
+	leadership := &mock2.Leadership{}
+	leadership.CloseReturns(nil)
+	mockDB.AcquireRecoveryLeadershipReturns(leadership, true, nil)
+
+	// The store hands out the oldest Pending rows first, up to the limit asked for.
+	var mu sync.Mutex
+	pending := []string{"txStuck", "txNewer"}
+	mockDB.ClaimPendingTransactionsStub = func(_ context.Context, _ time.Duration, _ time.Duration, limit int, _ string) ([]*ttxdb.RecoveryClaim, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		var claims []*ttxdb.RecoveryClaim
+		for _, txID := range pending {
+			if len(claims) == limit {
+				break
+			}
+			claims = append(claims, &ttxdb.RecoveryClaim{TxID: txID})
+		}
+
+		return claims, nil
+	}
+	release := make(chan struct{})
+	defer close(release)
+	recovered := make(chan struct{})
+	mockHandler.RecoverStub = func(_ context.Context, txID string) error {
+		if txID == "txStuck" {
+			<-release // never returns while the test runs, and ignores ctx
+
+			return nil
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if len(pending) == 2 { // recovered: no longer Pending
+			pending = pending[:1]
+			close(recovered)
+		}
+
+		return nil
+	}
+
+	manager := recovery2.NewManager(logger, mockDB, mockHandler, config)
+	require.NoError(t, manager.Start())
+	defer func() { _ = manager.Stop() }()
+
+	select {
+	case <-recovered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the newer transaction was never recovered: the stuck one keeps taking the only claim slot")
+	}
+
+	// The stuck row keeps being claimed alongside, which is what renews its lease.
+	_, _, _, limit, _ := mockDB.ClaimPendingTransactionsArgsForCall(mockDB.ClaimPendingTransactionsCallCount() - 1)
+	assert.Equal(t, 2, limit, "one slot for the stuck attempt, batchSize for real work")
+}
