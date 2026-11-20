@@ -25,8 +25,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// NewNetwork returns a new Network instance for the specified FabricX configuration.
-// It initializes a base Fabric network and overrides its ledger with a FabricX-specific
+// NewNetwork returns a new Network instance for the specified Chaguar configuration.
+// It initializes a base Fabric network and overrides its ledger with a Chaguar-specific
 // implementation that supports advanced state query executors.
 func NewNetwork(
 	storeServiceManager ttxdb.StoreServiceManager,

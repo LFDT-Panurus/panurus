@@ -19,7 +19,7 @@ import (
 
 var logger = logging.MustGetLogger()
 
-// QueryService models the FabricX query service needed to read public parameters.
+// QueryService models the Chaguar query service needed to read public parameters.
 //
 //go:generate counterfeiter -o mock/qs.go -fake-name QueryService . QueryService
 type QueryService = queryservice.QueryService
@@ -106,7 +106,7 @@ func (f *PublicParametersService) FetchSetupHashVersion(network driver.Network, 
 // FetchNamespaceVersion retrieves the current namespace policy version from the
 // ledger using qs.GetState(committerpb.MetaNamespaceID, namespace). This queries the same
 // committerpb.MetaNamespaceID key and vault.UnmarshalVersion protobuf varint decoding
-// used by the fabricx vault marshaller (platform/fabricx/core/vault/marshal.go) to derive
+// used by the Chaguar vault marshaller (platform/fabricx/core/vault/marshal.go) to derive
 // NsVersion for ordinary token transactions.
 //
 // If the namespace has no entry in committerpb.MetaNamespaceID on the ledger or has an empty

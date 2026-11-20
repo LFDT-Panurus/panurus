@@ -41,7 +41,7 @@ type ChannelMSPManagerProvider interface {
 
 // QueryServiceEndorserSelector selects, among the configured FSC endorsers, a random
 // subset that satisfies the real endorsement policy of the target namespace, fetched
-// from the FabricX query service's GetNamespacePolicies RPC.
+// from the Chaguar query service's GetNamespacePolicies RPC.
 type QueryServiceEndorserSelector struct {
 	grpcClientProvider queryservice.GRPCClientProvider
 	channelProvider    ChannelMSPManagerProvider
@@ -53,7 +53,7 @@ func NewQueryServiceEndorserSelector(grpcClientProvider queryservice.GRPCClientP
 }
 
 // SelectEndorsers returns the endorser(s), among configured, that satisfy the namespace's
-// endorsement policy, as reported by the FabricX query service. For an MSP-rule policy this
+// endorsement policy, as reported by the Chaguar query service. For an MSP-rule policy this
 // is a random policy-satisfying subset; for a threshold-rule policy this is the single
 // configured endorser whose identity carries the policy's public key.
 func (s *QueryServiceEndorserSelector) SelectEndorsers(ctx context.Context, tmsID token2.TMSID, configured []view.Identity) ([]view.Identity, error) {
@@ -85,7 +85,7 @@ func (s *QueryServiceEndorserSelector) SelectEndorsers(ctx context.Context, tmsI
 	return fsc.SelectEndorsersForMSPSets(configured, mspOf, candidates)
 }
 
-// namespacePolicy fetches, via the FabricX query service's GetNamespacePolicies RPC, the
+// namespacePolicy fetches, via the Chaguar query service's GetNamespacePolicies RPC, the
 // endorsement policy in effect for tmsID.Namespace.
 func (s *QueryServiceEndorserSelector) namespacePolicy(ctx context.Context, tmsID token2.TMSID) (*applicationpb.NamespacePolicy, error) {
 	cc, err := s.grpcClientProvider.QueryServiceClient(tmsID.Network, "")

@@ -127,7 +127,7 @@ func NewListener(
 // watch ends without one. A transaction that is in fact in flight — or already mined, with only
 // the local observation broken — would then have its tokens handed to a concurrent Select,
 // which is the same hazard that keeps Busy/Unknown and ErrUnrecognizedStatus from releasing,
-// and strictly worse than the #2395 mechanism-4 window a release here would close. The fabricx
+// and strictly worse than the #2395 mechanism-4 window a release here would close. The Chaguar
 // driver only reaches OnError after a Valid verdict, so releasing would be harmless there, but
 // the listener cannot tell the two callers apart.
 //
