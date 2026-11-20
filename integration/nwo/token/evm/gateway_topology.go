@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package evm
 
 // GatewayTopologyName is the platform type a fabric-x-evm gateway-backed topology registers under.
-const GatewayTopologyName = "fabricx-evm"
+const GatewayTopologyName = "chaguar-evm"
 
 // NewGatewayTopology returns the fabric-x-evm gateway-backed topology under the default network name.
 func NewGatewayTopology() *Topology {
