@@ -166,11 +166,11 @@ install-softhsm:
 BESU_IMAGE ?= hyperledger/besu:24.3.0
 
 # The EVM gateway integration suite runs against this fabric-x-evm image.
-FABRICX_EVM_IMAGE ?= ghcr.io/hyperledger/fabric-x-evm:0.1.3
+CHAGUAR_EVM_IMAGE ?= ghcr.io/hyperledger/fabric-x-evm:0.1.3
 
 .PHONY: docker-images
 # build/pull docker images needed for testing
-docker-images: fabric-docker-images monitoring-docker-images testing-docker-images besu-docker-images fabricx-evm-docker-images
+docker-images: fabric-docker-images monitoring-docker-images testing-docker-images besu-docker-images chaguar-evm-docker-images
 
 .PHONY: testing-docker-images
 # pull docker images for testing (postgres, vault)
