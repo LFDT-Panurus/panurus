@@ -166,6 +166,33 @@ func TestLoadConfigAppliesDefaults(t *testing.T) {
 		"the default timeout is far above the default grace, so nothing should clamp it here")
 	assert.Equal(t, DefaultGasStrategy, c.Gas.Strategy)
 	assert.InEpsilon(t, DefaultGasMultiplier, c.Gas.Multiplier, 1e-9)
+	assert.Equal(t, DeadlineConfig{Blocks: 600, MinBlocks: 50, MaxBlocks: 7200}, c.Endorsement.Deadline)
+}
+
+// TestDeadlineConfig checks the requester's window must sit strictly inside what endorsers accept,
+// and that the proposal is the current block plus that window.
+func TestDeadlineConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		d     DeadlineConfig
+		valid bool
+	}{
+		{"defaults", DeadlineConfig{Blocks: 600, MinBlocks: 50, MaxBlocks: 7200}, true},
+		{"blocks at the max", DeadlineConfig{Blocks: 7200, MinBlocks: 50, MaxBlocks: 7200}, true},
+		{"blocks at the min", DeadlineConfig{Blocks: 50, MinBlocks: 50, MaxBlocks: 7200}, false},
+		{"blocks above the max", DeadlineConfig{Blocks: 7201, MinBlocks: 50, MaxBlocks: 7200}, false},
+		{"min above max", DeadlineConfig{Blocks: 600, MinBlocks: 700, MaxBlocks: 650}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.valid {
+				require.NoError(t, tc.d.Validate())
+			} else {
+				require.ErrorContains(t, tc.d.Validate(), "minBlocks < blocks <= maxBlocks")
+			}
+		})
+	}
+
+	assert.Equal(t, uint64(1600), DeadlineConfig{Blocks: 600}.ValidUntil(1000))
 }
 
 // TestConflictGraceDefaultsAndValidation pins FinalityConfig.ConflictGrace's own defaulting rule,

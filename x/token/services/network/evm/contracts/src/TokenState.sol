@@ -71,6 +71,7 @@ contract TokenState {
     error MalformedSetupDelta();
     error MalformedTransferDelta();
     error UnsupportedForGraphHiding();
+    error DeltaExpired(uint64 validUntil, uint256 blockNumber);
 
     event StateCommitted(bytes32 indexed anchor, bool success, string message);
     event PublicParametersUpdated(bytes32 indexed paramsHash, uint64 version);
@@ -104,6 +105,9 @@ contract TokenState {
     function applyStateDelta(StateDelta calldata delta, bytes[] calldata signatures) external returns (bool) {
         if (!initialized) revert NotInitialized();
         if (processedAnchor[delta.anchor]) revert AnchorAlreadyProcessed(delta.anchor);
+        // Checked before the signatures: it is the cheapest check, and past the deadline nothing
+        // else matters. See StateDelta.validUntil.
+        if (block.number > delta.validUntil) revert DeltaExpired(delta.validUntil, block.number);
         if (delta.metadataKeys.length != delta.metadataVals.length) revert MetadataLengthMismatch();
 
         // TokenState owns the domain separator (it is the per-TMS clone), so it computes the digest and

@@ -21,6 +21,9 @@ import (
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/statedelta"
 )
 
+// testValidUntil is the deadline the full-loop test stamps its deltas with.
+const testValidUntil uint64 = 1_000
+
 // TestFullLoopTranslateSignRecover chains the whole Week-3 Go pipeline on real fabtoken actions:
 // translate (issue then spend) -> EIP-712 digest -> sign -> recover the endorser address. Together
 // with the fixture endorsement verified on-chain (GoEndorsement.t.sol), this pins every link an
@@ -44,7 +47,7 @@ func TestFullLoopTranslateSignRecover(t *testing.T) {
 	}
 
 	translate := func() *statedelta.StateDelta {
-		tr := statedelta.NewTranslator(spendAnchor, pp, 0)
+		tr := statedelta.NewTranslator(spendAnchor, pp, 0, testValidUntil)
 		require.NoError(t, tr.Write(context.Background(), transfer))
 		require.NoError(t, tr.AddPublicParamsDependency())
 		_, err := tr.CommitTokenRequest([]byte("full-loop-request"), true)

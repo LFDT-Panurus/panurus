@@ -21,6 +21,14 @@ import (
 // Configuration defaults. They are applied at load time so a minimal config (endpoint, chain id,
 // contracts, endorsement) is enough to run, and every unset knob has a documented, safe value.
 const (
+	// DefaultDeadlineBlocks, DefaultDeadlineMinBlocks and DefaultDeadlineMaxBlocks size the window an
+	// endorsed delta stays applicable for, see DeadlineConfig. At 12s blocks (Ethereum) they are about
+	// 2 hours, 10 minutes and 1 day; at 2s blocks (Besu, NWO) about 20 minutes, under 2 minutes and
+	// 4 hours.
+	DefaultDeadlineBlocks    uint64 = 600
+	DefaultDeadlineMinBlocks uint64 = 50
+	DefaultDeadlineMaxBlocks uint64 = 7200
+
 	// DefaultBlockTag is the block tag state reads use: the PoS finalized tag, which removes reorg
 	// handling from v1. It aliases the canonical value in the client package.
 	DefaultBlockTag = client.BlockTagFinalized
@@ -161,6 +169,28 @@ type EndorsementConfig struct {
 	Allowlist []string `yaml:"allowlist"`
 	// Endorsers binds each endorser's Ethereum address to its FSC identity.
 	Endorsers []EndorserBinding `yaml:"endorsers"`
+	// Deadline is the window, in blocks, an endorsed delta stays applicable for. See DeadlineConfig.
+	Deadline DeadlineConfig `yaml:"deadline"`
+}
+
+// DeadlineConfig sizes StateDelta.ValidUntil, the last block at which an endorsed delta may be
+// applied. The requester proposes its current block plus Blocks; an endorser signs only a value more
+// than MinBlocks and at most MaxBlocks past its own current block. Every endorser has to sign the
+// same value, so they bound it rather than pick it.
+//
+// It is counted in blocks, not time, because block.number is exact on chain while block.timestamp is
+// whatever the block producer says, so the windows depend on the chain's block time.
+type DeadlineConfig struct {
+	// Blocks is the window the requester proposes. It has to leave room for broadcast and inclusion
+	// under congestion; the tokens a transaction spends stay locked until the deadline is final, so a
+	// larger window costs availability, not safety. Default: DefaultDeadlineBlocks.
+	Blocks uint64 `yaml:"blocks"`
+	// MinBlocks is the smallest window an endorser signs, so a transaction has time to land.
+	// Default: DefaultDeadlineMinBlocks.
+	MinBlocks uint64 `yaml:"minBlocks"`
+	// MaxBlocks is the largest window an endorser signs, so a requester cannot make a transaction
+	// live forever. Default: DefaultDeadlineMaxBlocks.
+	MaxBlocks uint64 `yaml:"maxBlocks"`
 }
 
 // EndorserBinding is one endorser's address and FSC identity.
@@ -213,6 +243,15 @@ func (c *Config) applyDefaults() {
 	if c.Gas.Strategy == "" {
 		c.Gas.Strategy = DefaultGasStrategy
 	}
+	if c.Endorsement.Deadline.Blocks == 0 {
+		c.Endorsement.Deadline.Blocks = DefaultDeadlineBlocks
+	}
+	if c.Endorsement.Deadline.MinBlocks == 0 {
+		c.Endorsement.Deadline.MinBlocks = DefaultDeadlineMinBlocks
+	}
+	if c.Endorsement.Deadline.MaxBlocks == 0 {
+		c.Endorsement.Deadline.MaxBlocks = DefaultDeadlineMaxBlocks
+	}
 	if c.Gas.Multiplier <= 0 {
 		c.Gas.Multiplier = DefaultGasMultiplier
 	}
@@ -259,8 +298,29 @@ func (c *Config) Validate() error {
 	if err := c.validateGas(); err != nil {
 		return err
 	}
+	if err := c.Endorsement.Deadline.Validate(); err != nil {
+		return err
+	}
 
 	return c.validateEndorsement()
+}
+
+// Validate checks the requester's window sits strictly inside what endorsers accept:
+// MinBlocks < Blocks <= MaxBlocks. A Blocks at MinBlocks would be refused by every endorser whose
+// view of the chain is a block ahead of the requester's.
+func (d DeadlineConfig) Validate() error {
+	if d.MinBlocks >= d.Blocks || d.Blocks > d.MaxBlocks {
+		return errors.Errorf(
+			"evm config: endorsement.deadline must satisfy minBlocks < blocks <= maxBlocks, got minBlocks=%d blocks=%d maxBlocks=%d",
+			d.MinBlocks, d.Blocks, d.MaxBlocks)
+	}
+
+	return nil
+}
+
+// ValidUntil is the deadline a requester proposes when the chain is at currentBlock.
+func (d DeadlineConfig) ValidUntil(currentBlock uint64) uint64 {
+	return currentBlock + d.Blocks
 }
 
 func (c *Config) validateGas() error {

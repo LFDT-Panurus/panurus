@@ -30,7 +30,7 @@ func TestDeltaFactoryRefusesStalePublicParams(t *testing.T) {
 	}
 	chain := &fakePP{raw: []byte("chain-currently-holds-v2"), version: 2}
 	local := &fakePP{raw: []byte("this-node-still-validates-against-v1")}
-	factory := NewDeltaFactory(validator, local, chain, &mock.EVMClient{}, addr(0xAA), "")
+	factory := NewDeltaFactory(validator, local, chain, &mock.EVMClient{}, addr(0xAA), "", testDeadline)
 
 	delta, err := factory.Build(context.Background(), validRequest())
 	require.ErrorIs(t, err, ErrStalePublicParams)
@@ -47,7 +47,7 @@ func TestDeltaFactoryBindsToValidatorsPublicParams(t *testing.T) {
 		meta:    map[string][]byte{common.TokenRequestToSign: []byte(trsMessage)},
 	}
 	pp := &fakePP{raw: []byte(testPPRaw), version: testPPVer}
-	factory := NewDeltaFactory(validator, pp, pp, &mock.EVMClient{}, addr(0xAA), "")
+	factory := NewDeltaFactory(validator, pp, pp, &mock.EVMClient{}, addr(0xAA), "", testDeadline)
 
 	delta, err := factory.Build(context.Background(), validRequest())
 	require.NoError(t, err)
@@ -64,11 +64,12 @@ func TestDeltaFactoryBindsToValidatorsPublicParams(t *testing.T) {
 // optimistic-concurrency baseline, with the new parameters as SetupParameters.
 func TestSetupDeltaFactoryBuildsASetupDelta(t *testing.T) {
 	current := &fakePP{raw: []byte(testPPRaw), version: testPPVer}
-	factory := NewSetupDeltaFactory(&fakePPValidator{pp: &fakePublicParameters{}}, current)
+	factory := NewSetupDeltaFactory(&fakePPValidator{pp: &fakePublicParameters{}}, current, &mock.EVMClient{}, testDeadline)
 
 	newPP := []byte("new-public-parameters")
 	delta, err := factory.Build(context.Background(), &EndorseRequest{
-		Kind: KindSetup, PublicParamsRaw: newPP, TMSID: testTMSID(), Anchor: anchorHex(0xC1),
+		ValidUntil: testValidUntil,
+		Kind:       KindSetup, PublicParamsRaw: newPP, TMSID: testTMSID(), Anchor: anchorHex(0xC1),
 	})
 	require.NoError(t, err)
 	require.NotNil(t, delta)
@@ -84,10 +85,11 @@ func TestSetupDeltaFactoryBuildsASetupDelta(t *testing.T) {
 // TestSetupDeltaFactoryAcceptsEmptyChainBaseline checks first-time setup of a TokenState deployed with
 // an empty EVM_PP0: the delta binds to the hash of the empty string at version 0.
 func TestSetupDeltaFactoryAcceptsEmptyChainBaseline(t *testing.T) {
-	factory := NewSetupDeltaFactory(&fakePPValidator{pp: &fakePublicParameters{}}, &fakePP{})
+	factory := NewSetupDeltaFactory(&fakePPValidator{pp: &fakePublicParameters{}}, &fakePP{}, &mock.EVMClient{}, testDeadline)
 
 	delta, err := factory.Build(context.Background(), &EndorseRequest{
-		Kind: KindSetup, PublicParamsRaw: []byte("new-pp"), TMSID: testTMSID(), Anchor: anchorHex(0xC1),
+		ValidUntil: testValidUntil,
+		Kind:       KindSetup, PublicParamsRaw: []byte("new-pp"), TMSID: testTMSID(), Anchor: anchorHex(0xC1),
 	})
 	require.NoError(t, err)
 	assert.True(t, delta.IsSetup)
@@ -101,18 +103,20 @@ func TestSetupDeltaFactoryRejectsInvalidPublicParams(t *testing.T) {
 	current := &fakePP{raw: []byte(testPPRaw), version: testPPVer}
 
 	t.Run("unmarshal failure", func(t *testing.T) {
-		factory := NewSetupDeltaFactory(&fakePPValidator{err: assert.AnError}, current)
+		factory := NewSetupDeltaFactory(&fakePPValidator{err: assert.AnError}, current, &mock.EVMClient{}, testDeadline)
 		delta, err := factory.Build(context.Background(), &EndorseRequest{
-			Kind: KindSetup, PublicParamsRaw: []byte("garbage"), TMSID: testTMSID(), Anchor: anchorHex(0xC1),
+			ValidUntil: testValidUntil,
+			Kind:       KindSetup, PublicParamsRaw: []byte("garbage"), TMSID: testTMSID(), Anchor: anchorHex(0xC1),
 		})
 		require.ErrorIs(t, err, ErrValidation)
 		assert.Nil(t, delta)
 	})
 
 	t.Run("structural validation failure", func(t *testing.T) {
-		factory := NewSetupDeltaFactory(&fakePPValidator{pp: &fakePublicParameters{err: assert.AnError}}, current)
+		factory := NewSetupDeltaFactory(&fakePPValidator{pp: &fakePublicParameters{err: assert.AnError}}, current, &mock.EVMClient{}, testDeadline)
 		delta, err := factory.Build(context.Background(), &EndorseRequest{
-			Kind: KindSetup, PublicParamsRaw: []byte("new-pp"), TMSID: testTMSID(), Anchor: anchorHex(0xC1),
+			ValidUntil: testValidUntil,
+			Kind:       KindSetup, PublicParamsRaw: []byte("new-pp"), TMSID: testTMSID(), Anchor: anchorHex(0xC1),
 		})
 		require.ErrorIs(t, err, ErrValidation)
 		assert.Nil(t, delta)
@@ -122,10 +126,11 @@ func TestSetupDeltaFactoryRejectsInvalidPublicParams(t *testing.T) {
 // TestSetupDeltaFactorySurfacesChainReadFailure checks a failure to read the chain's current
 // parameters is surfaced rather than signing a delta with a fabricated CAS baseline.
 func TestSetupDeltaFactorySurfacesChainReadFailure(t *testing.T) {
-	factory := NewSetupDeltaFactory(&fakePPValidator{pp: &fakePublicParameters{}}, &fakePP{err: assert.AnError})
+	factory := NewSetupDeltaFactory(&fakePPValidator{pp: &fakePublicParameters{}}, &fakePP{err: assert.AnError}, &mock.EVMClient{}, testDeadline)
 
 	delta, err := factory.Build(context.Background(), &EndorseRequest{
-		Kind: KindSetup, PublicParamsRaw: []byte("new-pp"), TMSID: testTMSID(), Anchor: anchorHex(0xC1),
+		ValidUntil: testValidUntil,
+		Kind:       KindSetup, PublicParamsRaw: []byte("new-pp"), TMSID: testTMSID(), Anchor: anchorHex(0xC1),
 	})
 	require.Error(t, err)
 	assert.Nil(t, delta)
@@ -135,10 +140,11 @@ func TestSetupDeltaFactorySurfacesChainReadFailure(t *testing.T) {
 // front: the chain read and the validator would both fail here, so reaching either would surface a
 // different error.
 func TestSetupDeltaFactoryRejectsMalformedAnchorBeforeAnyWork(t *testing.T) {
-	factory := NewSetupDeltaFactory(&fakePPValidator{err: assert.AnError}, &fakePP{err: assert.AnError})
+	factory := NewSetupDeltaFactory(&fakePPValidator{err: assert.AnError}, &fakePP{err: assert.AnError}, &mock.EVMClient{}, testDeadline)
 
 	delta, err := factory.Build(context.Background(), &EndorseRequest{
-		Kind: KindSetup, PublicParamsRaw: []byte("new-pp"), TMSID: testTMSID(), Anchor: "not-hex",
+		ValidUntil: testValidUntil,
+		Kind:       KindSetup, PublicParamsRaw: []byte("new-pp"), TMSID: testTMSID(), Anchor: "not-hex",
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid anchor")

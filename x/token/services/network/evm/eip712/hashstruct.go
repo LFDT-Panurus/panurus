@@ -20,7 +20,8 @@ const (
 	// string is byte-identical to the frozen type, which the golden digests depend on.
 	stateDeltaType = "StateDelta(bytes32 anchor,bytes32[] spentRefs,OutputToken[] outputs," +
 		"bytes32[] metadataKeys,bytes[] metadataVals,bytes32 tokenRequestHash," +
-		"bytes32 publicParamsHash,uint64 publicParamsVersion,bool isSetup,bytes setupParameters)" +
+		"bytes32 publicParamsHash,uint64 publicParamsVersion,bool isSetup,bytes setupParameters," +
+		"uint64 validUntil)" +
 		outputTokenType
 )
 
@@ -35,7 +36,7 @@ var (
 // dynamic bytes as keccak256(value); arrays as keccak256 of their concatenated element encodings; and
 // the OutputToken struct array as keccak256 of the concatenated hashStruct of each element.
 func HashStruct(d *statedelta.StateDelta) [32]byte {
-	buf := make([]byte, 0, 11*wordLen)
+	buf := make([]byte, 0, 12*wordLen)
 	buf = append(buf, stateDeltaTypeHash...)
 	buf = append(buf, d.Anchor[:]...)
 	buf = append(buf, hashBytes32Array(d.SpentRefs)...)
@@ -47,6 +48,7 @@ func HashStruct(d *statedelta.StateDelta) [32]byte {
 	buf = append(buf, uint64Word(d.PublicParamsVersion)...)
 	buf = append(buf, boolWord(d.IsSetup)...)
 	buf = append(buf, crypto.Keccak256(d.SetupParameters)...)
+	buf = append(buf, uint64Word(d.ValidUntil)...)
 
 	return crypto.Keccak256Hash(buf)
 }

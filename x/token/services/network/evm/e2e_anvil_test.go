@@ -167,6 +167,10 @@ func parseDeployedClone(t *testing.T, out string) string {
 	return ""
 }
 
+// e2eValidUntil is the deadline the hand-built deltas below carry: far past any block a test mines,
+// so the contract's DeltaExpired check never gets in the way of what a test is about.
+const e2eValidUntil uint64 = 1_000_000
+
 // TestEndToEndAgainstAnvil is the Week-5 gate: issue a token, then spend it, both through the
 // driver's real submission path, and read the results back from the chain.
 func TestEndToEndAgainstAnvil(t *testing.T) {
@@ -217,7 +221,8 @@ func TestEndToEndAgainstAnvil(t *testing.T) {
 
 	tokenData := []byte("alice-owns-100")
 	issued := &statedelta.StateDelta{
-		Anchor: issueAnchor,
+		ValidUntil: e2eValidUntil,
+		Anchor:     issueAnchor,
 		Outputs: []statedelta.OutputToken{{
 			TokenID:   keys.ComputeTokenID(issueAnchor, 0),
 			SNMarker:  keys.OutputSNMarker(issueAnchor, 0, tokenData),
@@ -258,8 +263,9 @@ func TestEndToEndAgainstAnvil(t *testing.T) {
 
 	bobData := []byte("bob-owns-100")
 	transferred := &statedelta.StateDelta{
-		Anchor:    spendAnchor,
-		SpentRefs: [][32]byte{keys.OutputSNMarker(issueAnchor, 0, tokenData)},
+		ValidUntil: e2eValidUntil,
+		Anchor:     spendAnchor,
+		SpentRefs:  [][32]byte{keys.OutputSNMarker(issueAnchor, 0, tokenData)},
 		Outputs: []statedelta.OutputToken{{
 			TokenID:   keys.ComputeTokenID(spendAnchor, 0),
 			SNMarker:  keys.OutputSNMarker(spendAnchor, 0, bobData),
@@ -301,6 +307,7 @@ func TestEndToEndAgainstAnvil(t *testing.T) {
 	require.NoError(t, err)
 
 	doubleSpend := &statedelta.StateDelta{
+		ValidUntil:          e2eValidUntil,
 		Anchor:              doubleAnchor,
 		SpentRefs:           [][32]byte{keys.OutputSNMarker(issueAnchor, 0, tokenData)}, // already spent
 		TokenRequestHash:    sha256Of("double-spend-request"),
@@ -324,6 +331,39 @@ func TestEndToEndAgainstAnvil(t *testing.T) {
 	status, _, _, err = n.GetTransactionStatus(t.Context(), "token", doubleAnchorID)
 	require.NoError(t, err)
 	assert.NotEqual(t, driver.Valid, status, "a double spend must never be recorded as valid")
+
+	// A fully endorsed delta past its validUntil must be refused too: that is what makes a missing
+	// anchor past a final block after the deadline proof that the transaction will never land (#2598).
+	expiredAnchorID := n.ComputeTxID(&driver.TxID{Creator: []byte("late")})
+	expiredAnchor, err := keys.AnchorFromTxID(expiredAnchorID)
+	require.NoError(t, err)
+	head, err := evmClient.BlockNumber(t.Context())
+	require.NoError(t, err)
+	expired := &statedelta.StateDelta{
+		ValidUntil: head, // the transaction lands in a later block
+		Anchor:     expiredAnchor,
+		Outputs: []statedelta.OutputToken{{
+			TokenID:   keys.ComputeTokenID(expiredAnchor, 0),
+			SNMarker:  keys.OutputSNMarker(expiredAnchor, 0, []byte("too-late")),
+			TokenData: []byte("too-late"),
+		}},
+		TokenRequestHash:    sha256Of("expired-request"),
+		PublicParamsHash:    sha256Of(string(pp0)),
+		PublicParamsVersion: 0,
+	}
+	expiredEnv := &Envelope{
+		Anchor:       expiredAnchorID,
+		Namespace:    "token",
+		Delta:        expired,
+		Endorsements: endorse(t, signer, domain, expired),
+	}
+	if err := n.Broadcast(t.Context(), expiredEnv); err == nil {
+		assert.Equal(t, uint64(0), waitMined(t, evmClient, expiredEnv.EthTxHash),
+			"a delta past its validUntil must revert on chain")
+	}
+	status, _, _, err = n.GetTransactionStatus(t.Context(), "token", expiredAnchorID)
+	require.NoError(t, err)
+	assert.NotEqual(t, driver.Valid, status, "an expired delta must never be recorded as valid")
 
 	// --- recipient path --------------------------------------------------------------
 
@@ -465,7 +505,8 @@ func TestRevertClassificationAgainstAnvil(t *testing.T) {
 	require.NoError(t, err)
 	tokenData := []byte("rejected-token")
 	delta := &statedelta.StateDelta{
-		Anchor: anchor,
+		ValidUntil: e2eValidUntil,
+		Anchor:     anchor,
 		Outputs: []statedelta.OutputToken{{
 			TokenID:   keys.ComputeTokenID(anchor, 0),
 			SNMarker:  keys.OutputSNMarker(anchor, 0, tokenData),
@@ -571,7 +612,8 @@ func TestSubmitterRecoversFromALostBroadcastReply(t *testing.T) {
 		var anchor [32]byte
 		anchor[31] = n
 		_, _, err := submitter.Submit(t.Context(), &statedelta.StateDelta{
-			Anchor: anchor,
+			ValidUntil: e2eValidUntil,
+			Anchor:     anchor,
 			Outputs: []statedelta.OutputToken{{
 				TokenID: keys.ComputeTokenID(anchor, 0), TokenData: []byte{n},
 			}},
@@ -634,7 +676,8 @@ func TestBroadcastRejectionIsClassifiedAgainstAnvil(t *testing.T) {
 	var anchor [32]byte
 	anchor[31] = 0x01
 	_, _, err = submitter.Submit(t.Context(), &statedelta.StateDelta{
-		Anchor: anchor,
+		ValidUntil: e2eValidUntil,
+		Anchor:     anchor,
 		Outputs: []statedelta.OutputToken{{
 			TokenID: keys.ComputeTokenID(anchor, 0), TokenData: []byte{0x01},
 		}},
@@ -708,7 +751,8 @@ func TestResubmittingAnAppliedAnchorAgainstAnvil(t *testing.T) {
 
 	tokenData := []byte("alice-owns-100")
 	delta := &statedelta.StateDelta{
-		Anchor: anchor,
+		ValidUntil: e2eValidUntil,
+		Anchor:     anchor,
 		Outputs: []statedelta.OutputToken{{
 			TokenID:   keys.ComputeTokenID(anchor, 0),
 			SNMarker:  keys.OutputSNMarker(anchor, 0, tokenData),
@@ -849,7 +893,8 @@ func TestQuorumEndorsementAgainstAnvil(t *testing.T) {
 
 	firstData, secondData := []byte("alice-owns-60"), []byte("bob-owns-40")
 	delta := &statedelta.StateDelta{
-		Anchor: anchor,
+		ValidUntil: e2eValidUntil,
+		Anchor:     anchor,
 		Outputs: []statedelta.OutputToken{
 			{
 				TokenID:   keys.ComputeTokenID(anchor, 0),
@@ -922,7 +967,8 @@ func TestConcurrentSubmissionsAgainstAnvil(t *testing.T) {
 			var anchor [32]byte
 			anchor[31] = marker
 			_, hash, err := submitter.Submit(t.Context(), &statedelta.StateDelta{
-				Anchor: anchor,
+				ValidUntil: e2eValidUntil,
+				Anchor:     anchor,
 				Outputs: []statedelta.OutputToken{{
 					TokenID: keys.ComputeTokenID(anchor, 0), TokenData: []byte{marker},
 				}},
@@ -1006,7 +1052,8 @@ func TestMinedButRevertedAgainstAnvil(t *testing.T) {
 
 	tokenData := []byte("never-applied")
 	delta := &statedelta.StateDelta{
-		Anchor: anchor,
+		ValidUntil: e2eValidUntil,
+		Anchor:     anchor,
 		Outputs: []statedelta.OutputToken{{
 			TokenID:   keys.ComputeTokenID(anchor, 0),
 			SNMarker:  keys.OutputSNMarker(anchor, 0, tokenData),
@@ -1094,7 +1141,8 @@ func TestDigestAgreesWithTheContractAgainstAnvil(t *testing.T) {
 				data := []byte("owns-10")
 
 				return &statedelta.StateDelta{
-					Anchor: anchor,
+					ValidUntil: e2eValidUntil,
+					Anchor:     anchor,
 					Outputs: []statedelta.OutputToken{{
 						TokenID:   keys.ComputeTokenID(anchor, 0),
 						SNMarker:  keys.OutputSNMarker(anchor, 0, data),
@@ -1116,6 +1164,7 @@ func TestDigestAgreesWithTheContractAgainstAnvil(t *testing.T) {
 				slices.SortFunc(keysOut, func(x, y [32]byte) int { return bytes.Compare(x[:], y[:]) })
 
 				return &statedelta.StateDelta{
+					ValidUntil:   e2eValidUntil,
 					Anchor:       anchor,
 					MetadataKeys: keysOut,
 					MetadataVals: [][]byte{[]byte("one"), []byte(""), []byte("three")},
@@ -1126,7 +1175,8 @@ func TestDigestAgreesWithTheContractAgainstAnvil(t *testing.T) {
 			name: "an output with empty token data",
 			build: func(anchor [32]byte) *statedelta.StateDelta {
 				return &statedelta.StateDelta{
-					Anchor: anchor,
+					ValidUntil: e2eValidUntil,
+					Anchor:     anchor,
 					Outputs: []statedelta.OutputToken{{
 						TokenID:  keys.ComputeTokenID(anchor, 0),
 						SNMarker: keys.OutputSNMarker(anchor, 0, nil),
@@ -1137,7 +1187,7 @@ func TestDigestAgreesWithTheContractAgainstAnvil(t *testing.T) {
 		{
 			name: "no outputs and no spends at all",
 			build: func(anchor [32]byte) *statedelta.StateDelta {
-				return &statedelta.StateDelta{Anchor: anchor}
+				return &statedelta.StateDelta{ValidUntil: e2eValidUntil, Anchor: anchor}
 			},
 		},
 	} {
@@ -1222,6 +1272,7 @@ func TestTransferMetadataRoundTripAgainstAnvil(t *testing.T) {
 	slices.SortStableFunc(pairs, func(a, b entry) int { return bytes.Compare(a.key[:], b.key[:]) })
 
 	delta := &statedelta.StateDelta{
+		ValidUntil:          e2eValidUntil,
 		Anchor:              anchor,
 		MetadataKeys:        [][32]byte{pairs[0].key, pairs[1].key},
 		MetadataVals:        [][]byte{pairs[0].val, pairs[1].val},
@@ -1308,7 +1359,8 @@ func (f *anvilFixture) issue(t *testing.T, creator string, tokenData []byte) *En
 	require.NoError(t, err)
 
 	return f.envelope(t, anchorID, &statedelta.StateDelta{
-		Anchor: anchor,
+		ValidUntil: e2eValidUntil,
+		Anchor:     anchor,
 		Outputs: []statedelta.OutputToken{{
 			TokenID:   keys.ComputeTokenID(anchor, 0),
 			SNMarker:  keys.OutputSNMarker(anchor, 0, tokenData),
@@ -1403,7 +1455,8 @@ func TestTwoTMSSharingASubmitterAgainstAnvil(t *testing.T) {
 		require.NoError(t, err)
 		data := []byte("token-" + creator)
 		delta := &statedelta.StateDelta{
-			Anchor: anchor,
+			ValidUntil: e2eValidUntil,
+			Anchor:     anchor,
 			Outputs: []statedelta.OutputToken{{
 				TokenID: keys.ComputeTokenID(anchor, 0), SNMarker: keys.OutputSNMarker(anchor, 0, data), TokenData: data,
 			}},
@@ -1466,6 +1519,7 @@ func TestNonceGapIsFilledAgainstAnvil(t *testing.T) {
 		var anchor [32]byte
 		anchor[31] = marker
 		_, hash, err := submitter.Submit(t.Context(), &statedelta.StateDelta{
+			ValidUntil:       e2eValidUntil,
 			Anchor:           anchor,
 			Outputs:          []statedelta.OutputToken{{TokenID: keys.ComputeTokenID(anchor, 0), TokenData: []byte{marker}}},
 			TokenRequestHash: sha256Of("gap-request"),

@@ -33,9 +33,10 @@ import (
 // Fabric translator: an action of an unknown type is an error here, not a silent no-op, per the
 // fail-fast working rule.
 type Translator struct {
-	anchor    [32]byte
-	pp        []byte
-	ppVersion uint64
+	anchor     [32]byte
+	pp         []byte
+	ppVersion  uint64
+	validUntil uint64
 
 	// counter is the output counter across all actions of the request; it advances exactly as the
 	// Fabric translator's (verified translator.go:359/421): issue by len(outputs), transfer by
@@ -62,11 +63,14 @@ type metaEntry struct {
 
 // NewTranslator returns a Translator for the token request identified by anchor, against the public
 // parameters (raw bytes and on-chain version) the request was validated with.
-func NewTranslator(anchor [32]byte, publicParams []byte, publicParamsVersion uint64) *Translator {
+//
+// validUntil is the last block at which the delta may be applied, see StateDelta.ValidUntil.
+func NewTranslator(anchor [32]byte, publicParams []byte, publicParamsVersion uint64, validUntil uint64) *Translator {
 	return &Translator{
-		anchor:    anchor,
-		pp:        publicParams,
-		ppVersion: publicParamsVersion,
+		anchor:     anchor,
+		pp:         publicParams,
+		ppVersion:  publicParamsVersion,
+		validUntil: validUntil,
 	}
 }
 
@@ -156,6 +160,7 @@ func (t *Translator) StateDelta() (*StateDelta, error) {
 		PublicParamsVersion: t.ppVersion,
 		IsSetup:             t.isSetup,
 		SetupParameters:     t.setupParameters,
+		ValidUntil:          t.validUntil,
 	}
 	if err := d.Validate(); err != nil {
 		return nil, errors.Wrapf(err, "translated delta is invalid")

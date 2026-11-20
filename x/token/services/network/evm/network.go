@@ -301,18 +301,47 @@ func (n *Network) RequestApproval(
 	}
 
 	anchor := n.ComputeTxID(&txID)
+	validUntil, err := n.proposeValidUntil(goContext(context), tms.ID().Namespace)
+	if err != nil {
+		return nil, err
+	}
 	result, err := endorser.Endorse(context, &endorsement.EndorseRequest{
 		Kind:         endorsement.KindApproval,
 		TokenRequest: requestRaw,
 		TMSID:        tms.ID(),
 		Anchor:       anchor,
 		Metadata:     metadata,
+		ValidUntil:   validUntil,
 	})
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to collect endorsements for [%s]", anchor)
 	}
 
 	return NewApprovedEnvelope(anchor, tms.ID().Namespace, result.Delta, result.Endorsements), nil
+}
+
+// goContext returns the Go context of a view context, or a background context when there is none.
+func goContext(v view.Context) context.Context {
+	if v == nil {
+		return context.Background()
+	}
+
+	return v.Context()
+}
+
+// proposeValidUntil returns the deadline a request for namespace proposes to its endorsers: the
+// latest block plus the namespace's configured endorsement.deadline.blocks. See DeadlineConfig.
+func (n *Network) proposeValidUntil(ctx context.Context, namespace string) (uint64, error) {
+	binding, err := n.binding(namespace)
+	if err != nil {
+		return 0, err
+	}
+	currentBlock, err := n.client.BlockNumber(ctx)
+	if err != nil {
+		return 0, errors.Wrapf(err, "evm network: failed to read the latest block to propose a deadline for [%s]", namespace)
+	}
+
+	return binding.config.Endorsement.Deadline.ValidUntil(currentBlock), nil
 }
 
 // endorserFor returns the endorsement service for a TMS: the one injected directly if there is one,
@@ -500,11 +529,16 @@ func (n *Network) SetupPublicParams(
 	}
 
 	anchor := n.ComputeTxID(&txID)
+	validUntil, err := n.proposeValidUntil(goContext(context), tmsID.Namespace)
+	if err != nil {
+		return nil, err
+	}
 	result, err := endorser.Endorse(context, &endorsement.EndorseRequest{
 		Kind:            endorsement.KindSetup,
 		PublicParamsRaw: publicParamsRaw,
 		TMSID:           tmsID,
 		Anchor:          anchor,
+		ValidUntil:      validUntil,
 	})
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to collect endorsements for public parameters [%s]", anchor)

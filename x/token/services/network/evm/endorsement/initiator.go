@@ -222,6 +222,11 @@ func (i *Initiator) bind(anchor [keys.AnchorLength]byte, delta *statedelta.State
 	if err := delta.Validate(); err != nil {
 		return errors.Wrapf(ErrDeltaMismatch, "malformed delta: %v", err)
 	}
+	// The deadline is the requester's to propose: an endorser may refuse it, but must not sign a
+	// different one.
+	if i.request != nil && delta.ValidUntil != i.request.ValidUntil {
+		return errors.Wrapf(ErrDeltaMismatch, "delta validUntil %d is not the requested %d", delta.ValidUntil, i.request.ValidUntil)
+	}
 	// A setup request carries the exact parameters to commit, so unlike a token request the delta can be
 	// checked against it without a validator. The check is symmetric: a setup request must be answered
 	// with a setup delta whose parameters match, and a non-setup request must not be answered with a

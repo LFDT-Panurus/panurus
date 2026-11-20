@@ -151,6 +151,16 @@ func TestCallClassifiesReverts(t *testing.T) {
 	}
 }
 
+func TestBlockNumber(t *testing.T) {
+	c, calls := newTestServer(t, map[string]string{"eth_blockNumber": `"0x1b4"`})
+
+	got, err := c.BlockNumber(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, uint64(436), got)
+	require.Len(t, *calls, 1)
+	assert.Equal(t, "eth_blockNumber", (*calls)[0].Method)
+}
+
 func TestPendingNonceAt(t *testing.T) {
 	c, calls := newTestServer(t, map[string]string{"eth_getTransactionCount": `"0x2a"`})
 

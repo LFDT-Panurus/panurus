@@ -115,6 +115,10 @@ evm:
       - endorser-1
       - endorser-2
       - initiator-1
+    deadline:                       # how long an endorsed delta stays applicable, in blocks (optional)
+      blocks: 600                   # window the requester proposes (default 600)
+      minBlocks: 50                 # smallest window an endorser signs (default 50)
+      maxBlocks: 7200               # largest window an endorser signs (default 7200)
   endorser:                        # only on an endorsing node
     enabled: true
     keystore: /path/to/endorser.key

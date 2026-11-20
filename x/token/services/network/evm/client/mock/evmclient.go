@@ -10,6 +10,19 @@ import (
 )
 
 type EVMClient struct {
+	BlockNumberStub        func(context.Context) (uint64, error)
+	blockNumberMutex       sync.RWMutex
+	blockNumberArgsForCall []struct {
+		arg1 context.Context
+	}
+	blockNumberReturns struct {
+		result1 uint64
+		result2 error
+	}
+	blockNumberReturnsOnCall map[int]struct {
+		result1 uint64
+		result2 error
+	}
 	CallStub        func(context.Context, client.Address, []byte, string) ([]byte, error)
 	callMutex       sync.RWMutex
 	callArgsForCall []struct {
@@ -166,6 +179,70 @@ type EVMClient struct {
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
+}
+
+func (fake *EVMClient) BlockNumber(arg1 context.Context) (uint64, error) {
+	fake.blockNumberMutex.Lock()
+	ret, specificReturn := fake.blockNumberReturnsOnCall[len(fake.blockNumberArgsForCall)]
+	fake.blockNumberArgsForCall = append(fake.blockNumberArgsForCall, struct {
+		arg1 context.Context
+	}{arg1})
+	stub := fake.BlockNumberStub
+	fakeReturns := fake.blockNumberReturns
+	fake.recordInvocation("BlockNumber", []interface{}{arg1})
+	fake.blockNumberMutex.Unlock()
+	if stub != nil {
+		return stub(arg1)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *EVMClient) BlockNumberCallCount() int {
+	fake.blockNumberMutex.RLock()
+	defer fake.blockNumberMutex.RUnlock()
+	return len(fake.blockNumberArgsForCall)
+}
+
+func (fake *EVMClient) BlockNumberCalls(stub func(context.Context) (uint64, error)) {
+	fake.blockNumberMutex.Lock()
+	defer fake.blockNumberMutex.Unlock()
+	fake.BlockNumberStub = stub
+}
+
+func (fake *EVMClient) BlockNumberArgsForCall(i int) context.Context {
+	fake.blockNumberMutex.RLock()
+	defer fake.blockNumberMutex.RUnlock()
+	argsForCall := fake.blockNumberArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *EVMClient) BlockNumberReturns(result1 uint64, result2 error) {
+	fake.blockNumberMutex.Lock()
+	defer fake.blockNumberMutex.Unlock()
+	fake.BlockNumberStub = nil
+	fake.blockNumberReturns = struct {
+		result1 uint64
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *EVMClient) BlockNumberReturnsOnCall(i int, result1 uint64, result2 error) {
+	fake.blockNumberMutex.Lock()
+	defer fake.blockNumberMutex.Unlock()
+	fake.BlockNumberStub = nil
+	if fake.blockNumberReturnsOnCall == nil {
+		fake.blockNumberReturnsOnCall = make(map[int]struct {
+			result1 uint64
+			result2 error
+		})
+	}
+	fake.blockNumberReturnsOnCall[i] = struct {
+		result1 uint64
+		result2 error
+	}{result1, result2}
 }
 
 func (fake *EVMClient) Call(arg1 context.Context, arg2 client.Address, arg3 []byte, arg4 string) ([]byte, error) {
