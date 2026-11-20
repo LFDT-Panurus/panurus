@@ -77,26 +77,9 @@ func TestPruningDoesNotLoseConcurrentLocks(t *testing.T) {
 	for w := range workers {
 		owner := fmt.Sprintf("owner-%d", w)
 		wg.Go(func() {
-			ctx := context.Background()
 			for i := range iterations {
-				id := &token.ID{TxId: fmt.Sprintf("tok-%s-%d", owner, i), Index: 0}
-				txID := fmt.Sprintf("tx-%s-%d", owner, i)
-				mock.setStatus(txID, ttxdb.Pending)
-				if _, err := d.Lock(ctx, owner, id, txID, false); err != nil {
-					t.Errorf("lock failed: %v", err)
-
-					return
-				}
-				// The invariant pruning must not break: a token locked a
-				// moment ago is visible as locked. An orphaned shard would
-				// make IsLocked return false here.
-				if !d.IsLocked(id) {
-					t.Errorf("lock for %s lost: shard was pruned while holding a live lock", id)
-
-					return
-				}
-				if notFound := d.UnlockIDs(ctx, owner, id); len(notFound) != 0 {
-					t.Errorf("unlock missed %v: lock ended up in an orphaned shard", notFound)
+				if err := lockCheckUnlock(d, mock, owner, i); err != nil {
+					t.Error(err)
 
 					return
 				}
@@ -189,20 +172,9 @@ func TestLockedCountDoesNotDeadlockWithPruning(t *testing.T) {
 		for w := range workers {
 			owner := fmt.Sprintf("owner-%d", w)
 			wg.Go(func() {
-				ctx := context.Background()
 				for i := range iterations {
-					id := &token.ID{TxId: fmt.Sprintf("tok-%s-%d", owner, i), Index: 0}
-					txID := fmt.Sprintf("tx-%s-%d", owner, i)
-					mock.setStatus(txID, ttxdb.Pending)
-					if _, err := d.Lock(ctx, owner, id, txID, false); err != nil {
-						errCh <- errors.Wrapf(err, "lock of [%s] failed", id)
-
-						return
-					}
-					// racing the scanner's own lockedCount from the caller side
-					_ = d.lockedCount()
-					if notFound := d.UnlockIDs(ctx, owner, id); len(notFound) != 0 {
-						errCh <- errors.Errorf("unlock missed %v", notFound)
+					if err := lockCountUnlock(d, mock, owner, i); err != nil {
+						errCh <- err
 
 						return
 					}
@@ -222,4 +194,44 @@ func TestLockedCountDoesNotDeadlockWithPruning(t *testing.T) {
 		t.Error(err)
 	}
 	require.Zero(t, d.lockedCount())
+}
+
+// lockCheckUnlock locks the i-th token of owner, checks the lock is visible, and unlocks it.
+func lockCheckUnlock(d *locker, mock *mockTXStatusProvider, owner string, i int) error {
+	ctx := context.Background()
+	id := &token.ID{TxId: fmt.Sprintf("tok-%s-%d", owner, i), Index: 0}
+	txID := fmt.Sprintf("tx-%s-%d", owner, i)
+	mock.setStatus(txID, ttxdb.Pending)
+	if _, err := d.Lock(ctx, owner, id, txID, false); err != nil {
+		return errors.Errorf("lock failed: %v", err)
+	}
+	// The invariant pruning must not break: a token locked a
+	// moment ago is visible as locked. An orphaned shard would
+	// make IsLocked return false here.
+	if !d.IsLocked(id) {
+		return errors.Errorf("lock for %s lost: shard was pruned while holding a live lock", id)
+	}
+	if notFound := d.UnlockIDs(ctx, owner, id); len(notFound) != 0 {
+		return errors.Errorf("unlock missed %v: lock ended up in an orphaned shard", notFound)
+	}
+
+	return nil
+}
+
+// lockCountUnlock locks the i-th token of owner, counts the locked tokens, and unlocks it.
+func lockCountUnlock(d *locker, mock *mockTXStatusProvider, owner string, i int) error {
+	ctx := context.Background()
+	id := &token.ID{TxId: fmt.Sprintf("tok-%s-%d", owner, i), Index: 0}
+	txID := fmt.Sprintf("tx-%s-%d", owner, i)
+	mock.setStatus(txID, ttxdb.Pending)
+	if _, err := d.Lock(ctx, owner, id, txID, false); err != nil {
+		return errors.Wrapf(err, "lock of [%s] failed", id)
+	}
+	// racing the scanner's own lockedCount from the caller side
+	_ = d.lockedCount()
+	if notFound := d.UnlockIDs(ctx, owner, id); len(notFound) != 0 {
+		return errors.Errorf("unlock missed %v", notFound)
+	}
+
+	return nil
 }

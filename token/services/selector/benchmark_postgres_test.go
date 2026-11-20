@@ -659,38 +659,47 @@ func staleLockCases() []pgCase {
 		}
 		cases = append(cases, pgCase{
 			name: name, cfg: cfg, clients: 1,
-			setup: func(tb testing.TB, fx *pgFixture) {
-				tb.Helper()
-				fx.seedBulk(tb, benchWalletID, "seed", tokens, "1")
-				pg := fx.replicas[0].lockMgr.pg.Load()
-				hourAgo := time.Now().Add(-time.Hour)
-				for i := range tokens * 3 / 10 {
-					if err := pg.LockAt(tb.Context(), &token2.ID{TxId: "seed-" + strconv.Itoa(i)}, staleLockCrasher, benchWalletID, hourAgo); err != nil {
-						tb.Fatalf("cannot plant stale lock: %v", err)
-					}
-				}
-				// Let the cleaner (1s tick) get its chance before anything is timed, in both cases.
-				time.Sleep(2500 * time.Millisecond)
-			},
+			setup: plantStaleLocks(tokens),
 			op: func(fx *pgFixture) pgOp {
 				return selectOp(fx, oneWallet(""), fixedQty(100), false, 0)
 			},
-			extra: func(b *testing.B, fx *pgFixture) {
-				b.Helper()
-				locks, err := fx.listLocks(b.Context())
-				if err != nil {
-					b.Fatalf("cannot list locks: %v", err)
-				}
-				var stale int
-				for _, l := range locks {
-					if l.ConsumerTxID == staleLockCrasher {
-						stale++
-					}
-				}
-				b.ReportMetric(float64(stale), "stale-locks-left")
-			},
+			extra: reportStaleLocksLeft,
 		})
 	}
 
 	return cases
+}
+
+// plantStaleLocks seeds that many tokens and locks 30% of them on behalf of a replica that
+// crashed an hour ago.
+func plantStaleLocks(tokens int) func(tb testing.TB, fx *pgFixture) {
+	return func(tb testing.TB, fx *pgFixture) {
+		tb.Helper()
+		fx.seedBulk(tb, benchWalletID, "seed", tokens, "1")
+		pg := fx.replicas[0].lockMgr.pg.Load()
+		hourAgo := time.Now().Add(-time.Hour)
+		for i := range tokens * 3 / 10 {
+			if err := pg.LockAt(tb.Context(), &token2.ID{TxId: "seed-" + strconv.Itoa(i)}, staleLockCrasher, benchWalletID, hourAgo); err != nil {
+				tb.Fatalf("cannot plant stale lock: %v", err)
+			}
+		}
+		// Let the cleaner (1s tick) get its chance before anything is timed, in both cases.
+		time.Sleep(2500 * time.Millisecond)
+	}
+}
+
+// reportStaleLocksLeft reports how many of the locks plantStaleLocks planted are still held.
+func reportStaleLocksLeft(b *testing.B, fx *pgFixture) {
+	b.Helper()
+	locks, err := fx.listLocks(b.Context())
+	if err != nil {
+		b.Fatalf("cannot list locks: %v", err)
+	}
+	var stale int
+	for _, l := range locks {
+		if l.ConsumerTxID == staleLockCrasher {
+			stale++
+		}
+	}
+	b.ReportMetric(float64(stale), "stale-locks-left")
 }
