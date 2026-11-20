@@ -756,23 +756,7 @@ func TestCachedFetcher_UpdateCache(t *testing.T) {
 		readErrors := make(chan error, 10)
 
 		for range 10 {
-			go func() {
-				for {
-					select {
-					case <-stopReading:
-						return
-					default:
-						// Try to read from cache
-						_, ok := fetcher.cache.Get(tokenKey("wallet1", "USD"))
-						if !ok {
-							// Cache should never be empty during update
-							readErrors <- errors.New("cache was empty during concurrent read")
-
-							return
-						}
-					}
-				}
-			}()
+			go readCacheUntilStopped(fetcher, tokenKey("wallet1", "USD"), stopReading, readErrors)
 		}
 
 		// Perform multiple updates while readers are active
@@ -798,6 +782,24 @@ func TestCachedFetcher_UpdateCache(t *testing.T) {
 			// No errors - race condition fix is working
 		}
 	})
+}
+
+// readCacheUntilStopped reads key from the fetcher's cache until stop is closed, reporting
+// on errs, and returning, the first time the key is missing: the cache must never look
+// empty to a reader while it is being updated.
+func readCacheUntilStopped(fetcher *cachedFetcher, key string, stop <-chan struct{}, errs chan<- error) {
+	for {
+		select {
+		case <-stop:
+			return
+		default:
+			if _, ok := fetcher.cache.Get(key); !ok {
+				errs <- errors.New("cache was empty during concurrent read")
+
+				return
+			}
+		}
+	}
 }
 
 func TestCachedFetcher_SoftRefresh(t *testing.T) {

@@ -447,20 +447,7 @@ func TestNew(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockSvc := &mock.ConfigService{}
-			mockSvc.UnmarshalKeyStub = func(key string, rawVal any) error {
-				if tt.unmarshalErr != nil {
-					return tt.unmarshalErr
-				}
-				if val, ok := tt.mockConfig[key]; ok {
-					if c, ok := rawVal.(*Config); ok {
-						if cfg, ok := val.(*Config); ok {
-							*c = *cfg
-						}
-					}
-				}
-
-				return nil
-			}
+			mockSvc.UnmarshalKeyStub = unmarshalFrom(tt.mockConfig, tt.unmarshalErr)
 
 			cfg, err := New(mockSvc)
 
@@ -472,6 +459,25 @@ func TestNew(t *testing.T) {
 				assert.NotNil(t, cfg)
 			}
 		})
+	}
+}
+
+// unmarshalFrom returns an UnmarshalKey stub that fails with err if it is set, and otherwise
+// copies the *Config stored under the requested key, if any, into the target.
+func unmarshalFrom(configs map[string]any, err error) func(string, any) error {
+	return func(key string, rawVal any) error {
+		if err != nil {
+			return err
+		}
+		c, ok := rawVal.(*Config)
+		if !ok {
+			return nil
+		}
+		if cfg, ok := configs[key].(*Config); ok {
+			*c = *cfg
+		}
+
+		return nil
 	}
 }
 
