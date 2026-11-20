@@ -53,6 +53,7 @@ var tokenTransactionDBCases = []struct {
 	{"Rollback", TRollback},
 	{"TransactionQueries", TTransactionQueries},
 	{"TEndorserAcks", TEndorserAcks},
+	{"TransactionCursor", TTransactionCursor},
 	{"Findings", TFindings},
 }
 
@@ -1030,4 +1031,69 @@ func TFindings(t *testing.T, db driver3.TokenTransactionStore) {
 	require.NoError(t, err)
 	require.Len(t, stored, 1)
 	assert.Equal(t, "two", stored[0].Message)
+}
+
+// TTransactionCursor pages through transactions with QueryTransactionsParams.After, in
+// both directions: every transaction comes back exactly once and in order, including
+// transactions that share a stored_at, which the cursor tells apart by tx_id, and a
+// transaction with several movement records split across a page boundary.
+func TTransactionCursor(t *testing.T, db driver3.TokenTransactionStore) {
+	t.Helper()
+	ctx := t.Context()
+	base := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+
+	// tx "b" and "c" share a stored_at; "d" moved two amounts.
+	type tx struct {
+		id         string
+		at         time.Duration
+		recipients []string
+	}
+	txs := []tx{
+		{"a", 0, []string{"alice"}},
+		{"b", time.Minute, []string{"alice"}},
+		{"c", time.Minute, []string{"alice"}},
+		{"d", 2 * time.Minute, []string{"alice", "bob"}},
+		{"e", 3 * time.Minute, []string{"alice"}},
+	}
+	for _, tx := range txs {
+		w, err := db.NewTransactionStoreTransaction()
+		require.NoError(t, err)
+		require.NoError(t, w.AddTokenRequest(ctx, tx.id, []byte("request "+tx.id), nil, nil, driver2.PPHash("pp")))
+		for _, recipient := range tx.recipients {
+			require.NoError(t, w.AddTransaction(ctx, driver3.TransactionRecord{
+				TxID: tx.id, ActionType: driver3.Transfer, SenderEID: "issuer", RecipientEID: recipient,
+				TokenType: "coin", Amount: big.NewInt(1), Timestamp: base.Add(tx.at), Status: driver3.Pending,
+			}))
+		}
+		require.NoError(t, w.Commit())
+	}
+
+	walk := func(direction driver3.SearchDirection) []string {
+		page, err := pagination.Offset(0, 2)
+		require.NoError(t, err)
+		params := driver3.QueryTransactionsParams{SearchDirection: direction}
+		var seen []string
+		for range 10 {
+			it, err := db.QueryTransactions(ctx, params, page)
+			require.NoError(t, err)
+			records, err := iterators.ReadAllPointers(it.Items)
+			require.NoError(t, err)
+			for _, r := range records {
+				if len(seen) == 0 || seen[len(seen)-1] != r.TxID {
+					seen = append(seen, r.TxID)
+				}
+			}
+			if len(records) < 2 {
+				return seen
+			}
+			last := records[len(records)-1]
+			params.After = &driver3.TransactionCursor{StoredAt: last.Timestamp, TxID: last.TxID}
+		}
+		t.Fatalf("the walk did not end: %v", seen)
+
+		return nil
+	}
+
+	assert.Equal(t, []string{"a", "b", "c", "d", "e"}, walk(driver3.FromBeginning))
+	assert.Equal(t, []string{"e", "d", "c", "b", "a"}, walk(driver3.FromLast))
 }

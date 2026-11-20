@@ -228,6 +228,22 @@ type QueryTransactionsParams struct {
 	// SearchDirection is the direction of the search.
 	// Default (zero value) is FromLast (descending by stored_at).
 	SearchDirection SearchDirection
+	// After, when set, only returns records that come strictly after the transaction it
+	// names in the query's order, which is by stored_at and then tx_id in SearchDirection.
+	// It is a keyset cursor: set it to the last record of a page to read the next one.
+	// Unlike an offset, it does not shift when records are written between two pages.
+	// Records of the transaction it names are not returned either, including movement
+	// records of it a previous page did not reach.
+	After *TransactionCursor
+}
+
+// TransactionCursor names a position in a transaction query, see
+// QueryTransactionsParams.After.
+type TransactionCursor struct {
+	// StoredAt is the stored_at of the transaction, as read back from the store.
+	StoredAt time.Time
+	// TxID is the transaction id.
+	TxID string
 }
 
 // QueryTokenRequestsParams defines the parameters for querying token requests

@@ -162,6 +162,10 @@ func HasTransactionParams(params driver2.QueryTransactionsParams, table common.T
 		conds = append(conds, cond.Cmp(common.FieldName("sender_eid"), "!=", common.FieldName("recipient_eid")))
 	}
 
+	if params.After != nil {
+		conds = append(conds, afterTransaction(params.After, params.SearchDirection, table))
+	}
+
 	// See QueryTransactionsParams for expected behavior. If only one of sender or
 	// recipient is set, we return all transactions. If both are set, we do an OR.
 	if params.SenderWallet != "" && params.RecipientWallet != "" {
@@ -172,6 +176,28 @@ func HasTransactionParams(params driver2.QueryTransactionsParams, table common.T
 	}
 
 	return cond.And(conds...)
+}
+
+// afterTransaction selects the records that come strictly after cursor when ordered by
+// (stored_at, tx_id) in direction: later ones going FromBeginning, earlier ones going FromLast.
+//
+// The cursor's stored_at is compared exactly as it was read back, without converting it to
+// UTC the way From and To are: it has to equal the stored value for the tie on stored_at to
+// be broken by tx_id.
+func afterTransaction(cursor *driver2.TransactionCursor, direction driver2.SearchDirection, table common.Table) cond.Condition {
+	op := cond.Operator("<")
+	if direction == driver2.FromBeginning {
+		op = ">"
+	}
+	storedAt, txID := table.Field("stored_at"), table.Field("tx_id")
+
+	return cond.Or(
+		cond.CmpVal(storedAt, op, cursor.StoredAt),
+		cond.And(
+			cond.CmpVal(storedAt, "=", cursor.StoredAt),
+			cond.CmpVal(txID, op, cursor.TxID),
+		),
+	)
 }
 
 func utc(t *time.Time) time.Time {
