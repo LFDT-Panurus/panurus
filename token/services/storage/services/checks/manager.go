@@ -81,6 +81,15 @@ type Checker interface {
 	ResolvableCheckers() []string
 }
 
+// progressCommitter is implemented by a Checker whose checks resume where their
+// previous sweep stopped (dbcommon.FindingsService is one). CommitProgress lets
+// them record their new starting point, and is only called once the sweep's
+// findings are stored: recording it before would lose, for good, the findings
+// of a sweep whose writes then failed.
+type progressCommitter interface {
+	CommitProgress(ctx context.Context) error
+}
+
 // Manager runs the ledger drift checks in the background.
 //
 // The checks themselves are not new: a node has always been able to run them on
@@ -379,6 +388,16 @@ func (m *Manager) sweep(ctx context.Context) error {
 	resolved, err := m.storage.ResolveFindingsNotSeenSince(writeCtx, resolvableCheckers(m.checker.ResolvableCheckers(), findings), seenAt)
 	if err != nil {
 		return errors.Wrapf(err, "failed closing findings that are no longer reported")
+	}
+
+	// Only now that the findings are stored may a check move its resume point past
+	// the transactions they are about. A failure here does not fail the sweep: it
+	// only means the next one starts from the old resume point and redoes some work.
+	if committer, ok := m.checker.(progressCommitter); ok {
+		if err := committer.CommitProgress(writeCtx); err != nil {
+			m.logger.Warnf("ledger drift checks for [%s][%s] could not record how far they got, the next sweep will redo some work: %v",
+				m.tmsID, m.role, err)
+		}
 	}
 
 	// FindingsOpen must reflect the table's actual current state, not just what

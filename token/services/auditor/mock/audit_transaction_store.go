@@ -79,6 +79,22 @@ type AuditTransactionStore struct {
 		result1 map[int]int64
 		result2 error
 	}
+	GetCheckProgressStub        func(context.Context, string) (time.Time, bool, error)
+	getCheckProgressMutex       sync.RWMutex
+	getCheckProgressArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+	}
+	getCheckProgressReturns struct {
+		result1 time.Time
+		result2 bool
+		result3 error
+	}
+	getCheckProgressReturnsOnCall map[int]struct {
+		result1 time.Time
+		result2 bool
+		result3 error
+	}
 	GetStatusStub        func(context.Context, string) (driver.TxStatus, string, error)
 	getStatusMutex       sync.RWMutex
 	getStatusArgsForCall []struct {
@@ -245,6 +261,19 @@ type AuditTransactionStore struct {
 	resolveFindingsNotSeenSinceReturnsOnCall map[int]struct {
 		result1 int64
 		result2 error
+	}
+	SetCheckProgressStub        func(context.Context, string, time.Time) error
+	setCheckProgressMutex       sync.RWMutex
+	setCheckProgressArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+		arg3 time.Time
+	}
+	setCheckProgressReturns struct {
+		result1 error
+	}
+	setCheckProgressReturnsOnCall map[int]struct {
+		result1 error
 	}
 	SetStatusStub        func(context.Context, string, driver.TxStatus, string) error
 	setStatusMutex       sync.RWMutex
@@ -592,6 +621,74 @@ func (fake *AuditTransactionStore) CountOpenFindingsReturnsOnCall(i int, result1
 		result1 map[int]int64
 		result2 error
 	}{result1, result2}
+}
+
+func (fake *AuditTransactionStore) GetCheckProgress(arg1 context.Context, arg2 string) (time.Time, bool, error) {
+	fake.getCheckProgressMutex.Lock()
+	ret, specificReturn := fake.getCheckProgressReturnsOnCall[len(fake.getCheckProgressArgsForCall)]
+	fake.getCheckProgressArgsForCall = append(fake.getCheckProgressArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+	}{arg1, arg2})
+	stub := fake.GetCheckProgressStub
+	fakeReturns := fake.getCheckProgressReturns
+	fake.recordInvocation("GetCheckProgress", []interface{}{arg1, arg2})
+	fake.getCheckProgressMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2, ret.result3
+	}
+	return fakeReturns.result1, fakeReturns.result2, fakeReturns.result3
+}
+
+func (fake *AuditTransactionStore) GetCheckProgressCallCount() int {
+	fake.getCheckProgressMutex.RLock()
+	defer fake.getCheckProgressMutex.RUnlock()
+	return len(fake.getCheckProgressArgsForCall)
+}
+
+func (fake *AuditTransactionStore) GetCheckProgressCalls(stub func(context.Context, string) (time.Time, bool, error)) {
+	fake.getCheckProgressMutex.Lock()
+	defer fake.getCheckProgressMutex.Unlock()
+	fake.GetCheckProgressStub = stub
+}
+
+func (fake *AuditTransactionStore) GetCheckProgressArgsForCall(i int) (context.Context, string) {
+	fake.getCheckProgressMutex.RLock()
+	defer fake.getCheckProgressMutex.RUnlock()
+	argsForCall := fake.getCheckProgressArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *AuditTransactionStore) GetCheckProgressReturns(result1 time.Time, result2 bool, result3 error) {
+	fake.getCheckProgressMutex.Lock()
+	defer fake.getCheckProgressMutex.Unlock()
+	fake.GetCheckProgressStub = nil
+	fake.getCheckProgressReturns = struct {
+		result1 time.Time
+		result2 bool
+		result3 error
+	}{result1, result2, result3}
+}
+
+func (fake *AuditTransactionStore) GetCheckProgressReturnsOnCall(i int, result1 time.Time, result2 bool, result3 error) {
+	fake.getCheckProgressMutex.Lock()
+	defer fake.getCheckProgressMutex.Unlock()
+	fake.GetCheckProgressStub = nil
+	if fake.getCheckProgressReturnsOnCall == nil {
+		fake.getCheckProgressReturnsOnCall = make(map[int]struct {
+			result1 time.Time
+			result2 bool
+			result3 error
+		})
+	}
+	fake.getCheckProgressReturnsOnCall[i] = struct {
+		result1 time.Time
+		result2 bool
+		result3 error
+	}{result1, result2, result3}
 }
 
 func (fake *AuditTransactionStore) GetStatus(arg1 context.Context, arg2 string) (driver.TxStatus, string, error) {
@@ -1378,6 +1475,69 @@ func (fake *AuditTransactionStore) ResolveFindingsNotSeenSinceReturnsOnCall(i in
 		result1 int64
 		result2 error
 	}{result1, result2}
+}
+
+func (fake *AuditTransactionStore) SetCheckProgress(arg1 context.Context, arg2 string, arg3 time.Time) error {
+	fake.setCheckProgressMutex.Lock()
+	ret, specificReturn := fake.setCheckProgressReturnsOnCall[len(fake.setCheckProgressArgsForCall)]
+	fake.setCheckProgressArgsForCall = append(fake.setCheckProgressArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+		arg3 time.Time
+	}{arg1, arg2, arg3})
+	stub := fake.SetCheckProgressStub
+	fakeReturns := fake.setCheckProgressReturns
+	fake.recordInvocation("SetCheckProgress", []interface{}{arg1, arg2, arg3})
+	fake.setCheckProgressMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *AuditTransactionStore) SetCheckProgressCallCount() int {
+	fake.setCheckProgressMutex.RLock()
+	defer fake.setCheckProgressMutex.RUnlock()
+	return len(fake.setCheckProgressArgsForCall)
+}
+
+func (fake *AuditTransactionStore) SetCheckProgressCalls(stub func(context.Context, string, time.Time) error) {
+	fake.setCheckProgressMutex.Lock()
+	defer fake.setCheckProgressMutex.Unlock()
+	fake.SetCheckProgressStub = stub
+}
+
+func (fake *AuditTransactionStore) SetCheckProgressArgsForCall(i int) (context.Context, string, time.Time) {
+	fake.setCheckProgressMutex.RLock()
+	defer fake.setCheckProgressMutex.RUnlock()
+	argsForCall := fake.setCheckProgressArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+}
+
+func (fake *AuditTransactionStore) SetCheckProgressReturns(result1 error) {
+	fake.setCheckProgressMutex.Lock()
+	defer fake.setCheckProgressMutex.Unlock()
+	fake.SetCheckProgressStub = nil
+	fake.setCheckProgressReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *AuditTransactionStore) SetCheckProgressReturnsOnCall(i int, result1 error) {
+	fake.setCheckProgressMutex.Lock()
+	defer fake.setCheckProgressMutex.Unlock()
+	fake.SetCheckProgressStub = nil
+	if fake.setCheckProgressReturnsOnCall == nil {
+		fake.setCheckProgressReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.setCheckProgressReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
 }
 
 func (fake *AuditTransactionStore) SetStatus(arg1 context.Context, arg2 string, arg3 driver.TxStatus, arg4 string) error {

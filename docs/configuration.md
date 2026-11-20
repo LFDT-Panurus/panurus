@@ -422,9 +422,10 @@ token:
             enabled: true
 
             # scanInterval is how often a sweep runs. Default: 1h.
-            # Drift is not a high-frequency event, and a sweep reads the whole
-            # transaction history by default, so this is deliberately far longer
-            # than the recovery scan interval.
+            # Drift is not a high-frequency event, and a sweep reads every token the
+            # node holds, so this is deliberately far longer than the recovery scan
+            # interval. The Local Completeness Check only rebuilds what is new since
+            # the previous sweep; see docs/services/storage/checks.md.
             scanInterval: 1h
 
             # timeout bounds running the checks themselves. Default: 30m. It must not
@@ -450,7 +451,8 @@ token:
             # history to transactions stored within this duration of now.
             # Default: 0s, meaning the whole history.
             # Setting it bounds the cost of a sweep on a node with a long history,
-            # but those checks then no longer see everything, so their findings are
+            # and turns off the Local Completeness Check's resume point, but those
+            # checks then no longer see everything, so their findings are
             # never closed automatically: a sweep that did not look at a transaction
             # has learned nothing about it. Leave it at zero unless sweeps are
             # approaching their timeout.

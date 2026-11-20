@@ -60,6 +60,7 @@ func (s *sweeper) start(
 	networkProvider common.NetworkProvider,
 	db common.TokenTransactionDB,
 	storage checks.Storage,
+	progress common.CheckProgressStore,
 	tokenDB *tokens.Service,
 	tmsID token.TMSID,
 	custom []common.NamedChecker,
@@ -99,6 +100,7 @@ func (s *sweeper) start(
 		common.WithBatchSize(config.BatchSize),
 		common.WithTransactionWindow(config.TransactionWindow),
 		common.WithMaxPageSize(maxPageSize),
+		common.WithCheckProgress(progress),
 	)
 	// custom checkers registered through dependency injection still return plain
 	// messages, so they are lifted rather than reimplemented
@@ -201,7 +203,7 @@ func NewAuditorCheckServiceProvider(
 // precondition for them, so a bad checks config or a store that briefly can't
 // take leadership must not stop the auditor service itself from being built.
 func (a *AuditorCheckServiceProvider) CheckService(id token.TMSID, adb *auditdb.StoreService, tdb *tokens.Service) (auditor.CheckService, error) {
-	if err := a.sweeper.start(a.tmsProvider, a.networkProvider, adb, adb, tdb, id, a.checkers, checks.RoleAuditor, a.MaxPageSize); err != nil {
+	if err := a.sweeper.start(a.tmsProvider, a.networkProvider, adb, adb, adb, tdb, id, a.checkers, checks.RoleAuditor, a.MaxPageSize); err != nil {
 		logger.Warnf("not running background drift checks for [%s][auditor]: %v", id, err)
 	}
 
@@ -256,7 +258,7 @@ func NewOwnerCheckServiceProvider(
 // precondition for them, so a bad checks config or a store that briefly can't
 // take leadership must not stop the owner service itself from being built.
 func (a *OwnerCheckServiceProvider) CheckService(id token.TMSID, txdb *ttxdb.StoreService, tdb *tokens.Service) (ttx.CheckService, error) {
-	if err := a.sweeper.start(a.tmsProvider, a.networkProvider, txdb, txdb, tdb, id, a.checkers, checks.RoleOwner, a.MaxPageSize); err != nil {
+	if err := a.sweeper.start(a.tmsProvider, a.networkProvider, txdb, txdb, txdb, tdb, id, a.checkers, checks.RoleOwner, a.MaxPageSize); err != nil {
 		logger.Warnf("not running background drift checks for [%s][owner]: %v", id, err)
 	}
 
