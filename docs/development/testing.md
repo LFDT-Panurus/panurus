@@ -89,22 +89,134 @@ valid encodings are still correctly accepted.
 
 ### Available Fuzz Targets
 
+The tree currently holds **76** fuzz targets (70 distinct function names), grouped below by
+subsystem. Function names are not unique across packages — for example
+`FuzzActionDeserializerNoPanic` and `FuzzBulletProofVerifierNoPanic` exist in several —
+so the `Package` column is what identifies a row. Paths are relative to the repository root.
+
+Of the 76, **74** run in the nightly campaign (see [Nightly Fuzzing in CI](#nightly-fuzzing-in-ci)).
+The two targets in `token/services/ttx` — `FuzzUnmarshalMetaNeverPanics` and
+`FuzzCompositeRecipientValidationNeverPanics` — are only exercised through their seed corpus
+and are marked with † below.
+
+Nineteen targets live in the separate `x/token/services/network/evm` Go module and one in the
+separate `token/services/storage/db/kvs/hashicorp` module; they are listed in their own
+sections, because `go test` must be run from that module's root.
+
+#### Token request and core drivers
+
 | Target | Package | What it fuzzes |
 | --- | --- | --- |
 | `FuzzVerifyTokenRequestFromRawNoPanic` | `token/core/common` | Raw `TokenRequest` bytes fed straight into request verification. |
 | `FuzzStructuredTokenRequestSignatureEnvelope` | `token/core/common` | A structurally valid request with a mutated action-signature envelope (action ID, signature bytes, duplicate signatures). |
+| `FuzzRequestResourceLimits` | `token/core/common` | Token requests shaped by action count, signature count and per-action/per-signature size; over-limit requests must be rejected with a typed error before signature verification. |
+| `FuzzUnmarshallerNoPanic` | `token/core/common/encoding/asn1` | The unmarshaller used to deserialize every ZKAT-DLOG proof type, including the `Element.CurveID` bounds check. |
+| `FuzzOwnerVerifierNoPanic` | `token/core/fabtoken/v1/driver` | Arbitrary owner-identity bytes through the FabToken owner-deserialization path reached once per input token before any signature check; it must neither panic nor recurse without bound. |
 | `FuzzActionDeserializerNoPanic` | `token/core/fabtoken/v1/validator` | A single issue or transfer action's raw bytes through the FabToken `ActionDeserializer`. |
+| `FuzzActionResourceLimits` | `token/core/fabtoken/v1/validator` | FabToken issue and transfer actions shaped by input/output counts; over-limit actions must be rejected with a typed error. |
+| `FuzzTransferHTLCValidateNoPanic` | `token/core/fabtoken/v1/validator` | Attacker-controlled owner bytes of a transfer's inputs through `TransferHTLCValidate`; an HTLC-owned input must never be accepted alongside other inputs. |
+| `FuzzTransferValidationStepsNoPanic` | `token/core/fabtoken/v1/validator` | A transfer action deserialized from fuzzed bytes and run through the four transfer validation steps in a fuzz-chosen order. |
+| `FuzzDecodeIdentityNoPanic` | `token/services/identity/marshal` | Malformed DER through `DecodeIdentity`, the base ASN.1 parser underneath every identity type. |
+| `FuzzUnmarshalTypedTokenNoPanic` | `token/services/tokens` | Untrusted, ledger-stored or peer-supplied token bytes through `UnmarshalTypedToken`. |
+| `FuzzUnmarshalTypedMetadataNoPanic` | `token/services/tokens` | Arbitrary bytes through `UnmarshalTypedMetadata`. |
+| `FuzzTokenRequestMetadataFromBytesNoPanic` | `token/driver` | Metadata bytes received from remote peers through `TokenRequestMetadata.FromBytes`. |
+| `FuzzIdentityConfigurationUniqueIDInjective` | `token/driver` | Arbitrary `(ID, Type, URL)` tuples, checking that two identity configurations share a `conf_id` if and only if they are the same tuple. |
+| `FuzzConfigKeyFieldRoundTrip` | `token/driver` | `escapeConfigKeyField`, checking that decoding its output reproduces the input byte for byte. |
+
+#### ZKAT-DLOG validators and proofs
+
+| Target | Package | What it fuzzes |
+| --- | --- | --- |
 | `FuzzActionDeserializerNoPanic` | `token/core/zkatdlog/nogh/v1/validator` | A single issue or transfer action's raw bytes through the ZKAT-DLOG `ActionDeserializer`, including both Range and CSP proof-type encodings. |
 | `FuzzActionDeserializerMultiActionNoPanic` | `token/core/zkatdlog/nogh/v1/validator` | Two independently typed, independently fuzzed actions in the same `TokenRequest`. |
+| `FuzzActionResourceLimits` | `token/core/zkatdlog/nogh/v1/validator` | ZKAT-DLOG issue and transfer actions shaped by input/output counts and proof length; over-limit actions must be rejected before any cryptographic work. |
+| `FuzzIssueActionValidateNoPanic` | `token/core/zkatdlog/nogh/v1/validator` | `issue.Action.Deserialize`, `Validate` and `GetCommitments` on arbitrary bytes — the calls `IssueValidate` makes before any issuer-authorization or signature check. |
 | `FuzzBulletProofVerifierNoPanic` | `token/core/zkatdlog/nogh/v1/issue` | Raw BulletProof issue-proof bytes through `BulletProofVerifier.Verify` — the call `IssueValidate` makes on unauthenticated wire bytes. |
 | `FuzzCSPVerifierNoPanic` | `token/core/zkatdlog/nogh/v1/issue` | Raw CSP issue-proof bytes through `CSPVerifier.Verify`. |
 | `FuzzBulletProofVerifierNoPanic` | `token/core/zkatdlog/nogh/v1/transfer` | Raw BulletProof transfer-proof bytes through `BulletProofVerifier.Verify` — the call `TransferValidate` makes on unauthenticated wire bytes. |
 | `FuzzCSPVerifierNoPanic` | `token/core/zkatdlog/nogh/v1/transfer` | Raw CSP transfer-proof bytes through `CSPVerifier.Verify`. |
+| `FuzzRangeProofDeserializeNoPanic` | `token/core/zkatdlog/nogh/v1/crypto/rp/bulletproof` | Arbitrary bytes through BulletProof `RangeProof.Deserialize`/`Validate`/`Verify` against a fixed, valid public statement. |
+| `FuzzIPADeserializeNoPanic` | `token/core/zkatdlog/nogh/v1/crypto/rp/bulletproof` | The same chain for the standalone inner-product-argument (`IPA`) sub-proof. |
+| `FuzzCSPRangeProofDeserializeNoPanic` | `token/core/zkatdlog/nogh/v1/crypto/rp/csp` | Arbitrary bytes through CSP `RangeProof.Deserialize`/`Validate`/`Verify` against a fixed, valid public statement. |
 | `FuzzTokenDeserializeNoPanic` | `token/core/zkatdlog/nogh/v1/token` | Raw ledger-stored output bytes through `Token.Deserialize`. |
 | `FuzzMetadataDeserializeNoPanic` | `token/core/zkatdlog/nogh/v1/token` | Raw ledger-stored metadata bytes through `Metadata.Deserialize`. |
 | `FuzzPublicParamsDeserializeNoPanic` | `token/core/zkatdlog/nogh/v1/setup` | Raw ledger-stored public parameters through `NewPublicParamsFromBytes`, exercised by every validator/prover/verifier on startup and params update. |
 | `FuzzProofDeserializeNoPanic` | `token/core/zkatdlog/nogh/v1/crypto/upgrade` | Raw untrusted token-upgrade request bytes through `Proof.Deserialize`. |
+| `FuzzProcessCommTokenNoPanic` | `token/core/zkatdlog/nogh/v1/crypto/upgrade` | The commitment and opening carried by an upgrade request, through `Service.processCommToken` and the commitment arithmetic behind it. |
+
+#### Identity and wallets
+
+| Target | Package | What it fuzzes |
+| --- | --- | --- |
+| `FuzzParseNoPanic` | `token/services/identity/boolpolicy` | Policy strings through `Parse`, which must terminate within its length, nesting-depth and node-count caps. |
+| `FuzzPolicyIdentityDeserializeNoPanic` | `token/services/identity/boolpolicy` | Malformed ASN.1 through `PolicyIdentity.Deserialize`. |
+| `FuzzPolicySignatureFromBytesNoPanic` | `token/services/identity/boolpolicy` | Peer-supplied signature bytes through `PolicySignature.FromBytes`. |
+| `FuzzDeserializeAuditInfoNoPanic` | `token/services/identity/boolpolicy` | A policy identity and its wrapped audit info through the policy `AuditInfoDeserializer`, including nested policies and unknown member types. |
+| `FuzzMultiIdentityDeserializeNoPanic` | `token/services/identity/multisig` | Malformed ASN.1 through `MultiIdentity.Deserialize`, including its canonicality contract. |
+| `FuzzMultiSignatureFromBytesNoPanic` | `token/services/identity/multisig` | Peer-supplied signature bytes through `MultiSignature.FromBytes`. |
+| `FuzzDeserializeAuditInfoNoPanic` | `token/services/identity/idemix/crypto` | Malformed JSON audit-info bytes through the Idemix `DeserializeAuditInfo`. |
+| `FuzzDeserializeAuditInfoNoPanic` | `token/services/identity/idemixnym/nym` | Malformed JSON signer-info bytes through the Idemix pseudonym `DeserializeAuditInfo`. |
+| `FuzzVerifyOwnerNoPanic` | `token/services/identity/interop/htlc` | The raw owner field of a token being spent through `VerifyOwner` (typed-identity unmarshaller and embedded `htlc.Script` JSON). |
+| `FuzzMetadataClaimKeyCheckNoPanic` | `token/services/identity/interop/htlc` | An unlocking party's claim signature through `MetadataClaimKeyCheck`. |
+| `FuzzLongTermOwnerWalletRegisterRecipientNoPanic` | `token/services/identity/role` | Recipient data (typed-identity envelope, boolpolicy ASN.1, audit-info JSON) through `LongTermOwnerWallet.RegisterRecipient`. |
 | `FuzzRegisterRecipientIdentityStructuralGuard` | `token/services/identity/wallet` | A counterparty's identity and audit-info bytes through `Service.RegisterRecipientIdentity`, asserting the structural guard rejects exactly the out-of-bounds lengths and never panics. |
+
+#### Transaction, interop and NFT services
+
+| Target | Package | What it fuzzes |
+| --- | --- | --- |
+| `FuzzClaimVerifierVerifyNoPanic` | `token/services/interop/htlc` | A claim signature and the hash function/encoding read from the spent token's script through `ClaimVerifier.Verify`. |
+| `FuzzUnmarshalMetaNeverPanics` † | `token/services/ttx` | Arbitrary bytes through `UnmarshalMeta`. |
+| `FuzzCompositeRecipientValidationNeverPanics` † | `token/services/ttx` | Multisig and policy recipient data, node and recipient lists, and policy strings through the composite recipient validators. |
+| `FuzzStateAtNoPanic` | `token/services/nfttx` | Arbitrary output-type bytes through `OutputStream.StateAt`, which must never report a success it cannot back up. |
+
+#### Storage
+
+| Target | Package | What it fuzzes |
+| --- | --- | --- |
+| `FuzzGetTableNamesNoPanic` | `token/services/storage/db/sql/common` | Arbitrary network/channel/namespace triples through table-name construction, which must neither panic nor produce unsafe names. |
+| `FuzzKeysetFromRawNoPanic` | `token/services/storage/db/sql/query/pagination` | A serialized pagination token from an untrusted client through the keyset decoder and the pagination methods that follow. |
+| `FuzzCheckStoredTokenRequest` | `token/services/storage/integrity` | A transaction ID and stored token-request bytes through `CheckStoredTokenRequest`, checking that success implies the anchor matches the ID. |
+| `FuzzCheckTokenRequestActions` | `token/services/storage/integrity` | Stored token-request bytes through `CheckTokenRequestActions`. |
+| `FuzzNormalizeIDRoundTrip` | `token/services/storage/db/kvs/hashicorp` (separate module) | Composite keys mapped to a Vault path and back, checking the mapping is injective. |
+
+#### Network (Fabric and FabricX)
+
+| Target | Package | What it fuzzes |
+| --- | --- | --- |
+| `FuzzQueryTokensNoPanic` | `token/services/network/fabric/tcc` | The raw, caller-controlled argument of the `queryTokens` chaincode function. |
+| `FuzzQueryStatesLedgerReadsAreBounded` | `token/services/network/fabric/tcc` | Untrusted key lists through `QueryStates`, which must not panic or exceed `MaxQueryItems` ledger reads. |
+| `FuzzAreTokensSpentLedgerReadsAreBounded` | `token/services/network/fabric/tcc` | The same bound for `AreTokensSpent`, including the key-translator path when graph hiding is on. |
+| `FuzzQueryTokensLedgerReadsAreBounded` | `token/services/network/fabric/tcc` | The same bound for `QueryTokens`, which decodes an array of `token.ID` structs. |
+| `FuzzEndorserForThresholdRuleNoPanic` | `token/services/network/fabricx/endorsement` | Malformed `ThresholdRule` public keys, as returned by the FabricX `GetNamespacePolicies` RPC, through `endorserForThresholdRule`. |
+
+#### EVM driver (separate module)
+
+These targets live in the `x/token/services/network/evm` module, so run them from that
+directory (for example `cd x/token/services/network/evm && go test ./abi -run='^$' -fuzz='^FuzzDecodeBytes$'`).
+Package paths below are relative to that module root.
+
+| Target | Package | What it fuzzes |
+| --- | --- | --- |
+| `FuzzDecodeBytes` | `abi` | The ABI dynamic-bytes decoder over an EVM node's response. |
+| `FuzzDecodeBoolArray` | `abi` | The `bool[]` decoder used to read `areTokensSpent`. |
+| `FuzzDecodeUint64` | `abi` | The `uint64` decoder used for the public-parameters version; out-of-range values must be rejected, not truncated. |
+| `FuzzDecodeBytes32` | `abi` | The fixed-width decoder; a short response must never be read past its end. |
+| `FuzzHexToAddress` | `client` | The strict address parser. |
+| `FuzzHexToHash` | `client` | The hash parser used for transaction hashes and anchors. |
+| `FuzzBytesToAddress` | `client` | The right-aligning byte-to-address conversion on arbitrary-length input. |
+| `FuzzJSONLogToLog` | `client` | The `eth_getLogs` record decoder. |
+| `FuzzJSONReceiptToReceipt` | `client` | The `eth_getTransactionReceipt` record decoder, including nested logs. |
+| `FuzzParseHexQuantities` | `client` | The two JSON-RPC hex-quantity decoders (chain ID, fees, gas, nonce, block number, receipt status). |
+| `FuzzRecoverAddress` | `eip712` | The endorsement signature parser, fed by a remote endorser before it is trusted. |
+| `FuzzNewSignerFromBytes` | `eip712` | The private-key parser; a corrupt key file must be an error, not a panic. |
+| `FuzzHashStructNoPanic` | `eip712` | `HashStruct` (via `Digest`) over an arbitrary peer-supplied `StateDelta`. |
+| `FuzzEndorseResponseDecode` | `endorsement` | The JSON decode of an `EndorseResponse` plus the initiator-side checks run on it. |
+| `FuzzSetupDeltaBuild` | `endorsement` | `SetupDeltaFactory.Build` on public parameters and anchor taken from a remote `EndorseRequest`. |
+| `FuzzEnvelopeFromBytes` | `.` (module root) | The envelope wire decoder. |
+| `FuzzComputeAnchor` | `.` (module root) | Anchor derivation over a nonce and a peer-supplied creator identity. |
+| `FuzzAnchorFromTxID` | `keys` | The anchor decoder applied to a token request's `TxId` before the request is validated. |
+| `FuzzStateDeltaValidate` | `statedelta` | The JSON decode plus `Validate` of a peer's `StateDelta`. |
 
 ### Running the Seed Corpus
 
@@ -135,9 +247,10 @@ re-run the failing case as a normal test with `go test -run=<FuzzTestName>/<hash
 
 ### Nightly Fuzzing in CI
 
-`.github/workflows/nightly-fuzz.yml` runs every fuzz target above for up to `4h` each
-night (02:17 UTC) against `main`, as a `fail-fast: false` matrix so one crashing target
-never stops the others. It can also be triggered manually via `workflow_dispatch`, which
+`.github/workflows/nightly-fuzz.yml` runs 74 of the 76 fuzz targets above (every one not
+marked †) for up to `4h` each night (02:17 UTC) against `main`, as a `fail-fast: false`
+matrix so one crashing target never stops the others. The EVM and Vault targets run from
+their own module roots, set by the matrix entry's `dir` field. It can also be triggered manually via `workflow_dispatch`, which
 accepts a `fuzztime` input to shorten or lengthen the campaign.
 
 If a target finds a crashing or panicking input, the workflow:
