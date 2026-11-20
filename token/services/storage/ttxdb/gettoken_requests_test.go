@@ -83,6 +83,14 @@ func (s *getTokenRequestsStub) ClaimPendingTransactions(_ context.Context, _ dbd
 func (s *getTokenRequestsStub) ReleaseRecoveryClaim(_ context.Context, _ string, _ string, _ string) error {
 	panic("unexpected")
 }
+
+func (s *getTokenRequestsStub) RenewRecoveryClaim(_ context.Context, _ string, _ string, _ time.Duration) (bool, error) {
+	panic("unexpected")
+}
+
+func (s *getTokenRequestsStub) MarkRecoveryOrphan(_ context.Context, _ string, _ string, _ string) (bool, error) {
+	panic("unexpected")
+}
 func (s *getTokenRequestsStub) Notifier() (dbdriver.TransactionNotifier, error) { panic("unexpected") }
 func (s *getTokenRequestsStub) AddTransactionEndorsementAck(_ context.Context, _ string, _ token.Identity, _ []byte) error {
 	panic("unexpected")

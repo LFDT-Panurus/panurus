@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
-	"github.com/LFDT-Panurus/panurus/token/services/storage"
 	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
 	"github.com/google/uuid"
@@ -72,11 +71,17 @@ type Storage interface {
 	AcquireRecoveryLeadership(ctx context.Context) (Leadership, bool, error)
 	ClaimPendingTransactions(ctx context.Context, olderThan time.Duration, leaseDuration time.Duration, limit int, owner string) ([]*ttxdb.RecoveryClaim, error)
 	ReleaseRecoveryClaim(ctx context.Context, txID string, owner string, message string) error
-	// SetStatus updates a transaction's status row. Used by the recovery loop to
-	// permanently mark orphan transactions (NotFound past grace period) as Orphan
-	// so they exit the eligible scan range and stop blocking the queue head,
-	// while remaining distinguishable from txs the ledger actively rejected.
-	SetStatus(ctx context.Context, txID string, status storage.TxStatus, message string) error
+	// RenewRecoveryClaim extends the lease of owner's claim on txID, if owner still holds it
+	// and the transaction is still Pending, and reports whether it did. It keeps an attempt
+	// that outlived its TransactionTimeout claimed for as long as it is still running, see
+	// renewClaimUntilStopped.
+	RenewRecoveryClaim(ctx context.Context, txID string, owner string, leaseDuration time.Duration) (bool, error)
+	// MarkRecoveryOrphan permanently marks a transaction that never reached the ledger
+	// (NotFound past the grace period) as Orphan, so it exits the eligible scan range and
+	// stops blocking the queue head, while remaining distinguishable from txs the ledger
+	// actively rejected. It only does so if the transaction is still Pending and owner still
+	// holds its claim, and reports whether it did: see finishRecovery.
+	MarkRecoveryOrphan(ctx context.Context, txID string, owner string, message string) (bool, error)
 }
 
 //go:generate counterfeiter -o mock/handler.go -fake-name Handler . Handler
@@ -162,7 +167,9 @@ type Manager struct {
 	// abandoned goroutine that outlives Stop() is already documented as
 	// running unsupervised past shutdown (see finishAbandonedRecovery), and
 	// this instance can no longer productively use leadership once its sweep
-	// loop has exited, so holding onto it would only block live peers.
+	// loop has exited, so holding onto it would only block live peers. From
+	// then on, that goroutine's claim is kept alive by renewClaimUntilStopped
+	// instead of by this instance's sweeps.
 	leadership Leadership
 }
 
@@ -466,8 +473,7 @@ func (m *Manager) recoverTransactions(ctx context.Context) error {
 	// off m.config.InstanceID later: Start() rewrites that field on every
 	// restart (see Start), and a finishAbandonedRecovery goroutine from this
 	// sweep can still be running after a later Start() has already done so,
-	// which would release the claim under the wrong owner. Same hazard, same
-	// fix shape as sweepCtx on finishAbandonedRecovery.
+	// which would release the claim under the wrong owner.
 	ownerID := m.config.InstanceID
 
 	m.logger.Debugf("claiming pending transactions older than %s (batch size: %d, lease duration: %s, owner: %s)",
@@ -700,8 +706,9 @@ func (m *Manager) callHandler(ctx context.Context, ownerID string, txID string, 
 			return true, result
 		}
 
-		//nolint:gosec // G118: deliberate, not an oversight, finishAbandonedRecovery's doc comment explains why it cannot use ctx or m.ctx for the release call itself; ctx is passed only as a stable snapshot to check against later.
-		go m.finishAbandonedRecovery(ctx, ownerID, txID, storedAt, resultCh, cancel)
+		stopRenewal := m.renewClaimUntilStopped(ownerID, txID, m.config.LeaseDuration)
+		//nolint:gosec // G118: deliberate, not an oversight, finishAbandonedRecovery's doc comment explains why it cannot use ctx or m.ctx for the release call itself.
+		go m.finishAbandonedRecovery(ownerID, txID, storedAt, resultCh, cancel, stopRenewal)
 
 		return false, recoverCtx.Err()
 	}
@@ -747,36 +754,88 @@ func preferResult(resultCh <-chan error) (ok bool, err error) {
 // detached goroutine, the same accepted leak shape as the Recover call it is
 // finishing up after.
 //
-// sweepCtx is the context callHandler was itself called with, i.e. the
-// specific sweep's ctx at the moment this attempt was abandoned, not
-// m.ctx read live, which is a Manager field a later Start() can reassign
-// (see Start) while this detached goroutine is still running, making a live
-// read of m.ctx a data race. A context.Context is safe for concurrent use by
-// design, and this specific one does not change once captured: it only ever
-// transitions from not-done to done, so reading its Err() here needs no
-// further synchronization. sweepCtx.Err() being non-nil records whether Stop()
-// had already run, for this lifecycle, before this call finally returned,
-// i.e. whether this instance no longer necessarily held recovery leadership
-// continuously on txID's behalf (Stop always releases leadership regardless
-// of inFlight, see the leadership field). finishRecovery uses that to decide
-// whether the Orphan-promotion heuristic is still safe to apply (round 8
-// review, finding 3).
+// While it waits, the claim is kept alive by renewClaimUntilStopped, which callHandler
+// started for this attempt and which stopRenewal ends. The renewal does not depend on this
+// instance still holding leadership or still running sweeps, so the claim survives a Stop()
+// that happens while the attempt is still running, and no peer can pick the row up and run
+// a second, concurrent Recover for it in the meantime. It is stopped before the claim is
+// released, while the lease still has most of a renewal interval left.
 //
 // ownerID is likewise captured by callHandler from m.config.InstanceID at
 // claim time rather than read live here, for the identical reason: Start()
 // rewrites that field on every restart, and this goroutine can still be
 // running after a later Start() has already done so.
-func (m *Manager) finishAbandonedRecovery(sweepCtx context.Context, ownerID string, txID string, storedAt time.Time, resultCh <-chan error, cancel context.CancelFunc) {
+func (m *Manager) finishAbandonedRecovery(ownerID string, txID string, storedAt time.Time, resultCh <-chan error, cancel context.CancelFunc, stopRenewal func()) {
 	err := <-resultCh
 	cancel()
-	stoppedBeforeReturn := sweepCtx.Err() != nil
+	stopRenewal()
 	m.logger.Infof("recovery: tx [%s] finished after previously timing out; finalizing now", txID)
 
-	if releaseErr := m.finishRecovery(context.Background(), txID, storedAt, err, !stoppedBeforeReturn, ownerID); releaseErr != nil {
+	if releaseErr := m.finishRecovery(context.Background(), txID, storedAt, err, ownerID); releaseErr != nil {
 		m.logger.Warnf("recovery: abandoned attempt for transaction [%s] finished with an error: %v", txID, releaseErr)
 	}
 
 	m.clearInFlight(txID)
+}
+
+// renewClaimUntilStopped keeps ownerID's claim on txID alive, for an attempt that outlived
+// its TransactionTimeout, until the returned function is called. The returned function
+// waits for the renewal to have stopped.
+//
+// Until now the claim was only renewed as a side effect of this instance's own sweeps
+// reclaiming the still-Pending row, which is why runSweep holds leadership while anything is
+// in flight. That stops working once Stop() runs: leadership is released, no sweep runs, the
+// lease lapses, and a peer can claim the row and start a second Recover for it while this
+// attempt is still running. This renews the lease directly instead, every third of
+// leaseDuration and once right away, since the attempt has already used up part of the lease
+// it was claimed with.
+//
+// It stops on its own once a renewal reports the claim is gone (released, taken over, or the
+// transaction left Pending): there is nothing left to protect then. A renewal that fails is
+// retried on the next tick. An attempt that never returns keeps its claim for as long as the
+// process lives, which is what the sweeps' reclaiming already did while the manager was
+// running; see #2317 for giving such a transaction a terminal status.
+func (m *Manager) renewClaimUntilStopped(ownerID string, txID string, leaseDuration time.Duration) func() {
+	interval := leaseDuration / 3
+	stop := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for m.renewClaim(ownerID, txID, leaseDuration, interval) {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+
+	return func() {
+		close(stop)
+		<-stopped
+	}
+}
+
+// renewClaim renews ownerID's claim on txID once, bounded by timeout, and reports whether it
+// is worth trying again.
+func (m *Manager) renewClaim(ownerID string, txID string, leaseDuration time.Duration, timeout time.Duration) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	renewed, err := m.storage.RenewRecoveryClaim(ctx, txID, ownerID, leaseDuration)
+	if err != nil {
+		m.logger.Warnf("recovery: failed to renew the claim on tx [%s] while its attempt is still running, retrying: %v", txID, err)
+
+		return true
+	}
+	if !renewed {
+		m.logger.Infof("recovery: no longer holding the claim on tx [%s], stop renewing it", txID)
+
+		return false
+	}
+
+	return true
 }
 
 // tryMarkInFlight reports whether txID was not already in flight, marking it
@@ -920,7 +979,7 @@ func (m *Manager) recoverTransaction(ctx context.Context, ownerID string, txID s
 		m.clearTimeoutCount(txID)
 	}
 
-	return m.finishRecovery(ctx, txID, storedAt, err, true, ownerID)
+	return m.finishRecovery(ctx, txID, storedAt, err, ownerID)
 }
 
 // finishRecovery applies the Orphan-promotion policy and releases the claim
@@ -941,41 +1000,21 @@ func (m *Manager) recoverTransaction(ctx context.Context, ownerID string, txID s
 // operators and downstream tooling can tell broadcast losses apart from txs
 // the ledger actively rejected.
 //
-// allowOrphanPromotion gates that write. The synchronous call site always
-// passes true: it runs while this instance still holds recovery leadership
-// for the sweep in progress, so nothing else can have raced ahead on txID.
-// finishAbandonedRecovery passes false once it observes the sweep's own ctx
-// already cancelled (Stop() ran before this attempt finally returned): Stop always
-// releases leadership regardless of inFlight (see the leadership field), so a
-// live peer could since have legitimately reclaimed and resolved txID, to
-// say Confirmed, while this attempt was still finishing in the background.
-// SetStatus is unconditional and owner-blind, unlike the owner-scoped release
-// below it, so an unguarded write here could stomp that outcome with a stale
-// Orphan (round 8 review, finding 3). Skipping the promotion in that case
-// still releases the claim and logs the real outcome; a true fix needs an
-// owner/status-scoped CAS at the SQL layer, filed as a follow-up rather than
-// widening this PR into the storage driver.
+// The promotion only happens if the transaction is still Pending and ownerID still holds its
+// claim, checked and written in one statement (MarkRecoveryOrphan). That matters for an
+// attempt finished by finishAbandonedRecovery after Stop() released leadership: a live peer
+// could since have claimed and resolved txID, to say Confirmed, while this attempt was still
+// finishing in the background, and an unconditional write would stomp that outcome with a
+// stale Orphan. Such an attempt used to skip the promotion altogether, leaving a genuinely
+// orphaned transaction Pending; now it is promoted exactly when nothing else touched it.
 //
 // ownerID is the InstanceID that made the claim, captured by the caller at
 // claim time rather than read live off m.config.InstanceID here: Start()
 // rewrites that field on every restart (see Start), and finishAbandonedRecovery's
 // caller can run long after a later Start() has already done so, which would
-// release the claim under the wrong owner. See sweepCtx's doc comment on
-// finishAbandonedRecovery for the identical hazard with m.ctx.
-func (m *Manager) finishRecovery(ctx context.Context, txID string, storedAt time.Time, err error, allowOrphanPromotion bool, ownerID string) error {
-	markedOrphan := false
-	if allowOrphanPromotion && err != nil && m.config.NotFoundGracePeriod > 0 && !storedAt.IsZero() && isNotFoundError(err) {
-		age := time.Since(storedAt)
-		if age > m.config.NotFoundGracePeriod {
-			orphanMsg := fmt.Sprintf("tx never reached ledger (NotFound after %v, grace=%v)", age.Truncate(time.Second), m.config.NotFoundGracePeriod)
-			m.logger.Warnf("recovery: marking tx [%s] as Orphan: %s", txID, orphanMsg)
-			if setErr := m.storage.SetStatus(ctx, txID, storage.Orphan, orphanMsg); setErr != nil {
-				m.logger.Errorf("recovery: failed to mark tx [%s] Orphan: %v", txID, setErr)
-			} else {
-				markedOrphan = true
-			}
-		}
-	}
+// release the claim under the wrong owner.
+func (m *Manager) finishRecovery(ctx context.Context, txID string, storedAt time.Time, err error, ownerID string) error {
+	markedOrphan := m.promoteToOrphan(ctx, txID, storedAt, err, ownerID)
 
 	// Always release the claim with appropriate message
 	var message string
@@ -1006,6 +1045,30 @@ func (m *Manager) finishRecovery(ctx context.Context, txID string, storedAt time
 	m.logger.Infof("successfully recovered transaction [%s]", txID)
 
 	return nil
+}
+
+// promoteToOrphan marks txID Orphan if err says it is not on the ledger and it was stored
+// more than NotFoundGracePeriod ago, and reports whether it did. See finishRecovery.
+func (m *Manager) promoteToOrphan(ctx context.Context, txID string, storedAt time.Time, err error, ownerID string) bool {
+	if err == nil || m.config.NotFoundGracePeriod <= 0 || storedAt.IsZero() || !isNotFoundError(err) {
+		return false
+	}
+	age := time.Since(storedAt)
+	if age <= m.config.NotFoundGracePeriod {
+		return false
+	}
+
+	orphanMsg := fmt.Sprintf("tx never reached ledger (NotFound after %v, grace=%v)", age.Truncate(time.Second), m.config.NotFoundGracePeriod)
+	m.logger.Warnf("recovery: marking tx [%s] as Orphan: %s", txID, orphanMsg)
+	marked, markErr := m.storage.MarkRecoveryOrphan(ctx, txID, ownerID, orphanMsg)
+	switch {
+	case markErr != nil:
+		m.logger.Errorf("recovery: failed to mark tx [%s] Orphan: %v", txID, markErr)
+	case !marked:
+		m.logger.Infof("recovery: not marking tx [%s] Orphan: it is no longer Pending, or no longer claimed by [%s]", txID, ownerID)
+	}
+
+	return marked && markErr == nil
 }
 
 // isNotFoundError reports whether err is a "transaction not found on ledger"

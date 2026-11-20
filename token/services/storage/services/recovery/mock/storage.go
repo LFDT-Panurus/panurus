@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/LFDT-Panurus/panurus/token/services/storage"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/services/recovery"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
 )
@@ -44,6 +43,22 @@ type Storage struct {
 		result1 []*ttxdb.RecoveryClaim
 		result2 error
 	}
+	MarkRecoveryOrphanStub        func(context.Context, string, string, string) (bool, error)
+	markRecoveryOrphanMutex       sync.RWMutex
+	markRecoveryOrphanArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+		arg4 string
+	}
+	markRecoveryOrphanReturns struct {
+		result1 bool
+		result2 error
+	}
+	markRecoveryOrphanReturnsOnCall map[int]struct {
+		result1 bool
+		result2 error
+	}
 	ReleaseRecoveryClaimStub        func(context.Context, string, string, string) error
 	releaseRecoveryClaimMutex       sync.RWMutex
 	releaseRecoveryClaimArgsForCall []struct {
@@ -58,19 +73,21 @@ type Storage struct {
 	releaseRecoveryClaimReturnsOnCall map[int]struct {
 		result1 error
 	}
-	SetStatusStub        func(context.Context, string, storage.TxStatus, string) error
-	setStatusMutex       sync.RWMutex
-	setStatusArgsForCall []struct {
+	RenewRecoveryClaimStub        func(context.Context, string, string, time.Duration) (bool, error)
+	renewRecoveryClaimMutex       sync.RWMutex
+	renewRecoveryClaimArgsForCall []struct {
 		arg1 context.Context
 		arg2 string
-		arg3 storage.TxStatus
-		arg4 string
+		arg3 string
+		arg4 time.Duration
 	}
-	setStatusReturns struct {
-		result1 error
+	renewRecoveryClaimReturns struct {
+		result1 bool
+		result2 error
 	}
-	setStatusReturnsOnCall map[int]struct {
-		result1 error
+	renewRecoveryClaimReturnsOnCall map[int]struct {
+		result1 bool
+		result2 error
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
@@ -211,6 +228,73 @@ func (fake *Storage) ClaimPendingTransactionsReturnsOnCall(i int, result1 []*ttx
 	}{result1, result2}
 }
 
+func (fake *Storage) MarkRecoveryOrphan(arg1 context.Context, arg2 string, arg3 string, arg4 string) (bool, error) {
+	fake.markRecoveryOrphanMutex.Lock()
+	ret, specificReturn := fake.markRecoveryOrphanReturnsOnCall[len(fake.markRecoveryOrphanArgsForCall)]
+	fake.markRecoveryOrphanArgsForCall = append(fake.markRecoveryOrphanArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+		arg4 string
+	}{arg1, arg2, arg3, arg4})
+	stub := fake.MarkRecoveryOrphanStub
+	fakeReturns := fake.markRecoveryOrphanReturns
+	fake.recordInvocation("MarkRecoveryOrphan", []interface{}{arg1, arg2, arg3, arg4})
+	fake.markRecoveryOrphanMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3, arg4)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *Storage) MarkRecoveryOrphanCallCount() int {
+	fake.markRecoveryOrphanMutex.RLock()
+	defer fake.markRecoveryOrphanMutex.RUnlock()
+	return len(fake.markRecoveryOrphanArgsForCall)
+}
+
+func (fake *Storage) MarkRecoveryOrphanCalls(stub func(context.Context, string, string, string) (bool, error)) {
+	fake.markRecoveryOrphanMutex.Lock()
+	defer fake.markRecoveryOrphanMutex.Unlock()
+	fake.MarkRecoveryOrphanStub = stub
+}
+
+func (fake *Storage) MarkRecoveryOrphanArgsForCall(i int) (context.Context, string, string, string) {
+	fake.markRecoveryOrphanMutex.RLock()
+	defer fake.markRecoveryOrphanMutex.RUnlock()
+	argsForCall := fake.markRecoveryOrphanArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
+}
+
+func (fake *Storage) MarkRecoveryOrphanReturns(result1 bool, result2 error) {
+	fake.markRecoveryOrphanMutex.Lock()
+	defer fake.markRecoveryOrphanMutex.Unlock()
+	fake.MarkRecoveryOrphanStub = nil
+	fake.markRecoveryOrphanReturns = struct {
+		result1 bool
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *Storage) MarkRecoveryOrphanReturnsOnCall(i int, result1 bool, result2 error) {
+	fake.markRecoveryOrphanMutex.Lock()
+	defer fake.markRecoveryOrphanMutex.Unlock()
+	fake.MarkRecoveryOrphanStub = nil
+	if fake.markRecoveryOrphanReturnsOnCall == nil {
+		fake.markRecoveryOrphanReturnsOnCall = make(map[int]struct {
+			result1 bool
+			result2 error
+		})
+	}
+	fake.markRecoveryOrphanReturnsOnCall[i] = struct {
+		result1 bool
+		result2 error
+	}{result1, result2}
+}
+
 func (fake *Storage) ReleaseRecoveryClaim(arg1 context.Context, arg2 string, arg3 string, arg4 string) error {
 	fake.releaseRecoveryClaimMutex.Lock()
 	ret, specificReturn := fake.releaseRecoveryClaimReturnsOnCall[len(fake.releaseRecoveryClaimArgsForCall)]
@@ -275,68 +359,71 @@ func (fake *Storage) ReleaseRecoveryClaimReturnsOnCall(i int, result1 error) {
 	}{result1}
 }
 
-func (fake *Storage) SetStatus(arg1 context.Context, arg2 string, arg3 storage.TxStatus, arg4 string) error {
-	fake.setStatusMutex.Lock()
-	ret, specificReturn := fake.setStatusReturnsOnCall[len(fake.setStatusArgsForCall)]
-	fake.setStatusArgsForCall = append(fake.setStatusArgsForCall, struct {
+func (fake *Storage) RenewRecoveryClaim(arg1 context.Context, arg2 string, arg3 string, arg4 time.Duration) (bool, error) {
+	fake.renewRecoveryClaimMutex.Lock()
+	ret, specificReturn := fake.renewRecoveryClaimReturnsOnCall[len(fake.renewRecoveryClaimArgsForCall)]
+	fake.renewRecoveryClaimArgsForCall = append(fake.renewRecoveryClaimArgsForCall, struct {
 		arg1 context.Context
 		arg2 string
-		arg3 storage.TxStatus
-		arg4 string
+		arg3 string
+		arg4 time.Duration
 	}{arg1, arg2, arg3, arg4})
-	stub := fake.SetStatusStub
-	fakeReturns := fake.setStatusReturns
-	fake.recordInvocation("SetStatus", []interface{}{arg1, arg2, arg3, arg4})
-	fake.setStatusMutex.Unlock()
+	stub := fake.RenewRecoveryClaimStub
+	fakeReturns := fake.renewRecoveryClaimReturns
+	fake.recordInvocation("RenewRecoveryClaim", []interface{}{arg1, arg2, arg3, arg4})
+	fake.renewRecoveryClaimMutex.Unlock()
 	if stub != nil {
 		return stub(arg1, arg2, arg3, arg4)
 	}
 	if specificReturn {
-		return ret.result1
+		return ret.result1, ret.result2
 	}
-	return fakeReturns.result1
+	return fakeReturns.result1, fakeReturns.result2
 }
 
-func (fake *Storage) SetStatusCallCount() int {
-	fake.setStatusMutex.RLock()
-	defer fake.setStatusMutex.RUnlock()
-	return len(fake.setStatusArgsForCall)
+func (fake *Storage) RenewRecoveryClaimCallCount() int {
+	fake.renewRecoveryClaimMutex.RLock()
+	defer fake.renewRecoveryClaimMutex.RUnlock()
+	return len(fake.renewRecoveryClaimArgsForCall)
 }
 
-func (fake *Storage) SetStatusCalls(stub func(context.Context, string, storage.TxStatus, string) error) {
-	fake.setStatusMutex.Lock()
-	defer fake.setStatusMutex.Unlock()
-	fake.SetStatusStub = stub
+func (fake *Storage) RenewRecoveryClaimCalls(stub func(context.Context, string, string, time.Duration) (bool, error)) {
+	fake.renewRecoveryClaimMutex.Lock()
+	defer fake.renewRecoveryClaimMutex.Unlock()
+	fake.RenewRecoveryClaimStub = stub
 }
 
-func (fake *Storage) SetStatusArgsForCall(i int) (context.Context, string, storage.TxStatus, string) {
-	fake.setStatusMutex.RLock()
-	defer fake.setStatusMutex.RUnlock()
-	argsForCall := fake.setStatusArgsForCall[i]
+func (fake *Storage) RenewRecoveryClaimArgsForCall(i int) (context.Context, string, string, time.Duration) {
+	fake.renewRecoveryClaimMutex.RLock()
+	defer fake.renewRecoveryClaimMutex.RUnlock()
+	argsForCall := fake.renewRecoveryClaimArgsForCall[i]
 	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
 }
 
-func (fake *Storage) SetStatusReturns(result1 error) {
-	fake.setStatusMutex.Lock()
-	defer fake.setStatusMutex.Unlock()
-	fake.SetStatusStub = nil
-	fake.setStatusReturns = struct {
-		result1 error
-	}{result1}
+func (fake *Storage) RenewRecoveryClaimReturns(result1 bool, result2 error) {
+	fake.renewRecoveryClaimMutex.Lock()
+	defer fake.renewRecoveryClaimMutex.Unlock()
+	fake.RenewRecoveryClaimStub = nil
+	fake.renewRecoveryClaimReturns = struct {
+		result1 bool
+		result2 error
+	}{result1, result2}
 }
 
-func (fake *Storage) SetStatusReturnsOnCall(i int, result1 error) {
-	fake.setStatusMutex.Lock()
-	defer fake.setStatusMutex.Unlock()
-	fake.SetStatusStub = nil
-	if fake.setStatusReturnsOnCall == nil {
-		fake.setStatusReturnsOnCall = make(map[int]struct {
-			result1 error
+func (fake *Storage) RenewRecoveryClaimReturnsOnCall(i int, result1 bool, result2 error) {
+	fake.renewRecoveryClaimMutex.Lock()
+	defer fake.renewRecoveryClaimMutex.Unlock()
+	fake.RenewRecoveryClaimStub = nil
+	if fake.renewRecoveryClaimReturnsOnCall == nil {
+		fake.renewRecoveryClaimReturnsOnCall = make(map[int]struct {
+			result1 bool
+			result2 error
 		})
 	}
-	fake.setStatusReturnsOnCall[i] = struct {
-		result1 error
-	}{result1}
+	fake.renewRecoveryClaimReturnsOnCall[i] = struct {
+		result1 bool
+		result2 error
+	}{result1, result2}
 }
 
 func (fake *Storage) Invocations() map[string][][]interface{} {

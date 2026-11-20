@@ -692,4 +692,6 @@ type transactionDB interface {
 	AcquireRecoveryLeadership(ctx context.Context) (recovery2.Leadership, bool, error)
 	ClaimPendingTransactions(ctx context.Context, olderThan time.Duration, leaseDuration time.Duration, limit int, owner string) ([]*ttxdb.RecoveryClaim, error)
 	ReleaseRecoveryClaim(ctx context.Context, txID string, owner string, message string) error
+	RenewRecoveryClaim(ctx context.Context, txID string, owner string, leaseDuration time.Duration) (bool, error)
+	MarkRecoveryOrphan(ctx context.Context, txID string, owner string, message string) (bool, error)
 }

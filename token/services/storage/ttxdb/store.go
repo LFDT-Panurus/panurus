@@ -500,6 +500,28 @@ func (d *StoreService) ReleaseRecoveryClaim(ctx context.Context, txID string, ow
 	return nil
 }
 
+// RenewRecoveryClaim extends the lease of owner's recovery claim on txID, if it still holds
+// it and the transaction is still Pending, and reports whether it did.
+func (d *StoreService) RenewRecoveryClaim(ctx context.Context, txID string, owner string, leaseDuration time.Duration) (bool, error) {
+	renewed, err := d.db.RenewRecoveryClaim(ctx, txID, owner, leaseDuration)
+	if err != nil {
+		return false, errors.Wrapf(err, "failed to renew recovery claim for tx [%s]", txID)
+	}
+
+	return renewed, nil
+}
+
+// MarkRecoveryOrphan sets txID to Orphan with message, if it is still Pending and owner
+// still holds its recovery claim, and reports whether it did.
+func (d *StoreService) MarkRecoveryOrphan(ctx context.Context, txID string, owner string, message string) (bool, error) {
+	marked, err := d.db.MarkRecoveryOrphan(ctx, txID, owner, message)
+	if err != nil {
+		return false, errors.Wrapf(err, "failed to mark tx [%s] Orphan", txID)
+	}
+
+	return marked, nil
+}
+
 // TransactionRecords is a pure function that converts an AuditRecord for storage in the database.
 func TransactionRecords(ctx context.Context, record *token.AuditRecord, timestamp time.Time) (txs []TransactionRecord, err error) {
 	inputs := record.Inputs

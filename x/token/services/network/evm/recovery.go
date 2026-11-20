@@ -33,6 +33,7 @@ type recoveryStore interface {
 	recovery.Storage
 	NewTransaction() (dbdriver.TransactionStoreTransaction, error)
 	GetTokenRequest(ctx context.Context, txID string) ([]byte, error)
+	SetStatus(ctx context.Context, txID string, status storage.TxStatus, message string) error
 	NotifyStatus(ctx context.Context, txID string, status storage.TxStatus, message string)
 	// Transactions is how settledNetwork reads a row's age. Both stores alias the same record and
 	// pagination types, so one signature serves both.
