@@ -11,9 +11,12 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/LFDT-Panurus/panurus/cmd/tokengen/cobra/pp/common"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
+	ppencoding "github.com/LFDT-Panurus/panurus/token/core/common/encoding/pp"
 	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
@@ -33,8 +36,12 @@ type UpdateArgs struct {
 	Issuers []string
 	// Auditors is the list of auditor MSP directories containing the corresponding auditor certificate
 	Auditors []string
-	// Version allows the caller of tokengen to override the version number put in the public params
+	// Version allows the caller of tokengen to override the version number put in the public params.
+	// If zero, the version stored in the input file is kept.
 	Version uint32
+	// Extras is the list of extra data entries in key=value format, where value is the path to a file
+	// containing the data to load and store in the key
+	Extras []string
 }
 
 // UpdateCmd returns the Cobra Command for updating public parameters.
@@ -45,7 +52,7 @@ func UpdateCmd() *cobra.Command {
 	flags.StringVarP(&OutputDir, "output", "o", ".", "output folder")
 	flags.StringSliceVarP(&Auditors, "auditors", "a", nil, "list of auditor MSP directories containing the corresponding auditor certificate")
 	flags.StringSliceVarP(&Issuers, "issuers", "s", nil, "list of issuer MSP directories containing the corresponding issuer certificate")
-	flags.Uint32VarP(&Version, "version", "v", 0, "allows the caller of tokengen to override the version number put in the public params")
+	flags.Uint32VarP(&Version, "version", "v", 0, "allows the caller of tokengen to override the version number put in the public params; if 0, the version of the input file is kept")
 	flags.StringArrayVarP(&Extras, "extra", "x", []string{}, "extra data in key=value format, where is the path to a file containing the data to load and store in the key")
 
 	return cmd
@@ -67,6 +74,7 @@ var cmd = &cobra.Command{
 			Issuers:   Issuers,
 			Auditors:  Auditors,
 			Version:   Version,
+			Extras:    Extras,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to generate public parameters")
@@ -77,10 +85,10 @@ var cmd = &cobra.Command{
 }
 
 // Update updates the public parameters with new certificates.
-func Update(args *UpdateArgs) error {
+func Update(args *UpdateArgs) (err error) {
 	defer func() {
 		if e := recover(); e != nil {
-			fmt.Printf("caught error [%s]\n", e)
+			err = errors.Errorf("failed updating public parameters: %v", e)
 		}
 	}()
 	oldraw, err := os.ReadFile(args.InputFile)
@@ -88,8 +96,17 @@ func Update(args *UpdateArgs) error {
 		return errors.Wrapf(err, "failed to read input file at [%s]", args.InputFile)
 	}
 
-	pp, err := v1.NewPublicParamsFromBytes(oldraw, v1.DLogNoGHDriverName, v1.ProtocolV1)
+	container, err := ppencoding.Unmarshal(oldraw)
 	if err != nil {
+		return errors.Wrapf(err, "failed to deserialize public parameters from [%s]", args.InputFile)
+	}
+	inputVersion, err := driverVersion(container.Identifier)
+	if err != nil {
+		return errors.Wrapf(err, "failed to read driver version from [%s]", args.InputFile)
+	}
+	// the identifier, driver name included, is checked against the expected one here
+	pp := &v1.PublicParams{DriverName: v1.DLogNoGHDriverName, DriverVersion: inputVersion}
+	if err := pp.DeserializeContainer(container); err != nil {
 		return errors.Wrapf(err, "failed to unmarshal pp from [%s]", args.InputFile)
 	}
 	if err := pp.Validate(); err != nil {
@@ -110,15 +127,15 @@ func Update(args *UpdateArgs) error {
 		return err
 	}
 
-	// update version, if needed
-	ver := v1.ProtocolV1
+	// update version, if needed; otherwise keep the version of the input file
+	ver := inputVersion
 	if args.Version != 0 {
 		ver = driver.TokenDriverVersion(args.Version)
 	}
 	pp.DriverVersion = ver
 
 	// update extras, if needed
-	extraData, err := common.LoadExtras(Extras)
+	extraData, err := common.LoadExtras(args.Extras)
 	if err != nil {
 		return errors.Wrap(err, "failed loading extras")
 	}
@@ -134,7 +151,7 @@ func Update(args *UpdateArgs) error {
 		args.OutputDir,
 		fileName,
 	)
-	if _, err := os.Stat(path); err == nil {
+	if _, err := os.Stat(path); err == nil { //nolint:gosec // path is the output folder given by the caller joined with a generated file name
 		return errors.Errorf("%s exists in current directory. Specify another output folder with -o", fileName)
 	}
 	if err := os.WriteFile(path, raw, 0755); err != nil { //nolint:gosec
@@ -142,4 +159,20 @@ func Update(args *UpdateArgs) error {
 	}
 
 	return nil
+}
+
+// driverVersion returns the driver version encoded in a public parameters identifier of the form
+// <driver name>.v<driver version>. The driver name is not checked here: it is checked, together with
+// the rest of the identifier, when the public parameters are deserialized.
+func driverVersion(identifier string) (driver.TokenDriverVersion, error) {
+	i := strings.LastIndex(identifier, ".v")
+	if i < 0 {
+		return 0, errors.Errorf("invalid driver version in identifier [%s]", identifier)
+	}
+	ver, err := strconv.ParseUint(identifier[i+len(".v"):], 10, 32)
+	if err != nil {
+		return 0, errors.Wrapf(err, "invalid driver version in identifier [%s]", identifier)
+	}
+
+	return driver.TokenDriverVersion(ver), nil
 }

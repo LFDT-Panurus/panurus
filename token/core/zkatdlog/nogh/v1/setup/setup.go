@@ -509,6 +509,16 @@ func (p *PublicParams) Deserialize(raw []byte) error {
 	if err != nil {
 		return errors.Wrapf(err, "failed to deserialize public parameters")
 	}
+
+	return p.DeserializeContainer(container)
+}
+
+// DeserializeContainer populates the public parameters from an already unmarshalled container.
+// The container identifier must match the driver name and version set on the public parameters.
+func (p *PublicParams) DeserializeContainer(container *pp2.PublicParameters) error {
+	if container == nil {
+		return errors.New("nil public parameters container")
+	}
 	expectedID := string(core.DriverIdentifier(p.DriverName, p.DriverVersion))
 	if container.Identifier != expectedID {
 		return errors.Errorf(
