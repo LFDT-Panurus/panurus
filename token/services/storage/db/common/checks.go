@@ -439,39 +439,43 @@ func (a *DefaultCheckers) CheckTransactions(ctx context.Context) ([]Finding, err
 // here rather than reported several times).
 //
 // A single unlimited query is rejected by the storage layer, so this pages
-// through the whole set using offset pagination and stops once a page comes
-// back short. It pages at the configured max page size so reads stay within
-// the cap the guard layer enforces; when the cap is disabled (0) it falls
-// back to a built-in default.
+// through the whole set and stops once a page comes back short. It pages at the
+// configured max page size so reads stay within the cap the guard layer
+// enforces; when the cap is disabled (0) it falls back to a built-in default.
+//
+// Each page is read with a keyset cursor (QueryTransactionsParams.After) on the
+// last transaction of the page before, not with an offset. The walk can run for a
+// long time on a large node while new transactions are written, and an offset
+// counts rows: a row inserted ahead of the walk's position shifts every row after
+// it, so a transaction at a page boundary would be read twice or skipped for that
+// sweep. A cursor names a transaction instead, and stays put.
 func (a *DefaultCheckers) walkTransactions(ctx context.Context, tmsID token.TMSID, params driver.QueryTransactionsParams, fn func(*driver.TransactionRecord) error) error {
 	pageSize := a.maxPageSize
 	if pageSize <= 0 {
 		pageSize = transactionsCheckPageSize
 	}
-	var page driver2.Pagination
 	page, err := pagination.Offset(0, pageSize)
 	if err != nil {
 		return errors.WithMessagef(err, "failed to create pagination [%s]", tmsID)
 	}
 
 	// QueryTransactions orders by (stored_at, tx_id), so every movement row of a
-	// given transaction is contiguous across the whole walk, including across a
-	// page boundary. That makes "is this the same transaction as the row right
-	// before it" enough to dedupe, without tracking every distinct tx_id seen
-	// so far: a set that would otherwise grow with total ledger history when
-	// TransactionWindow is unset.
+	// given transaction is contiguous within a page. That makes "is this the same
+	// transaction as the row right before it" enough to dedupe, without tracking
+	// every distinct tx_id seen so far: a set that would otherwise grow with total
+	// ledger history when TransactionWindow is unset. Across pages the cursor does
+	// the same job, since the next page starts strictly after the last transaction
+	// of this one.
 	dedup := &txDeduplicator{}
 	for {
-		count, err := a.walkTransactionsPage(ctx, tmsID, params, page, dedup, fn)
+		count, last, err := a.walkTransactionsPage(ctx, tmsID, params, page, dedup, fn)
 		if err != nil {
 			return err
 		}
-		if count < pageSize {
+		if count < pageSize || last == nil {
 			return nil
 		}
-		if page, err = page.Next(); err != nil {
-			return errors.WithMessagef(err, "failed advancing pagination [%s]", tmsID)
-		}
+		params.After = &driver.TransactionCursor{StoredAt: last.Timestamp, TxID: last.TxID}
 	}
 }
 
@@ -494,7 +498,8 @@ func (d *txDeduplicator) isRepeat(txID string) bool {
 }
 
 // walkTransactionsPage reads one page of transactions, calling fn once per
-// transaction not already seen by dedup, and returns how many rows the page held.
+// transaction not already seen by dedup, and returns how many rows the page held
+// and the last of them.
 func (a *DefaultCheckers) walkTransactionsPage(
 	ctx context.Context,
 	tmsID token.TMSID,
@@ -502,27 +507,29 @@ func (a *DefaultCheckers) walkTransactionsPage(
 	page driver2.Pagination,
 	dedup *txDeduplicator,
 	fn func(*driver.TransactionRecord) error,
-) (int, error) {
+) (int, *driver.TransactionRecord, error) {
 	it, err := a.db.Transactions(ctx, params, page)
 	if err != nil {
-		return 0, errors.WithMessagef(err, "failed querying transactions [%s]", tmsID)
+		return 0, nil, errors.WithMessagef(err, "failed querying transactions [%s]", tmsID)
 	}
 	defer it.Items.Close()
 	count := 0
+	var last *driver.TransactionRecord
 	for {
 		transactionRecord, err := it.Items.Next()
 		if err != nil {
-			return 0, errors.WithMessagef(err, "failed querying transactions [%s]", tmsID)
+			return 0, nil, errors.WithMessagef(err, "failed querying transactions [%s]", tmsID)
 		}
 		if transactionRecord == nil {
-			return count, nil
+			return count, last, nil
 		}
 		count++
+		last = transactionRecord
 		if dedup.isRepeat(transactionRecord.TxID) {
 			continue
 		}
 		if err := fn(transactionRecord); err != nil {
-			return 0, err
+			return 0, nil, err
 		}
 	}
 }
