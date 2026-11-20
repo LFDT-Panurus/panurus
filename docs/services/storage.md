@@ -192,6 +192,8 @@ and the default table name pattern it produces (before any override is applied).
 | `key_store` | `KeyStore` | `fsc_key_store_<prefix>_<params>` |
 | `eid_leases` | `EIDLeases` | `fsc_eid_leases_<prefix>_<params>` |
 | `tkn_ski_cleanups` | `TokenSKICleanups` | `fsc_tkn_ski_cleanups_<prefix>_<params>` |
+| `chk_findings` | `Findings` | `fsc_chk_findings_<prefix>_<params>` |
+| `chk_progress` | `CheckProgress` | `fsc_chk_progress_<prefix>_<params>` |
 
 > **Note:** When no `TablePrefix` is configured (empty string) and no `TableNameParams` are
 > present, the pattern simplifies to `fsc_<short_code>` (e.g. `fsc_id_signers`).

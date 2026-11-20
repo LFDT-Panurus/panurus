@@ -544,3 +544,68 @@ func TestManager_StartStop_SweepsInBackground(t *testing.T) {
 
 	require.NoError(t, manager.Stop())
 }
+
+// committingChecker is a Checker that keeps a resume point, recording when it is
+// asked to commit it and what had been stored by then.
+type committingChecker struct {
+	*mock.Checker
+	storage *mock.Storage
+	err     error
+	commits int
+	// storedBeforeCommit is whether the findings had been both stored and resolved
+	// when CommitProgress was called.
+	storedBeforeCommit bool
+}
+
+func (c *committingChecker) CommitProgress(context.Context) error {
+	c.commits++
+	c.storedBeforeCommit = c.storage.UpsertFindingsCallCount() == 1 && c.storage.ResolveFindingsNotSeenSinceCallCount() == 1
+
+	return c.err
+}
+
+func newCommittingSweep(t *testing.T) (*mock.Storage, *committingChecker, *checks.Manager) {
+	t.Helper()
+	storage := &mock.Storage{}
+	leadership := &mock.Leadership{}
+	leadership.CloseReturns(nil)
+	storage.AcquireLeadershipReturns(leadership, true, nil)
+	checker := &committingChecker{Checker: &mock.Checker{}, storage: storage}
+	checker.CheckReturns([]dbcommon.Finding{{Checker: "Check A", Code: dbcommon.CodeTokenMissingLocally, TxID: "tx1"}}, nil)
+	checker.ResolvableCheckersReturns([]string{"Check A"})
+	manager := checks.NewManager(logging.MustGetLogger(), storage, checker, checks.NewMetrics(nil), testConfig(), checks.RoleOwner, testTMSID)
+
+	return storage, checker, manager
+}
+
+// A check that resumes where it stopped may only record its new starting point
+// once the findings of the sweep are stored, or a failed write would lose the
+// findings about the transactions it moved past, for good.
+func TestManager_RunSweep_CommitsProgressAfterStoringFindings(t *testing.T) {
+	_, checker, manager := newCommittingSweep(t)
+	require.NoError(t, manager.RunSweep(t.Context()))
+	assert.Equal(t, 1, checker.commits)
+	assert.True(t, checker.storedBeforeCommit, "the progress must be committed after the findings are stored and resolved")
+}
+
+func TestManager_RunSweep_NoProgressWhenFindingsAreNotStored(t *testing.T) {
+	storage, checker, manager := newCommittingSweep(t)
+	storage.UpsertFindingsReturns(errors.New("db unavailable"))
+	require.Error(t, manager.RunSweep(t.Context()))
+	assert.Equal(t, 0, checker.commits)
+
+	storage, checker, manager = newCommittingSweep(t)
+	storage.ResolveFindingsNotSeenSinceReturns(0, errors.New("db unavailable"))
+	require.Error(t, manager.RunSweep(t.Context()))
+	assert.Equal(t, 0, checker.commits)
+}
+
+// Failing to record the progress costs the next sweep some repeated work, but
+// the findings are stored, so the sweep itself succeeded.
+func TestManager_RunSweep_ProgressCommitFailureDoesNotFailTheSweep(t *testing.T) {
+	storage, checker, manager := newCommittingSweep(t)
+	checker.err = errors.New("db unavailable")
+	require.NoError(t, manager.RunSweep(t.Context()))
+	assert.Equal(t, 1, checker.commits)
+	assert.Equal(t, 1, storage.CountOpenFindingsCallCount(), "the sweep must carry on after a failed commit")
+}

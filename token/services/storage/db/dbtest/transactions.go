@@ -54,6 +54,7 @@ var tokenTransactionDBCases = []struct {
 	{"TransactionQueries", TTransactionQueries},
 	{"TEndorserAcks", TEndorserAcks},
 	{"Findings", TFindings},
+	{"CheckProgress", TCheckProgress},
 }
 
 func TFailsIfRequestDoesNotExist(t *testing.T, db driver3.TokenTransactionStore) {
@@ -1030,4 +1031,35 @@ func TFindings(t *testing.T, db driver3.TokenTransactionStore) {
 	require.NoError(t, err)
 	require.Len(t, stored, 1)
 	assert.Equal(t, "two", stored[0].Message)
+}
+
+// TCheckProgress exercises the table the history-walking checks keep their resume
+// point in: one row per check, replaced on every write, and read back as written.
+func TCheckProgress(t *testing.T, db driver3.TokenTransactionStore) {
+	t.Helper()
+	ctx := t.Context()
+
+	_, ok, err := db.GetCheckProgress(ctx, "Check A")
+	require.NoError(t, err)
+	assert.False(t, ok, "a check that never recorded progress has none")
+
+	first := time.Date(2026, 3, 4, 5, 6, 7, 891011000, time.UTC)
+	require.NoError(t, db.SetCheckProgress(ctx, "Check A", first))
+	got, ok, err := db.GetCheckProgress(ctx, "Check A")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.True(t, first.Equal(got), "expected [%s], got [%s]", first, got)
+	assert.Equal(t, time.UTC, got.Location())
+
+	// a time in another zone is the same instant, and reads back as UTC
+	second := first.Add(time.Hour).In(time.FixedZone("UTC+2", 2*60*60))
+	require.NoError(t, db.SetCheckProgress(ctx, "Check A", second))
+	got, ok, err = db.GetCheckProgress(ctx, "Check A")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.True(t, second.Equal(got), "expected [%s], got [%s]", second, got)
+
+	_, ok, err = db.GetCheckProgress(ctx, "Check B")
+	require.NoError(t, err)
+	assert.False(t, ok, "progress is kept per check")
 }
