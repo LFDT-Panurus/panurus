@@ -8,15 +8,22 @@ package tokens_test
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
+	"path/filepath"
 	"testing"
 
 	"github.com/LFDT-Panurus/panurus/token"
+	sqlcommon "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/sqlite"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/tokendb"
 	"github.com/LFDT-Panurus/panurus/token/services/tokens"
 	"github.com/LFDT-Panurus/panurus/token/services/tokens/mock"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	_ "modernc.org/sqlite"
 )
 
 func TestNewDBStorage(t *testing.T) {
@@ -122,6 +129,31 @@ func TestTransaction_AppendToken_Notify(t *testing.T) {
 		TxID:      "tx1",
 		Index:     0,
 	}, e.Message())
+}
+
+func TestTransaction_AppendToken_UniqueKeyViolationDoesNotNotify(t *testing.T) {
+	ctx := context.Background()
+	tmsID := token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}
+	mockTx := &mock.FakeTokenStoreTransaction{}
+	pub := &mock.FakePublisher{}
+
+	tx, err := tokens.NewTransaction(pub, &tokendb.Transaction{TokenStoreTransaction: mockTx}, tmsID)
+	require.NoError(t, err)
+
+	tta := tokens.TokenToAppend{
+		TxID:      "tx1",
+		Index:     0,
+		Tok:       &token2.Token{Type: "TOK", Owner: []byte("alice"), Quantity: "0x64"},
+		Precision: 64,
+		Owners:    []string{"wallet1"},
+		Flags:     tokens.Flags{Mine: true},
+	}
+	mockTx.StoreTokenReturns(driver.UniqueKeyViolation)
+	err = tx.AppendToken(ctx, &tta)
+	require.NoError(t, err)
+
+	require.NoError(t, tx.Commit(ctx))
+	assert.Equal(t, 0, pub.PublishCallCount(), "should not notify owners on UniqueKeyViolation")
 }
 
 // TestTransaction_AppendToken_NoEventBeforeCommit is the reproduction reported in
@@ -383,9 +415,17 @@ func TestTokenProcessorEvent(t *testing.T) {
 		TxID:      "tx1",
 		Index:     0,
 	}
-	e := tokens.NewTokenProcessorEvent(tokens.AddToken, msg)
+	e, err := tokens.NewTokenProcessorEvent(tokens.AddToken, msg)
+	require.NoError(t, err)
 	assert.Equal(t, tokens.AddToken, e.Topic())
 	assert.NotNil(t, e.Message())
+}
+
+func TestNewTokenProcessorEvent_NilMessage(t *testing.T) {
+	e, err := tokens.NewTokenProcessorEvent(tokens.AddToken, nil)
+	assert.Nil(t, e)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nil token message")
 }
 
 func TestDBStorage_NewTransaction_Error(t *testing.T) {
@@ -397,4 +437,53 @@ func TestDBStorage_NewTransaction_Error(t *testing.T) {
 
 	_, err = storage.NewTransaction()
 	assert.Error(t, err)
+}
+
+func TestTransaction_AppendToken_SQLiteDuplicateDoesNotNotify(t *testing.T) {
+	ctx := context.Background()
+	tmsID := token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}
+
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(20000)", filepath.Join(t.TempDir(), "tokens.sqlite"))
+	readDB, err := sql.Open("sqlite", dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = readDB.Close() })
+
+	writeDB, err := sql.Open("sqlite", dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = writeDB.Close() })
+
+	tables, err := sqlcommon.GetTableNames("")
+	require.NoError(t, err)
+
+	store, err := sqlcommon.NewTokenStoreWithNotifier(readDB, writeDB, tables, sqlite.NewConditionInterpreter(), nil)
+	require.NoError(t, err)
+	require.NoError(t, store.CreateSchema())
+
+	pub := &mock.FakePublisher{}
+	storage, err := tokens.NewDBStorage(pub, &tokendb.StoreService{TokenStore: store}, tmsID)
+	require.NoError(t, err)
+
+	tta := tokens.TokenToAppend{
+		TxID:                  "tx-dup-1",
+		Index:                 0,
+		Tok:                   &token2.Token{Type: "TOK", Owner: []byte("alice"), Quantity: "0x64"},
+		TokenOnLedger:         []byte("ledger-token"),
+		TokenOnLedgerFormat:   "fabtoken",
+		TokenOnLedgerMetadata: []byte("meta"),
+		Precision:             64,
+		Owners:                []string{"wallet1"},
+		Flags:                 tokens.Flags{Mine: true},
+	}
+
+	tx1, err := storage.NewTransaction()
+	require.NoError(t, err)
+	require.NoError(t, tx1.AppendToken(ctx, &tta))
+	require.NoError(t, tx1.Commit(ctx))
+	require.Equal(t, 1, pub.PublishCallCount())
+
+	tx2, err := storage.NewTransaction()
+	require.NoError(t, err)
+	require.NoError(t, tx2.AppendToken(ctx, &tta))
+	require.NoError(t, tx2.Commit(ctx))
+	assert.Equal(t, 1, pub.PublishCallCount(), "duplicate token append must not publish a second notification")
 }

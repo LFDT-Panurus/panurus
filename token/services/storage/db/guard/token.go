@@ -77,16 +77,35 @@ type guardedTokenStoreTx struct {
 	policy Policy
 }
 
-func (w *guardedTokenStoreTx) StoreToken(ctx context.Context, tr driver.TokenRecord, owners []string) error {
+func checkStoreTokenPayload(tr driver.TokenRecord, owners []string, maxPayloadSize int) error {
 	size := len(tr.TxID) + len(tr.IssuerRaw) + len(tr.OwnerRaw) + len(tr.OwnerIdentity) +
 		len(tr.OwnerType) + len(tr.OwnerWalletID) + len(tr.Ledger) + len(tr.LedgerFormat) +
 		len(tr.LedgerMetadata) + len(tr.Quantity) + len(tr.Type)
 	for _, o := range owners {
 		size += len(o)
 	}
-	if err := CheckPayload("StoreToken", size, w.policy.MaxPayloadSize); err != nil {
+
+	return CheckPayload("StoreToken", size, maxPayloadSize)
+}
+
+func (w *guardedTokenStoreTx) StoreToken(ctx context.Context, tr driver.TokenRecord, owners []string) error {
+	if err := checkStoreTokenPayload(tr, owners, w.policy.MaxPayloadSize); err != nil {
 		return err
 	}
 
 	return w.TokenStoreTransaction.StoreToken(ctx, tr, owners)
+}
+
+func (w *guardedTokenStoreTx) StoreTokenIfAbsent(ctx context.Context, tr driver.TokenRecord, owners []string) (bool, error) {
+	if err := checkStoreTokenPayload(tr, owners, w.policy.MaxPayloadSize); err != nil {
+		return false, err
+	}
+	if inserter, ok := w.TokenStoreTransaction.(driver.TokenInserter); ok {
+		return inserter.StoreTokenIfAbsent(ctx, tr, owners)
+	}
+	if err := w.TokenStoreTransaction.StoreToken(ctx, tr, owners); err != nil {
+		return false, err
+	}
+
+	return true, nil
 }
