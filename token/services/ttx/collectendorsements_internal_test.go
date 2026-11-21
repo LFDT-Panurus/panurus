@@ -8,10 +8,19 @@ package ttx
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	driver_mock "github.com/LFDT-Panurus/panurus/token/driver/mock"
+	token_mock "github.com/LFDT-Panurus/panurus/token/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/endpoint"
+	endpointmock "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/endpoint/mock"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -108,4 +117,122 @@ func TestFanOutTimeoutBoundsWholePhase(t *testing.T) {
 	require.Error(t, err, "the phase must not outlive the fan-out timeout")
 	assert.Less(t, elapsed, workers*stagger,
 		"the timeout must bound the whole fan-out, not each answer")
+}
+
+// TestAddPartyToDistributionList_MultipleOwnersSameNode verifies that when multiple
+// remote owners with different enrollment IDs live on the same FSC node (same long-term
+// identity), addPartyToDistributionList deduplicates the node entry while collecting all
+// unique enrollment IDs so none of the owners' output metadata is dropped.
+func TestAddPartyToDistributionList_MultipleOwnersSameNode(t *testing.T) {
+	remoteNodeLT := view.Identity("remote-node-lt")
+	otherNodeLT := view.Identity("other-node-lt")
+
+	bobNym := view.Identity("bob-nym-1")
+	bobNym2 := view.Identity("bob-nym-2")
+	carolNym := view.Identity("carol-nym")
+	daveNym := view.Identity("dave-nym")
+
+	bindingStore := &endpointmock.BindingStore{}
+	bindingStore.GetLongTermStub = func(_ context.Context, ephemeral view.Identity) (view.Identity, error) {
+		switch string(ephemeral) {
+		case string(bobNym), string(bobNym2), string(carolNym):
+			return remoteNodeLT, nil
+		case string(daveNym):
+			return otherNodeLT, nil
+		default:
+			return nil, errors.Errorf("unknown identity [%s]", ephemeral)
+		}
+	}
+	endpointSvc, err := endpoint.NewService(bindingStore)
+	require.NoError(t, err)
+	_, err = endpointSvc.AddResolver("remote-node", "", nil, nil, remoteNodeLT)
+	require.NoError(t, err)
+	_, err = endpointSvc.AddResolver("other-node", "", nil, nil, otherNodeLT)
+	require.NoError(t, err)
+
+	ctx := &stubDistViewContext{
+		t:           t,
+		endpointSvc: endpointSvc,
+	}
+
+	walletSvc := &driver_mock.WalletService{}
+	walletSvc.OwnerWalletReturns(nil, errors.New("not a local wallet"))
+	walletSvc.GetEnrollmentIDStub = func(_ context.Context, id token.Identity, _ []byte) (string, error) {
+		switch string(id) {
+		case string(bobNym), string(bobNym2):
+			return "bob", nil
+		case string(carolNym):
+			return "carol", nil
+		case string(daveNym):
+			return "dave", nil
+		default:
+			return "", errors.Errorf("unknown identity [%s]", id)
+		}
+	}
+
+	ppm := &driver_mock.PublicParamsManager{}
+	ppm.PublicParametersReturns(&driver_mock.PublicParameters{})
+	driverTMS := &driver_mock.TokenManagerService{}
+	driverTMS.WalletServiceReturns(walletSvc)
+	driverTMS.PublicParamsManagerReturns(ppm)
+
+	tmsID := token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}
+	vaultProvider := &token_mock.VaultProvider{}
+	vaultProvider.VaultReturns(&driver_mock.Vault{}, nil)
+	tms, err := token.NewManagementService(tmsID, driverTMS, nil, vaultProvider, nil, nil)
+	require.NoError(t, err)
+
+	req := token.NewRequest(tms, "anchor")
+	tx := &Transaction{
+		Payload: &Payload{
+			TokenRequest: req,
+		},
+		TMS: &stubDistTMS{wm: tms.WalletManager()},
+	}
+	viewInst := &CollectEndorsementsView{tx: tx}
+
+	mine := collections.NewSet[string]()
+	var distList []distributionListEntry
+	for _, party := range []view.Identity{bobNym, carolNym, bobNym2, daveNym} {
+		distList, err = viewInst.addPartyToDistributionList(ctx, party, mine, distList)
+		require.NoError(t, err)
+	}
+
+	require.Len(t, distList, 2)
+	assert.Equal(t, remoteNodeLT, distList[0].LongTerm)
+	assert.Equal(t, []string{"bob", "carol"}, distList[0].EIDs)
+	assert.False(t, distList[0].IsMe)
+	assert.False(t, distList[0].Auditor)
+
+	assert.Equal(t, otherNodeLT, distList[1].LongTerm)
+	assert.Equal(t, []string{"dave"}, distList[1].EIDs)
+}
+
+type embeddedViewContext = view.Context
+
+type stubDistViewContext struct {
+	embeddedViewContext
+	t           *testing.T
+	endpointSvc *endpoint.Service
+}
+
+func (s *stubDistViewContext) Context() context.Context {
+	return s.t.Context()
+}
+
+func (s *stubDistViewContext) GetService(v any) (any, error) {
+	if rt, ok := v.(reflect.Type); ok && rt.String() == "*endpoint.Service" {
+		return s.endpointSvc, nil
+	}
+
+	return nil, errors.Errorf("unexpected service request [%v]", v)
+}
+
+type stubDistTMS struct {
+	dep.TokenManagementServiceWithExtensions
+	wm *token.WalletManager
+}
+
+func (s *stubDistTMS) WalletManager() *token.WalletManager {
+	return s.wm
 }

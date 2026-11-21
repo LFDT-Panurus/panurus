@@ -1553,7 +1553,7 @@ func (r *Request) SetApplicationMetadata(k string, v []byte) {
 	r.Metadata.Application[k] = v
 }
 
-// FilterMetadataBy creates a new request with metadata filtered to show only the specified enrollment ID's data.
+// FilterMetadataBy creates a new request with metadata filtered to show only the specified enrollment IDs' data.
 func (r *Request) FilterMetadataBy(ctx context.Context, eIDs ...string) (*Request, error) {
 	meta := &Metadata{
 		TokenService:         r.TokenService.tms.TokensService(),
@@ -1561,9 +1561,9 @@ func (r *Request) FilterMetadataBy(ctx context.Context, eIDs ...string) (*Reques
 		TokenRequestMetadata: r.Metadata,
 		Logger:               r.TokenService.logger,
 	}
-	filteredMeta, err := meta.FilterBy(ctx, eIDs[0])
+	filteredMeta, err := meta.FilterBy(ctx, eIDs...)
 	if err != nil {
-		return nil, errors.WithMessagef(err, "failed filtering metadata by [%s]", eIDs[0])
+		return nil, errors.WithMessagef(err, "failed filtering metadata by [%v]", eIDs)
 	}
 
 	return &Request{

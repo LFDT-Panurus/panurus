@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	maps0 "maps"
 	"math"
+	"slices"
 	"sync"
 	"time"
 
@@ -36,7 +37,7 @@ type distributionListEntry struct {
 	IsMe     bool
 	LongTerm view.Identity
 	ID       view.Identity
-	EID      string
+	EIDs     []string
 	Auditor  bool
 }
 
@@ -606,7 +607,7 @@ func (c *CollectEndorsementsView) distributeTxToParties(context view.Context, di
 
 			continue
 		}
-		logger.DebugfContext(context.Context(), "tx [%d] is not me [%s:%s], ask endorse", i, entry.ID, entry.EID)
+		logger.DebugfContext(context.Context(), "tx [%d] is not me [%s:%v], ask endorse", i, entry.ID, entry.EIDs)
 
 		var txRaw []byte
 		var err error
@@ -615,7 +616,7 @@ func (c *CollectEndorsementsView) distributeTxToParties(context view.Context, di
 			txRaw, err = c.tx.Bytes(context.Context())
 		} else {
 			logger.DebugfContext(context.Context(), "This is not an auditor [%s], send the filtered metadata", entry.ID)
-			txRaw, err = c.tx.Bytes(context.Context(), entry.EID)
+			txRaw, err = c.tx.Bytes(context.Context(), entry.EIDs...)
 		}
 		if err != nil {
 			return errors.Wrap(err, "failed marshalling transaction content")
@@ -632,12 +633,12 @@ func (c *CollectEndorsementsView) distributeTxToParties(context view.Context, di
 	// the acks are recorded on this goroutine from the collected answers.
 	sigmas, err := fanOut(context.Context(), len(remote), AnswerCollectionTimeout, func(i int) ([]byte, error) {
 		entry := &remote[i]
-		logger.DebugfContext(context.Context(), "Distribute to %s", entry.EID)
+		logger.DebugfContext(context.Context(), "Distribute to %v", entry.EIDs)
 		sigma, err := c.distributeTxToParty(context, entry, payloads[i])
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed distribute evn of tx [%s] to party [%s:%s]", c.tx.ID(), entry.EID, entry.ID)
+			return nil, errors.Wrapf(err, "failed distribute evn of tx [%s] to party [%v:%s]", c.tx.ID(), entry.EIDs, entry.ID)
 		}
-		logger.DebugfContext(context.Context(), "Done distributing to %s", entry.EID)
+		logger.DebugfContext(context.Context(), "Done distributing to %v", entry.EIDs)
 
 		return sigma, nil
 	})
@@ -770,13 +771,16 @@ func resolveLongTermIdentity(context view.Context, party view.Identity, isMe boo
 }
 
 // addPartyToDistributionList resolves party's long-term identity and, if not already present in
-// distributionListCompressed, appends a new (non-auditor) entry for it.
+// distributionListCompressed, appends a new (non-auditor) entry for it. If an entry for the same
+// long-term identity already exists, party's enrollment ID is added to that entry's EIDs so the
+// remote node receives metadata for all of its owners involved in the transaction.
 func (c *CollectEndorsementsView) addPartyToDistributionList(context view.Context, party view.Identity, mine collections.Set[string], distributionListCompressed []distributionListEntry) ([]distributionListEntry, error) {
 	// For each party in the distribution list:
 	// - check if it is me
 	// - check if it is an auditor
 	// - extract the corresponding long term identity
 	// If the long term identity has not been added yet, add it to the list.
+	// If it has already been added for a remote node, collect this party's enrollment ID too.
 	// If the party is me or an auditor, no need to extract the enrollment ID.
 	logger.DebugfContext(context.Context(), "distribute tx to [%s]?", party)
 
@@ -794,8 +798,17 @@ func (c *CollectEndorsementsView) addPartyToDistributionList(context view.Contex
 	}
 	logger.DebugfContext(context.Context(), "searching for long term identity [%s]", longTermIdentity)
 
-	for _, entry := range distributionListCompressed {
+	for i, entry := range distributionListCompressed {
 		if longTermIdentity.Equal(entry.LongTerm) {
+			if !isMe && !entry.IsMe && !entry.Auditor {
+				eID, err := c.tx.TokenService().WalletManager().GetEnrollmentID(context.Context(), party)
+				if err != nil {
+					return nil, errors.Wrapf(err, "failed getting enrollment ID for [%s]", party.UniqueID())
+				}
+				if !slices.Contains(entry.EIDs, eID) {
+					distributionListCompressed[i].EIDs = append(distributionListCompressed[i].EIDs, eID)
+				}
+			}
 			logger.DebugfContext(context.Context(), "skip adding [%s] to distribution list, already added", party)
 
 			return distributionListCompressed, nil
@@ -803,19 +816,20 @@ func (c *CollectEndorsementsView) addPartyToDistributionList(context view.Contex
 	}
 
 	logger.DebugfContext(context.Context(), "adding [%s] to distribution list", party)
-	eID := ""
+	var eIDs []string
 	if !isMe {
-		eID, err = c.tx.TokenService().WalletManager().GetEnrollmentID(context.Context(), party)
+		eID, err := c.tx.TokenService().WalletManager().GetEnrollmentID(context.Context(), party)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed getting enrollment ID for [%s]", party.UniqueID())
 		}
+		eIDs = []string{eID}
 	}
 
 	return append(distributionListCompressed, distributionListEntry{
 		IsMe:     isMe,
 		LongTerm: longTermIdentity,
 		ID:       party,
-		EID:      eID,
+		EIDs:     eIDs,
 		Auditor:  false,
 	}), nil
 }

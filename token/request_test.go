@@ -1191,3 +1191,120 @@ func TestRequest_AuditRecord_OwnerAuditInfo(t *testing.T) {
 		assert.Equal(t, metadataAuditInfo, record.Inputs.At(0).OwnerAuditInfo)
 	})
 }
+
+// TestRequest_FilterMetadataBy verifies that FilterMetadataBy forwards all enrollment IDs
+// to Metadata.FilterBy (and does not panic when no enrollment IDs are supplied), preserving
+// outputs for every matching owner across both transfer and issue actions.
+func TestRequest_FilterMetadataBy(t *testing.T) {
+	ctx := t.Context()
+
+	bobID := Identity("bob-nym")
+	carolID := Identity("carol-nym")
+	daveID := Identity("dave-nym")
+
+	walletService := &driver2.WalletService{}
+	walletService.GetEnrollmentIDStub = func(_ context.Context, id Identity, _ []byte) (string, error) {
+		switch string(id) {
+		case string(bobID):
+			return "bob", nil
+		case string(carolID):
+			return "carol", nil
+		case string(daveID):
+			return "dave", nil
+		default:
+			return "", nil
+		}
+	}
+
+	tms := &driver2.TokenManagerService{}
+	tms.WalletServiceReturns(walletService)
+	tms.TokensServiceReturns(&driver2.TokensService{})
+
+	req := &Request{
+		Anchor: "test-anchor",
+		Metadata: &driver.TokenRequestMetadata{
+			Actions: []*driver.ActionMetadataEntry{
+				{
+					ActionID: 0,
+					TransferMetadata: &driver.TransferMetadata{
+						Outputs: []*driver.TransferOutputMetadata{
+							{
+								OutputMetadata: []byte("bob-transfer-meta"),
+								Receivers:      []*driver.AuditableIdentity{{Identity: bobID}},
+							},
+							{
+								OutputMetadata: []byte("carol-transfer-meta"),
+								Receivers:      []*driver.AuditableIdentity{{Identity: carolID}},
+							},
+							{
+								OutputMetadata: []byte("dave-transfer-meta"),
+								Receivers:      []*driver.AuditableIdentity{{Identity: daveID}},
+							},
+						},
+					},
+				},
+				{
+					ActionID: 1,
+					IssueMetadata: &driver.IssueMetadata{
+						Outputs: []*driver.IssueOutputMetadata{
+							{
+								OutputMetadata: []byte("bob-issue-meta"),
+								Receivers:      []*driver.AuditableIdentity{{Identity: bobID}},
+							},
+							{
+								OutputMetadata: []byte("carol-issue-meta"),
+								Receivers:      []*driver.AuditableIdentity{{Identity: carolID}},
+							},
+							{
+								OutputMetadata: []byte("dave-issue-meta"),
+								Receivers:      []*driver.AuditableIdentity{{Identity: daveID}},
+							},
+						},
+					},
+				},
+			},
+		},
+		TokenService: &ManagementService{
+			tms:    tms,
+			logger: logging.MustGetLogger(),
+		},
+	}
+
+	t.Run("multiple EIDs keeps all matching outputs", func(t *testing.T) {
+		filtered, err := req.FilterMetadataBy(ctx, "bob", "carol")
+		require.NoError(t, err)
+
+		transferOutputs := filtered.Metadata.Actions[0].TransferMetadata.Outputs
+		require.Len(t, transferOutputs, 3)
+		require.NotNil(t, transferOutputs[0])
+		assert.Equal(t, []byte("bob-transfer-meta"), transferOutputs[0].OutputMetadata)
+		require.NotNil(t, transferOutputs[1])
+		assert.Equal(t, []byte("carol-transfer-meta"), transferOutputs[1].OutputMetadata)
+		assert.Nil(t, transferOutputs[2])
+
+		issueOutputs := filtered.Metadata.Actions[1].IssueMetadata.Outputs
+		require.Len(t, issueOutputs, 3)
+		require.NotNil(t, issueOutputs[0])
+		assert.Equal(t, []byte("bob-issue-meta"), issueOutputs[0].OutputMetadata)
+		require.NotNil(t, issueOutputs[1])
+		assert.Equal(t, []byte("carol-issue-meta"), issueOutputs[1].OutputMetadata)
+		assert.Nil(t, issueOutputs[2])
+	})
+
+	t.Run("single EID keeps only that EID", func(t *testing.T) {
+		filtered, err := req.FilterMetadataBy(ctx, "bob")
+		require.NoError(t, err)
+
+		transferOutputs := filtered.Metadata.Actions[0].TransferMetadata.Outputs
+		require.Len(t, transferOutputs, 3)
+		require.NotNil(t, transferOutputs[0])
+		assert.Nil(t, transferOutputs[1])
+		assert.Nil(t, transferOutputs[2])
+	})
+
+	t.Run("no EIDs returns unfiltered metadata without panic", func(t *testing.T) {
+		filtered, err := req.FilterMetadataBy(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, req.Metadata, filtered.Metadata)
+	})
+}
