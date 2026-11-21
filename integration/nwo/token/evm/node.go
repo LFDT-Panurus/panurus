@@ -8,6 +8,10 @@ package evm
 
 import (
 	"context"
+	"net"
+	"net/http"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -38,4 +42,28 @@ func removeContainer(node Node) {
 	if err := node.Stop(ctx); err != nil {
 		logger.Warnf("could not remove the unready evm container: %v", err)
 	}
+}
+
+// answersChainID reports whether the node listening on the local port answers an eth_chainId request
+// at endpoint with 200 OK.
+func answersChainID(ctx context.Context, client *http.Client, port int, endpoint string) bool {
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), time.Second)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+
+	body := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}`)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	_ = resp.Body.Close()
+
+	return resp.StatusCode == http.StatusOK
 }

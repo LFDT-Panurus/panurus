@@ -88,23 +88,9 @@ func LoadLockConfig(cp ConfigProvider) *LockConfig {
 		cfg.MaxRetries = raw.MaxRetries
 	}
 
-	// Apply initial backoff if valid
-	if raw.InitialBackoff != "" {
-		if duration, err := time.ParseDuration(raw.InitialBackoff); err == nil && duration > 0 {
-			cfg.InitialBackoff = duration
-		} else {
-			logging.MustGetLogger().Warnf("invalid initialBackoff value [%s], using default", raw.InitialBackoff)
-		}
-	}
-
-	// Apply max backoff if valid
-	if raw.MaxBackoff != "" {
-		if duration, err := time.ParseDuration(raw.MaxBackoff); err == nil && duration > 0 {
-			cfg.MaxBackoff = duration
-		} else {
-			logging.MustGetLogger().Warnf("invalid maxBackoff value [%s], using default", raw.MaxBackoff)
-		}
-	}
+	// Apply initial and max backoff if valid
+	applyDuration("initialBackoff", raw.InitialBackoff, &cfg.InitialBackoff)
+	applyDuration("maxBackoff", raw.MaxBackoff, &cfg.MaxBackoff)
 
 	// Apply backoff multiplier if valid
 	if raw.BackoffMultiplier > 0 {
@@ -117,6 +103,19 @@ func LoadLockConfig(cp ConfigProvider) *LockConfig {
 	}
 
 	return cfg
+}
+
+// applyDuration parses value as a positive duration and stores it in dst.
+// An empty value leaves dst untouched; an invalid or non-positive one is logged and ignored.
+func applyDuration(name, value string, dst *time.Duration) {
+	if value == "" {
+		return
+	}
+	if duration, err := time.ParseDuration(value); err == nil && duration > 0 {
+		*dst = duration
+	} else {
+		logging.MustGetLogger().Warnf("invalid %s value [%s], using default", name, value)
+	}
 }
 
 // Adapter to make config.Configuration compatible with ConfigProvider interface

@@ -6,18 +6,14 @@ SPDX-License-Identifier: Apache-2.0
 
 package token
 
-// These tests cover the decision logic of ShareNetwork (sharedNetwork, tearDownNow) and the
-// nil-safety of TearDown; the Ginkgo wiring itself is not unit-tested. It relies on this
-// behaviour of ginkgo v2.33.1:
-//   - internal/group.go:183-186: after a BeforeAll fails in a ContinueOnFailure container,
-//     the remaining specs are skipped;
-//   - internal/group.go:203: specs filtered out (e.g. by a label filter) are ignored when
-//     deciding which spec is the last one, so the BeforeAll cleanup runs after the last
-//     selected spec;
-//   - internal/group.go:262-272: DeferCleanup nodes run after AfterEach/AfterAll, in reverse
-//     order of registration;
-//   - internal/group.go:303-311: run-once (BeforeAll) cleanups run only for the last spec of
-//     the container, or once a run-once node is skipped.
+// These tests cover ShareNetwork's decision logic (sharedNetwork, tearDownNow) and TearDown's
+// nil-safety; the Ginkgo wiring is not unit-tested. It relies on these ginkgo v2 behaviours:
+//   - a failed BeforeAll in a ContinueOnFailure container skips the remaining specs;
+//   - specs excluded by a filter don't count when picking the last spec, so the BeforeAll
+//     cleanup runs after the last selected one;
+//   - DeferCleanup nodes run after AfterEach/AfterAll, in reverse registration order;
+//   - BeforeAll cleanups run only after the container's last spec, or once a run-once node
+//     is skipped.
 
 import (
 	"testing"

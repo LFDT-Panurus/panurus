@@ -79,44 +79,46 @@ func (q *QueryEngine) ListUnspentTokens(ctx context.Context) (*token.UnspentToke
 }
 
 func (q *QueryEngine) ListAuditTokens(ctx context.Context, ids ...*token.ID) ([]*token.Token, error) {
-	var tokens []*token.Token
-	var err error
-
 	for i := range q.NumRetries {
-		tokens, err = q.qe.ListAuditTokens(ctx, ids...)
-
-		if err != nil {
-			// check if there is any token id whose corresponding transaction is pending
-			// if there is, then wait a bit and retry to load the outputs
-			retry := false
-			for _, id := range ids {
-				pending, err := q.qe.IsPending(ctx, id)
-				if pending || err != nil {
-					q.logger.Warnf("cannot get audit token for id [%s] because the relative transaction is pending, retry at [%d]: with err [%s]", id, i, err)
-					if i == q.NumRetries-1 {
-						return nil, errors.Errorf("failed to get audit tokens, tx [%s] is still pending", id.TxId)
-					}
-					time.Sleep(q.RetryDelay)
-					retry = true
-
-					break
-				}
-			}
-
-			if retry {
-				tokens = nil
-
-				continue
-			}
-
-			return nil, errors.Wrapf(err, "failed to get audit tokens")
+		tokens, err := q.qe.ListAuditTokens(ctx, ids...)
+		if err == nil {
+			// The execution was successful, we can stop
+			return tokens, nil
 		}
 
-		// The execution was successful, we can stop
-		break
+		// check if there is any token id whose corresponding transaction is pending
+		// if there is, then wait a bit and retry to load the outputs
+		retry, pendingErr := q.waitIfPending(ctx, i, ids)
+		if pendingErr != nil {
+			return nil, pendingErr
+		}
+		if !retry {
+			return nil, errors.Wrapf(err, "failed to get audit tokens")
+		}
 	}
 
-	return tokens, nil
+	return nil, nil
+}
+
+// waitIfPending checks whether any of the passed token ids belongs to a pending transaction
+// (or its status cannot be determined). If so, it sleeps for RetryDelay and reports that the
+// caller should retry, unless attempt is the last one, in which case it returns an error.
+func (q *QueryEngine) waitIfPending(ctx context.Context, attempt int, ids []*token.ID) (bool, error) {
+	for _, id := range ids {
+		pending, err := q.qe.IsPending(ctx, id)
+		if !pending && err == nil {
+			continue
+		}
+		q.logger.Warnf("cannot get audit token for id [%s] because the relative transaction is pending, retry at [%d]: with err [%s]", id, attempt, err)
+		if attempt == q.NumRetries-1 {
+			return false, errors.Errorf("failed to get audit tokens, tx [%s] is still pending", id.TxId)
+		}
+		time.Sleep(q.RetryDelay)
+
+		return true, nil
+	}
+
+	return false, nil
 }
 
 func (q *QueryEngine) ListHistoryIssuedTokens(ctx context.Context) (*token.IssuedTokens, error) {

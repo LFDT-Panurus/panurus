@@ -14,6 +14,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token"
 	fabric2 "github.com/LFDT-Panurus/panurus/integration/nwo/token/fabric"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
+	ttopology "github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
 	token2 "github.com/LFDT-Panurus/panurus/integration/token"
 	"github.com/LFDT-Panurus/panurus/integration/token/common"
 	auditor2 "github.com/LFDT-Panurus/panurus/integration/token/fungible/sdk/auditor"
@@ -36,37 +37,7 @@ func Topology(opts common.Opts) []api.Topology {
 		orgs = []string{"Org1", "Org2"}
 	}
 
-	var backendTopology api.Topology
-	var backendChannel string
-	switch opts.Backend {
-	case "fabric":
-		fabricTopology := fabric.NewDefaultTopology()
-		fabricTopology.EnableIdemix()
-		fabricTopology.AddOrganizationsByName(orgs...)
-		fabricTopology.SetNamespaceApproverOrgs(orgs[0])
-		backendTopology = fabricTopology
-		backendChannel = fabricTopology.Channels[0].Name
-	case "fabricx":
-		fabricTopology := fabricx.NewDefaultTopology()
-		fabricTopology.EnableIdemix()
-		fabricTopology.AddOrganizationsByName(orgs...)
-		fabricTopology.SetNamespaceApproverOrgs(orgs[0])
-		backendTopology = fabricTopology
-		backendChannel = fabricTopology.Channels[0].Name
-	case tevm.TopologyName:
-		// An EVM network has no organizations or channels to describe: what a node needs to reach the
-		// chain is generated with the network and handed to it in its token configuration.
-		evmTopology := tevm.NewTopology()
-		backendTopology = evmTopology
-		backendChannel = ""
-	case tevm.GatewayTopologyName:
-		// Same shape as the EVM backend; the topology type routes to the gateway handler, not Besu.
-		evmTopology := tevm.NewGatewayTopology()
-		backendTopology = evmTopology
-		backendChannel = ""
-	default:
-		panic("unknown backend: " + opts.Backend)
-	}
+	backendTopology, backendChannel := newBackendTopology(opts.Backend, orgs)
 
 	// FSC
 	fscTopology := fsc.NewTopology()
@@ -78,7 +49,86 @@ func Topology(opts common.Opts) []api.Topology {
 	}
 	fscTopology.SetLogging(token2.RunnerDebug(opts.FSCLogSpec), "")
 
-	issuer := fscTopology.AddNodeByName("issuer").AddOptions(
+	issuer, auditor := addNodes(fscTopology, opts)
+	endorserIDs := addEndorsers(fscTopology, opts, orgs)
+
+	tokenTopology := token.NewTopology()
+	tokenTopology.TokenSelector = opts.TokenSelector
+	tms := tokenTopology.AddTMS(fscTopology.ListNodes(), backendTopology, backendChannel, opts.DefaultTMSOpts.TokenSDKDriver)
+	configureDefaultTMS(tms, opts, orgs, endorserIDs)
+	nodeList := fscTopology.ListNodes()
+
+	if !opts.NoAuditor {
+		tms.AddAuditor(auditor)
+	}
+	tms.AddIssuer(issuer)
+	tms.AddIssuerByID("issuer.id1")
+
+	if len(opts.SDKs) > 0 {
+		addSDKs(fscTopology, opts, endorserIDs)
+	}
+
+	// any extra TMS
+	for _, tmsOpts := range opts.ExtraTMSs {
+		tms := tokenTopology.AddTMS(nodeList, backendTopology, backendChannel, tmsOpts.TokenSDKDriver)
+		configureExtraTMS(tms, tmsOpts)
+		if !opts.NoAuditor {
+			tms.AddAuditor(auditor)
+		}
+		tms.AddIssuer(issuer)
+		tms.AddIssuerByID("issuer.id1")
+	}
+
+	if opts.Monitoring {
+		monitoringTopology := monitoring.NewTopology()
+		// monitoringTopology.EnableHyperledgerExplorer()
+		monitoringTopology.EnablePrometheusGrafana()
+
+		return []api.Topology{
+			backendTopology, tokenTopology, fscTopology,
+			monitoringTopology,
+		}
+	}
+
+	return []api.Topology{backendTopology, tokenTopology, fscTopology}
+}
+
+// newBackendTopology returns the ledger topology for the given backend, and the channel the
+// token namespace lives on (empty for backends without channels).
+//
+//nolint:ireturn // the backend type is picked at runtime; callers only need api.Topology
+func newBackendTopology(backend string, orgs []string) (api.Topology, string) {
+	switch backend {
+	case "fabric":
+		fabricTopology := fabric.NewDefaultTopology()
+		fabricTopology.EnableIdemix()
+		fabricTopology.AddOrganizationsByName(orgs...)
+		fabricTopology.SetNamespaceApproverOrgs(orgs[0])
+
+		return fabricTopology, fabricTopology.Channels[0].Name
+	case "fabricx":
+		fabricTopology := fabricx.NewDefaultTopology()
+		fabricTopology.EnableIdemix()
+		fabricTopology.AddOrganizationsByName(orgs...)
+		fabricTopology.SetNamespaceApproverOrgs(orgs[0])
+
+		return fabricTopology, fabricTopology.Channels[0].Name
+	case tevm.TopologyName:
+		// An EVM network has no organizations or channels to describe: what a node needs to reach the
+		// chain is generated with the network and handed to it in its token configuration.
+		return tevm.NewTopology(), ""
+	case tevm.GatewayTopologyName:
+		// Same shape as the EVM backend; the topology type routes to the gateway handler, not Besu.
+		return tevm.NewGatewayTopology(), ""
+	default:
+		panic("unknown backend: " + backend)
+	}
+}
+
+// addNodes adds the issuer, auditor and party nodes to the FSC topology, and returns the
+// issuer and auditor nodes (the same node when the auditor acts as issuer).
+func addNodes(fscTopology *fsc.Topology, opts common.Opts) (issuer, auditor *node.Node) {
+	issuer = fscTopology.AddNodeByName("issuer").AddOptions(
 		fabric.WithOrganization("Org1"),
 		fabric.WithAnonymousIdentity(),
 		token.WithDefaultIssuerIdentity(opts.HSM),
@@ -101,7 +151,6 @@ func Topology(opts common.Opts) []api.Topology {
 	)
 	newIssuer.AddOptions(opts.ReplicationOpts.For("newIssuer")...)
 
-	var auditor *node.Node
 	if opts.AuditorAsIssuer {
 		issuer.AddOptions(
 			token.WithAuditorIdentity(opts.HSM),
@@ -162,40 +211,53 @@ func Topology(opts common.Opts) []api.Topology {
 	)
 	manager.AddOptions(opts.ReplicationOpts.For("manager")...)
 
-	var endorserIDs []string
-	if opts.FSCBasedEndorsement {
-		if opts.FSCEndorsementPolicyType == endorsementfsc.NamespacePolicy {
-			// one endorser per org, so that the namespace endorsement policy can pick a
-			// satisfying subset of endorsers across different MSPs
-			for i, org := range orgs {
-				endorserTemplate := fscTopology.NewTemplate("endorser")
-				endorserTemplate.AddOptions(
-					fabric.WithOrganization(org),
-					fabric2.WithEndorserRole(),
-				)
-				endorserID := fmt.Sprintf("endorser-%d", i+1)
-				fscTopology.AddNodeFromTemplate(endorserID, endorserTemplate).AddOptions(opts.ReplicationOpts.For(endorserID)...)
-				endorserIDs = append(endorserIDs, endorserID)
-			}
-		} else {
-			endorserTemplate := fscTopology.NewTemplate("endorser")
-			endorserTemplate.AddOptions(
-				fabric.WithOrganization(orgs[0]),
-				fabric2.WithEndorserRole(),
-			)
-			fscTopology.AddNodeFromTemplate("endorser-1", endorserTemplate).AddOptions(opts.ReplicationOpts.For("endorser-1")...)
-			endorserIDs = append(endorserIDs, "endorser-1")
-			if opts.Backend != "fabricx" {
-				fscTopology.AddNodeFromTemplate("endorser-2", endorserTemplate).AddOptions(opts.ReplicationOpts.For("endorser-2")...)
-				fscTopology.AddNodeFromTemplate("endorser-3", endorserTemplate).AddOptions(opts.ReplicationOpts.For("endorser-3")...)
-				endorserIDs = append(endorserIDs, "endorser-2", "endorser-3")
-			}
-		}
+	return issuer, auditor
+}
+
+// addEndorsers adds the FSC endorser nodes when FSC-based endorsement is enabled, and returns
+// their IDs.
+func addEndorsers(fscTopology *fsc.Topology, opts common.Opts, orgs []string) []string {
+	if !opts.FSCBasedEndorsement {
+		return nil
 	}
 
-	tokenTopology := token.NewTopology()
-	tokenTopology.TokenSelector = opts.TokenSelector
-	tms := tokenTopology.AddTMS(fscTopology.ListNodes(), backendTopology, backendChannel, opts.DefaultTMSOpts.TokenSDKDriver)
+	var endorserIDs []string
+	if opts.FSCEndorsementPolicyType == endorsementfsc.NamespacePolicy {
+		// one endorser per org, so that the namespace endorsement policy can pick a
+		// satisfying subset of endorsers across different MSPs
+		for i, org := range orgs {
+			endorserTemplate := fscTopology.NewTemplate("endorser")
+			endorserTemplate.AddOptions(
+				fabric.WithOrganization(org),
+				fabric2.WithEndorserRole(),
+			)
+			endorserID := fmt.Sprintf("endorser-%d", i+1)
+			fscTopology.AddNodeFromTemplate(endorserID, endorserTemplate).AddOptions(opts.ReplicationOpts.For(endorserID)...)
+			endorserIDs = append(endorserIDs, endorserID)
+		}
+
+		return endorserIDs
+	}
+
+	endorserTemplate := fscTopology.NewTemplate("endorser")
+	endorserTemplate.AddOptions(
+		fabric.WithOrganization(orgs[0]),
+		fabric2.WithEndorserRole(),
+	)
+	fscTopology.AddNodeFromTemplate("endorser-1", endorserTemplate).AddOptions(opts.ReplicationOpts.For("endorser-1")...)
+	endorserIDs = append(endorserIDs, "endorser-1")
+	if opts.Backend != "fabricx" {
+		fscTopology.AddNodeFromTemplate("endorser-2", endorserTemplate).AddOptions(opts.ReplicationOpts.For("endorser-2")...)
+		fscTopology.AddNodeFromTemplate("endorser-3", endorserTemplate).AddOptions(opts.ReplicationOpts.For("endorser-3")...)
+		endorserIDs = append(endorserIDs, "endorser-2", "endorser-3")
+	}
+
+	return endorserIDs
+}
+
+// configureDefaultTMS applies the namespace, public parameters, CA and endorsement settings to
+// the default TMS.
+func configureDefaultTMS(tms *ttopology.TMS, opts common.Opts, orgs []string, endorserIDs []string) {
 	tms.SetNamespace("token_chaincode")
 	common.SetDefaultParams(tms, opts.DefaultTMSOpts)
 	if !opts.DefaultTMSOpts.Aries {
@@ -222,78 +284,54 @@ func Topology(opts common.Opts) []api.Topology {
 	} else {
 		fabric2.SetOrgs(tms, "Org1")
 	}
-	nodeList := fscTopology.ListNodes()
+}
 
-	if !opts.NoAuditor {
-		tms.AddAuditor(auditor)
+// addSDKs installs the business SDKs on each node by role, then registers the remaining SDKs on
+// every node.
+func addSDKs(fscTopology *fsc.Topology, opts common.Opts, endorserIDs []string) {
+	// auditors
+	for _, node := range fscTopology.ListNodes("auditor", "newAuditor") {
+		node.AddSDKWithBase(opts.SDKs[0], &auditor2.SDK{})
 	}
-	tms.AddIssuer(issuer)
-	tms.AddIssuerByID("issuer.id1")
 
-	if len(opts.SDKs) > 0 {
-		// business SDKs
-		// auditors
-		for _, node := range fscTopology.ListNodes("auditor", "newAuditor") {
-			node.AddSDKWithBase(opts.SDKs[0], &auditor2.SDK{})
-		}
-
-		// issuers
-		for _, node := range fscTopology.ListNodes("issuer", "newIssuer") {
-			if opts.AuditorAsIssuer {
-				node.AddSDKWithBase(opts.SDKs[0], &issuer2.SDK{}, &auditor2.SDK{})
-			} else {
-				node.AddSDKWithBase(opts.SDKs[0], &issuer2.SDK{})
-			}
-		}
-
-		// parties
-		for _, node := range fscTopology.ListNodes("alice", "bob", "charlie", "manager") {
-			node.AddSDKWithBase(opts.SDKs[0], &party.SDK{})
-		}
-
-		// endorsers
-		if opts.FSCBasedEndorsement {
-			for _, node := range fscTopology.ListNodes(endorserIDs...) {
-				node.AddSDKWithBase(opts.SDKs[0], &endorser.SDK{})
-			}
-		}
-
-		// add the rest of Panuruss
-		for i := 1; i < len(opts.SDKs); i++ {
-			fscTopology.AddSDK(opts.SDKs[i])
+	// issuers
+	for _, node := range fscTopology.ListNodes("issuer", "newIssuer") {
+		if opts.AuditorAsIssuer {
+			node.AddSDKWithBase(opts.SDKs[0], &issuer2.SDK{}, &auditor2.SDK{})
+		} else {
+			node.AddSDKWithBase(opts.SDKs[0], &issuer2.SDK{})
 		}
 	}
 
-	// any extra TMS
-	for _, tmsOpts := range opts.ExtraTMSs {
-		tms := tokenTopology.AddTMS(nodeList, backendTopology, backendChannel, tmsOpts.TokenSDKDriver)
-		tms.Alias = tmsOpts.Alias
-		tms.Namespace = "token_chaincode"
-		tms.Transient = true
-		if tmsOpts.Aries {
-			zkatdlognoghv1.WithAries(tms)
-		}
-		if tmsOpts.CSP {
-			zkatdlognoghv1.WithCSP(tms)
-		}
-		tms.SetTokenGenPublicParams(tmsOpts.PublicParamsGenArgs...)
-		if !opts.NoAuditor {
-			tms.AddAuditor(auditor)
-		}
-		tms.AddIssuer(issuer)
-		tms.AddIssuerByID("issuer.id1")
+	// parties
+	for _, node := range fscTopology.ListNodes("alice", "bob", "charlie", "manager") {
+		node.AddSDKWithBase(opts.SDKs[0], &party.SDK{})
 	}
 
-	if opts.Monitoring {
-		monitoringTopology := monitoring.NewTopology()
-		// monitoringTopology.EnableHyperledgerExplorer()
-		monitoringTopology.EnablePrometheusGrafana()
-
-		return []api.Topology{
-			backendTopology, tokenTopology, fscTopology,
-			monitoringTopology,
+	// endorsers
+	if opts.FSCBasedEndorsement {
+		for _, node := range fscTopology.ListNodes(endorserIDs...) {
+			node.AddSDKWithBase(opts.SDKs[0], &endorser.SDK{})
 		}
 	}
 
-	return []api.Topology{backendTopology, tokenTopology, fscTopology}
+	// add the rest of Panuruss
+	for i := 1; i < len(opts.SDKs); i++ {
+		fscTopology.AddSDK(opts.SDKs[i])
+	}
+}
+
+// configureExtraTMS applies the alias, namespace, driver options and public parameters of an
+// extra TMS.
+func configureExtraTMS(tms *ttopology.TMS, tmsOpts common.TMSOpts) {
+	tms.Alias = tmsOpts.Alias
+	tms.Namespace = "token_chaincode"
+	tms.Transient = true
+	if tmsOpts.Aries {
+		zkatdlognoghv1.WithAries(tms)
+	}
+	if tmsOpts.CSP {
+		zkatdlognoghv1.WithCSP(tms)
+	}
+	tms.SetTokenGenPublicParams(tmsOpts.PublicParamsGenArgs...)
 }

@@ -432,21 +432,14 @@ func printNodeWithHighlight(node *CallNode, prefix string, isLast bool, rootDura
 		callInfo = fmt.Sprintf(" x%d", node.CallCount)
 	}
 
-	timeInfo := ""
-	if opts.ShowAbsolute && opts.ShowPercent {
-		timeInfo = fmt.Sprintf(" [%v, %.2f%%]", node.Duration, percent)
-	} else if opts.ShowAbsolute {
-		timeInfo = fmt.Sprintf(" [%v]", node.Duration)
-	} else if opts.ShowPercent {
-		timeInfo = fmt.Sprintf(" [%.2f%%]", percent)
-	}
+	timeInfo := formatNodeTimeInfo(node.Duration, percent, opts)
 
 	// Highlight entire line if in top functions with >>> marker
+	marker := ""
 	if topFunctions[node.Name] {
-		fmt.Printf("%s%s>>> %s%s%s\n", prefix, connector, node.Name, callInfo, timeInfo)
-	} else {
-		fmt.Printf("%s%s%s%s%s\n", prefix, connector, node.Name, callInfo, timeInfo)
+		marker = ">>> "
 	}
+	fmt.Printf("%s%s%s%s%s%s\n", prefix, connector, marker, node.Name, callInfo, timeInfo)
 
 	childPrefix := prefix
 	if isLast {
@@ -457,6 +450,21 @@ func printNodeWithHighlight(node *CallNode, prefix string, isLast bool, rootDura
 
 	for i, child := range node.Children {
 		printNodeWithHighlight(child, childPrefix, i == len(node.Children)-1, rootDuration, opts, topFunctions)
+	}
+}
+
+// formatNodeTimeInfo renders the optional " [duration, percent%]" suffix of a call-tree line
+// according to which of opts.ShowAbsolute and opts.ShowPercent are set.
+func formatNodeTimeInfo(duration time.Duration, percent float64, opts PrintOptions) string {
+	switch {
+	case opts.ShowAbsolute && opts.ShowPercent:
+		return fmt.Sprintf(" [%v, %.2f%%]", duration, percent)
+	case opts.ShowAbsolute:
+		return fmt.Sprintf(" [%v]", duration)
+	case opts.ShowPercent:
+		return fmt.Sprintf(" [%.2f%%]", percent)
+	default:
+		return ""
 	}
 }
 
