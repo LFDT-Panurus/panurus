@@ -12,9 +12,9 @@ import (
 	dlog "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/driver"
 	"github.com/LFDT-Panurus/panurus/token/sdk"
 	tokensdk "github.com/LFDT-Panurus/panurus/token/sdk/dig"
-	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx"
-	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx/pp"
-	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx/tms"
+	"github.com/LFDT-Panurus/panurus/token/services/network/chaguar"
+	"github.com/LFDT-Panurus/panurus/token/services/network/chaguar/pp"
+	"github.com/LFDT-Panurus/panurus/token/services/network/chaguar/tms"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc/support/libp2p"
 	common "github.com/hyperledger-labs/fabric-smart-client/platform/common/sdk/dig"
 	digutils "github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/dig"
@@ -52,7 +52,7 @@ func (p *SDK) Install() error {
 		p.Container().Provide(dlog.NewValidatorDriver, dig.Group("validator-drivers")),
 
 		// Chaguar
-		p.Container().Provide(fabricx.NewDriver, dig.Group("network-drivers")),
+		p.Container().Provide(chaguar.NewDriver, dig.Group("network-drivers")),
 		p.Container().Provide(tms.NewSubmitterFromFNS, dig.As(new(tms.Submitter))),
 		p.Container().Provide(tms.NewTMSDeployerService, dig.As(new(tms.DeployerService))),
 		p.Container().Provide(pp.NewPublicParametersService),

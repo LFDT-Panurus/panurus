@@ -102,7 +102,7 @@ config key to select an alternate mode for Fabric. See the callout in §6.1 abou
 ### 2.2 Chaguar — query-service polling with an async worker queue
 
 Chaguar has no block-delivery stream to plug into; instead
-[`network/fabricx/finality/finality.go`](../../token/services/network/fabricx/finality/finality.go)
+[`network/chaguar/finality/finality.go`](../../token/services/network/chaguar/finality/finality.go)
 implements finality detection entirely differently, and this is the one part of this document with
 no upstream fabric-token-sdk equivalent at all:
 
@@ -140,7 +140,7 @@ graph TB
   actually surfaces a timeout to the application; the poller dropping its bookkeeping slot early is not
   itself an error condition.
 
-Both `fabricXFSCStatus` (Chaguar → `driver.ValidationCode`) and the Fabric driver's
+Both `chaguarFSCStatus` (Chaguar → `driver.ValidationCode`) and the Fabric driver's
 `committer.MapValidationCode` ultimately feed the same `network.Valid`/`Invalid`/`Busy`/`Unknown` set
 that `runOnStatus` (§3) switches on — this is the seam that lets §3 be backend-agnostic.
 
@@ -408,9 +408,9 @@ the Fabric driver. Real query/poll-based finality does exist in Panurus, but onl
 ### 6.2 Chaguar polling tuning
 
 Chaguar's `NSListenerManager` is configured via
-[`token/services/network/fabricx/finality/config.go`](../../token/services/network/fabricx/finality/config.go)
+[`token/services/network/chaguar/finality/config.go`](../../token/services/network/chaguar/finality/config.go)
 and the async worker queue via
-[`token/services/network/fabricx/finality/queue/config.go`](../../token/services/network/fabricx/finality/queue/config.go).
+[`token/services/network/chaguar/finality/queue/config.go`](../../token/services/network/chaguar/finality/queue/config.go).
 See [Network Service - Chaguar Implementation § Finality Configuration](./network-chaguar.md#finality-configuration)
 for the current key names, defaults, and YAML example — not repeated here to avoid the two docs
 drifting apart.

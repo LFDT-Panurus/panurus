@@ -1,6 +1,6 @@
 # Network Service - Chaguar Implementation
 
-The Chaguar network implementation ([`fabricx.Network`](../../token/services/network/fabricx/network.go)) is an optimized variant of Hyperledger Fabric where **FSC (Fabric Smart Client) nodes act as endorsers**, eliminating the need for traditional chaincode deployment on peers. This architecture provides higher performance and more flexible endorsement policies.
+The Chaguar network implementation ([`fabricx.Network`](../../token/services/network/chaguar/network.go)) is an optimized variant of Hyperledger Fabric where **FSC (Fabric Smart Client) nodes act as endorsers**, eliminating the need for traditional chaincode deployment on peers. This architecture provides higher performance and more flexible endorsement policies.
 
 ## Architecture Overview
 
@@ -332,7 +332,7 @@ graph LR
 ### Submit-Path Finality Wait
 
 Besides the async queue above, the submitter
-(`token/services/network/fabricx/tms`) also waits for finality inline on
+(`token/services/network/chaguar/tms`) also waits for finality inline on
 broadcast. Polling starts before the ordering call, so a transaction committing
 early is not missed, and is cancelled if the broadcast fails.
 
@@ -357,12 +357,12 @@ On Chaguar the public parameters live on the ledger under two keys written toget
 by every setup transaction: the setup key (the raw parameters) and the setup *hash*
 key (their SHA256 digest). Every token transaction an endorser translates carries a
 **versioned read dependency** on the setup hash key
-([`RWSetWrapper.StateMustExist`](../../token/services/network/fabricx/endorsement/rwset.go)),
+([`RWSetWrapper.StateMustExist`](../../token/services/network/chaguar/endorsement/rwset.go)),
 so the committer rejects the transaction with `ABORTED_MVCC_CONFLICT` unless the
 version the endorser attached is the version that key currently has on the ledger.
 This is what binds a transaction to the parameters it was validated against.
 
-[`pp.VersionKeeper`](../../token/services/network/fabricx/pp/versionkeeper.go) is the
+[`pp.VersionKeeper`](../../token/services/network/chaguar/pp/versionkeeper.go) is the
 component that knows that version. It holds an **absolute read of the on-chain row
 version of the setup hash key**, obtained through the query service
 (`PublicParametersService.FetchSetupHashVersion`), and never a count of the updates
@@ -422,7 +422,7 @@ and retries on the next call.
 ### Deploying the Public Parameters
 
 The first setup transaction on a namespace is written by
-[`tms.DeployerService`](../../token/services/network/fabricx/tms/deployer.go).
+[`tms.DeployerService`](../../token/services/network/chaguar/tms/deployer.go).
 `DeployTMSs` and `DeployTMS` read the parameters from the file at each TMS's
 `publicParameters.path`, not from the ledger, which holds nothing yet on a namespace
 that was never initialized. `DeployTMSWithPP` deploys the bytes it is given instead.
@@ -462,7 +462,7 @@ Chaguar provides an optimized ledger implementation with advanced query capabili
 
 ### Query Executor
 
-The Chaguar ledger uses a specialized query executor ([`qe.QueryStatesExecutor`](../../token/services/network/fabricx/qe/)) for efficient state access:
+The Chaguar ledger uses a specialized query executor ([`qe.QueryStatesExecutor`](../../token/services/network/chaguar/qe/)) for efficient state access:
 
 ```mermaid
 sequenceDiagram

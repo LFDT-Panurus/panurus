@@ -1076,7 +1076,7 @@
       "targets": [
         {
           "refId": "p",
-          "expr": "panurus_services_network_fabricx_finality_queue_finality_queue_pending_events",
+          "expr": "panurus_services_network_chaguar_finality_queue_finality_queue_pending_events",
           "legendFormat": "pending"
         }
       ]
@@ -1110,12 +1110,12 @@
       "targets": [
         {
           "refId": "d",
-          "expr": "rate(panurus_services_network_fabricx_finality_queue_finality_queue_enqueue_drops_total[$__rate_interval])",
+          "expr": "rate(panurus_services_network_chaguar_finality_queue_finality_queue_enqueue_drops_total[$__rate_interval])",
           "legendFormat": "drops/s"
         },
         {
           "refId": "e",
-          "expr": "rate(panurus_services_network_fabricx_finality_queue_finality_queue_processing_errors_total[$__rate_interval])",
+          "expr": "rate(panurus_services_network_chaguar_finality_queue_finality_queue_processing_errors_total[$__rate_interval])",
           "legendFormat": "errors/s"
         }
       ]
@@ -1149,7 +1149,7 @@
       "targets": [
         {
           "refId": "p",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(panurus_services_network_fabricx_finality_queue_finality_queue_processing_duration_seconds_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(panurus_services_network_chaguar_finality_queue_finality_queue_processing_duration_seconds_bucket[$__rate_interval])))",
           "legendFormat": "p95"
         }
       ]
