@@ -143,3 +143,23 @@ func TestTranscriptSqueezeDependsOnPriorAbsorb(t *testing.T) {
 
 	require.False(t, x1.Equals(x2), "challenges derived from different absorbed statements must differ")
 }
+
+func TestCheckPedersenGenerators(t *testing.T) {
+	c := math.Curves[math.BN254]
+	g := c.GenG1
+	require.NoError(t, CheckPedersenGenerators([]*math.G1{g, g, g}))
+	for name, gens := range map[string][]*math.G1{
+		"nil":       nil,
+		"too short": {g, g},
+		"too long":  {g, g, g, g},
+		"nil entry": {g, nil, g},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.Error(t, CheckPedersenGenerators(gens))
+			_, err := NewPedersenStatementTranscript(c, "d", gens)
+			require.Error(t, err)
+		})
+	}
+	_, err := NewPedersenStatementTranscript(nil, "d", []*math.G1{g, g, g})
+	require.Error(t, err)
+}

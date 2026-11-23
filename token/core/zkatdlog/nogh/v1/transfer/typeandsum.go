@@ -7,6 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 package transfer
 
 import (
+	"math/big"
+
 	math "github.com/IBM/mathlib"
 	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/asn1"
 	crypto "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/common"
@@ -14,6 +16,28 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
+
+// typeAndSumTranscriptDomain is the Fiat-Shamir domain separator of the TypeAndSum proof.
+const typeAndSumTranscriptDomain = "TypeAndSum-v1"
+
+// typeAndSumChallenge derives the TypeAndSum challenge from the full statement:
+// domain tag, Pedersen generators, input and output counts, then the transcript points.
+// Prover and verifier must call it with the same arguments in the same order.
+func typeAndSumChallenge(c *math.Curve, pedParams []*math.G1, inComs []*math.G1, typeCom, sumCom *math.G1, inputs, outputs []*math.G1, comType, sum *math.G1) (*math.Zr, error) {
+	tr, err := crypto.NewPedersenStatementTranscript(c, typeAndSumTranscriptDomain, pedParams)
+	if err != nil {
+		return nil, err
+	}
+	tr.Absorb(new(big.Int).SetInt64(int64(len(inputs))).Bytes())
+	tr.Absorb(new(big.Int).SetInt64(int64(len(outputs))).Bytes())
+	raw, err := crypto.GetG1Array(inComs, []*math.G1{typeCom, sumCom}, inputs, outputs, []*math.G1{comType, sum}).Bytes()
+	if err != nil {
+		return nil, err
+	}
+	tr.Absorb(raw)
+
+	return tr.Squeeze()
+}
 
 // TypeAndSumProof is zero-knowledge proof that shows that the inputs of a transaction
 // have the same total value and the same type as its outputs.
@@ -204,6 +228,9 @@ func NewTypeAndSumProver(witness *TypeAndSumWitness, pp []*math.G1, inputs []*ma
 
 // Prove generates a TypeAndSumProof.
 func (p *TypeAndSumProver) Prove() (*TypeAndSumProof, error) {
+	if err := crypto.CheckPedersenGenerators(p.PedParams); err != nil {
+		return nil, errors.Wrap(err, "cannot compute sum and type proof")
+	}
 	// generate randomness for the proof and compute the corresponding commitments
 	commitments, randomness, err := p.computeCommitments()
 	if err != nil {
@@ -227,13 +254,11 @@ func (p *TypeAndSumProver) Prove() (*TypeAndSumProof, error) {
 		sum.Sub(outputs[i])
 	}
 
-	// serialize public information for challenge computation
-	raw, err := crypto.GetG1Array(commitments.Inputs, []*math.G1{commitments.CommitmentToType, commitments.Sum}, inputs, outputs, []*math.G1{p.CommitmentToType, sum}).Bytes()
+	// compute challenge
+	chal, err := typeAndSumChallenge(p.Curve, p.PedParams, commitments.Inputs, commitments.CommitmentToType, commitments.Sum, inputs, outputs, p.CommitmentToType, sum)
 	if err != nil {
 		return nil, errors.Wrap(err, "cannot compute sum and type proof")
 	}
-	// compute challenge
-	chal := p.Curve.HashToZr(raw)
 	// compute proofs
 	stp, err := p.computeProof(randomness, chal)
 	if err != nil {
@@ -343,6 +368,9 @@ func (v *TypeAndSumVerifier) Verify(stp *TypeAndSumProof) error {
 	if len(stp.InputValues) != len(v.Inputs) {
 		return ErrMissingSumAndTypeComponents
 	}
+	if err := crypto.CheckPedersenGenerators(v.PedParams); err != nil {
+		return errors.Join(err, ErrInvalidSumAndTypeProof)
+	}
 
 	inputs := make([]*math.G1, len(v.Inputs))
 	outputs := make([]*math.G1, len(v.Outputs))
@@ -388,12 +416,11 @@ func (v *TypeAndSumVerifier) Verify(stp *TypeAndSumProof) error {
 	typeCom := v.PedParams[0].Mul2(stp.Type, v.PedParams[2], stp.TypeBlindingFactor)
 	typeCom.Mul2InPlace(one, stp.CommitmentToType, negChal)
 
-	raw, err := crypto.GetG1Array(inComs, []*math.G1{typeCom, sumCom}, inputs, outputs, []*math.G1{stp.CommitmentToType, sum}).Bytes()
+	// compute challenge and verify mismatch
+	chal, err := typeAndSumChallenge(v.Curve, v.PedParams, inComs, typeCom, sumCom, inputs, outputs, stp.CommitmentToType, sum)
 	if err != nil {
 		return errors.Wrap(err, "cannot verify sum and type proof")
 	}
-	// compute challenge and verify mismatch
-	chal := v.Curve.HashToZr(raw)
 	if !chal.Equals(stp.Challenge) {
 		return ErrSumAndTypeChallengeMismatch
 	}

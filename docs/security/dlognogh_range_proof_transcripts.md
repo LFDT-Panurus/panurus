@@ -1,6 +1,8 @@
-# ZK-ATDLOG Range-Proof Fiat-Shamir Transcripts
+# ZK-ATDLOG Fiat-Shamir Transcripts
 
-The ZK-ATDLOG (`zkatdlog/nogh/v1`) driver supports two interchangeable range-proof systems,
+The ZK-ATDLOG (`zkatdlog/nogh/v1`) driver uses non-interactive proofs of two kinds.
+
+It supports two interchangeable range-proof systems,
 selected per public-parameters set via `rp.ProofType`:
 
 * **Bulletproofs** (`token/core/zkatdlog/nogh/v1/crypto/rp/bulletproof/`) — an IPA-based range
@@ -8,12 +10,19 @@ selected per public-parameters set via `rp.ProofType`:
 * **CSP** (`token/core/zkatdlog/nogh/v1/crypto/rp/csp/`) — a Compressed Sigma Protocol range
   proof.
 
-Both are non-interactive via the Fiat-Shamir transform: every verifier challenge is derived
+It also uses two sigma proofs:
+
+* **TypeAndSum** (`token/core/zkatdlog/nogh/v1/transfer/typeandsum.go`) — a transfer's inputs
+  and outputs have the same type, and their values sum to the same total.
+* **SameType** (`token/core/zkatdlog/nogh/v1/issue/sametype.go`) — an issue's outputs have the
+  same type.
+
+All are non-interactive via the Fiat-Shamir transform: every verifier challenge is derived
 by hashing the statement and the prover's prior messages instead of being sent by an
-interactive verifier. Both share one implementation of that hashing, `common.Transcript`
+interactive verifier. All share one implementation of that hashing, `common.Transcript`
 (`token/core/zkatdlog/nogh/v1/crypto/common/transcript.go`) — an `Absorb`/`Squeeze` running
 SHA-256 state, seeded by a protocol-specific domain separator. This page documents the exact
-absorb/squeeze order each system relies on, and why it must be followed exactly.
+absorb/squeeze order each proof relies on, and why it must be followed exactly.
 
 ## Why the transcript must be a single running state
 
@@ -22,9 +31,9 @@ derived from a *strict subset* of what the protocol's security proof requires �
 only the two most recent prover messages, instead of from the full transcript so far — a
 cheating prover could choose the inputs to that smaller hash after fixing an earlier, unbound
 part of the proof. That would be a soundness break: the prover would get to pick values that
-satisfy an equation the verifier assumed were committed before the challenge existed. Both
-range-proof systems below are built so that every challenge instead depends on the full
-transcript absorbed so far.
+satisfy an equation the verifier assumed were committed before the challenge existed. Every
+proof below is built so that every challenge instead depends on the full transcript absorbed
+so far.
 
 ## The Bulletproof transcript
 
@@ -75,19 +84,60 @@ in lockstep, each absorbing its own prover messages before squeezing the next ch
 `WithTranscriptHeader` is a required, non-empty parameter throughout this chain — every
 constructor hard-fails on an empty header rather than falling back to a different seed.
 
+## The TypeAndSum and SameType transcripts
+
+Both sigma proofs derive their single challenge from
+`common.NewPedersenStatementTranscript`. It seeds a `common.Transcript` with a domain
+separator, then absorbs the three Pedersen generators (`PedersenGenerators[0..2]`). It fails
+if the generators are not exactly three non-nil points. Prover and verifier both reject
+`PedParams` whose length is not 3.
+
+`typeAndSumChallenge` (`transfer/typeandsum.go`) absorbs, in order:
+
+1. The domain `"TypeAndSum-v1"` and the Pedersen generators.
+2. The number of inputs, then the number of outputs.
+3. One `GetG1Array` encoding of the input commitments, the type commitment, the sum
+   commitment, the type-adjusted inputs and outputs, `CommitmentToType`, and the sum.
+
+It then squeezes the challenge.
+
+`sameTypeChallenge` (`issue/sametype.go`) absorbs, in order:
+
+1. The domain `"SameType-v1"` and the Pedersen generators.
+2. One `GetG1Array` encoding of `CommitmentToType` and the prover commitment.
+
+It then squeezes the challenge.
+
+The domain separator keeps the two challenges apart from each other and from the range
+proofs. The generators bind each proof to the basis its statement is relative to.
+
+### What is deliberately not bound
+
+* **A hash of the full public parameters.** It covers auditor and issuer fields that the
+  relation does not depend on. `PublicParams.ComputeHash` (`setup/setup.go`) also
+  re-serializes the parameters on every call, which is too costly on the verify hot path.
+  The relation depends only on the generators, and the transcript binds those.
+* **Transaction context.** Binding it needs API changes. `TransferService.VerifyTransfer`
+  has no anchor to bind. See [Known gap](#known-gap-no-transaction-level-binding).
+
+### Compatibility
+
+This change is wire-incompatible. Older releases computed both challenges as a bare
+`HashToZr` over the G1 points, with no domain tag and no generators. Proofs made by those
+releases no longer verify. Nodes on mixed versions reject each other's transfer and issue
+proofs. The Bulletproof transcript change ([#2521](https://github.com/LFDT-Panurus/panurus/issues/2521))
+had the same effect. The driver version is not bumped.
+
 ## Known gap: no transaction-level binding
 
-Neither range-proof system's transcript, nor the companion `TypeAndSum`
-(`token/core/zkatdlog/nogh/v1/transfer/typeandsum.go`) / `SameType`
-(`token/core/zkatdlog/nogh/v1/issue/sametype.go`) proofs, absorb anything from the
-surrounding transaction — the token request, the transfer/issue action, the other inputs, or
-the signing anchor. Each sub-proof's transcript is independent; the only thing tying a range
-proof to the rest of a transfer/issue action is that both operate on the same
-`output - commitmentToType` commitment, and `TypeAndSumVerifier.Verify` does bind that
-commitment into its own challenge. In practice this only matters for an output whose
-commitment (type, value, and blinding factor together) is byte-identical across two
-transactions — already an unusual case that double-spend protection at the token layer is
-responsible for handling — but it is a real gap in defense-in-depth. See
+No transcript on this page absorbs anything from the surrounding transaction: not the token
+request, the transfer/issue action, the other inputs, or the signing anchor. Each sub-proof's
+transcript is independent. The only thing tying a range proof to the rest of a transfer/issue
+action is that both operate on the same `output - commitmentToType` commitment.
+`TypeAndSumVerifier.Verify` binds that commitment into its own challenge. In practice this
+only matters for an output whose commitment (type, value, and blinding factor together) is
+byte-identical across two transactions. That case is already unusual, and double-spend
+protection at the token layer handles it. It is still a real gap in defense-in-depth. See
 [#2515](https://github.com/LFDT-Panurus/panurus/issues/2515) for related follow-up.
 
 ## See also

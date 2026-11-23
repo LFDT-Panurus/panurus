@@ -216,3 +216,35 @@ func TestBulletProofVerifierRejectsTruncatedSameTypeProof(t *testing.T) {
 	require.Error(t, verifyErr)
 	require.ErrorIs(t, verifyErr, issue.ErrInvalidIssueProof)
 }
+
+// TestSameType_ChallengeBindsPedersenGenerators is a regression test for #2782.
+// A proof made under generators pp is moved to pp' = k·pp by dividing every response by k.
+// The verifier then recomputes the same commitment, so the proof must still fail:
+// the challenge has to depend on the generators.
+func TestSameType_ChallengeBindsPedersenGenerators(t *testing.T) {
+	prover, verifier := GetSameTypeProverAndVerifier(t)
+	proof, err := prover.Prove()
+	require.NoError(t, err)
+	require.NoError(t, verifier.Verify(proof))
+
+	c := verifier.Curve
+	rand, err := c.Rand()
+	require.NoError(t, err)
+	k := c.NewRandomZr(rand)
+	kInv := k.Copy()
+	kInv.InvModOrder()
+
+	scaledPP := make([]*math.G1, len(verifier.PedParams))
+	for i, g := range verifier.PedParams {
+		scaledPP[i] = g.Mul(k)
+	}
+	moved := &issue.SameType{
+		Type:             c.ModMul(proof.Type, kInv, c.GroupOrder),
+		BlindingFactor:   c.ModMul(proof.BlindingFactor, kInv, c.GroupOrder),
+		Challenge:        proof.Challenge,
+		CommitmentToType: proof.CommitmentToType,
+	}
+
+	err = issue.NewSameTypeVerifier(verifier.Tokens, scaledPP, c).Verify(moved)
+	require.ErrorIs(t, err, issue.ErrInvalidSameTypeProof)
+}

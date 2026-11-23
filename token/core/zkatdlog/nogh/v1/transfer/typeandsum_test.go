@@ -421,3 +421,40 @@ func TestNewTypeAndSumWitness_EmptyInputs(t *testing.T) {
 	require.Nil(t, witness)
 	assert.Contains(t, err.Error(), "invalid number of token inputs")
 }
+
+// TestTypeAndSum_ChallengeBindsPedersenGenerators is a regression test for #2782.
+// A proof made under generators pp is moved to pp' = k·pp by dividing every response by k.
+// The verifier then recomputes the same transcript points, so the proof must still fail:
+// the challenge has to depend on the generators.
+func TestTypeAndSum_ChallengeBindsPedersenGenerators(t *testing.T) {
+	env := NewTypeAndSumEnv(t)
+	proof, err := env.prover.Prove()
+	require.NoError(t, err)
+	require.NoError(t, env.verifier.Verify(proof))
+
+	rand, err := env.c.Rand()
+	require.NoError(t, err)
+	k := env.c.NewRandomZr(rand)
+	kInv := k.Copy()
+	kInv.InvModOrder()
+
+	scaledPP := make([]*math.G1, len(env.pp))
+	for i, g := range env.pp {
+		scaledPP[i] = g.Mul(k)
+	}
+	div := func(z *math.Zr) *math.Zr { return env.c.ModMul(z, kInv, env.c.GroupOrder) }
+	moved := &transfer.TypeAndSumProof{
+		CommitmentToType:   proof.CommitmentToType,
+		Type:               div(proof.Type),
+		TypeBlindingFactor: div(proof.TypeBlindingFactor),
+		EqualityOfSum:      div(proof.EqualityOfSum),
+		Challenge:          proof.Challenge,
+	}
+	for i := range proof.InputValues {
+		moved.InputValues = append(moved.InputValues, div(proof.InputValues[i]))
+		moved.InputBlindingFactors = append(moved.InputBlindingFactors, div(proof.InputBlindingFactors[i]))
+	}
+
+	verifier := transfer.NewTypeAndSumVerifier(scaledPP, env.verifier.Inputs, env.verifier.Outputs, env.c)
+	require.ErrorIs(t, verifier.Verify(moved), transfer.ErrSumAndTypeChallengeMismatch)
+}

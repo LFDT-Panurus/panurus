@@ -15,6 +15,26 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
+// sameTypeTranscriptDomain is the Fiat-Shamir domain separator of the SameType proof.
+const sameTypeTranscriptDomain = "SameType-v1"
+
+// sameTypeChallenge derives the SameType challenge from the full statement:
+// domain tag, Pedersen generators, then the commitment to type and the prover commitment.
+// Prover and verifier must call it with the same arguments in the same order.
+func sameTypeChallenge(c *math.Curve, pedParams []*math.G1, comType, com *math.G1) (*math.Zr, error) {
+	tr, err := common.NewPedersenStatementTranscript(c, sameTypeTranscriptDomain, pedParams)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := common.GetG1Array([]*math.G1{comType, com}).Bytes()
+	if err != nil {
+		return nil, err
+	}
+	tr.Absorb(raw)
+
+	return tr.Squeeze()
+}
+
 // SameType is a zero-knowledge proof that all issued tokens have the same type
 // and that the type is properly committed in each token's Pedersen commitment.
 type SameType struct {
@@ -121,6 +141,9 @@ func NewSameTypeProver(ttype token2.Type, bf *math.Zr, com *math.G1, pp []*math.
 
 // Prove generates the SameType proof.
 func (p *SameTypeProver) Prove() (*SameType, error) {
+	if err := common.CheckPedersenGenerators(p.PedParams); err != nil {
+		return nil, errors.Join(ErrProveTypeFailed, err)
+	}
 	tokenType := p.Curve.HashToZr([]byte(p.tokenType))
 
 	// Compute commitment to the randomness.
@@ -128,14 +151,11 @@ func (p *SameTypeProver) Prove() (*SameType, error) {
 	if err != nil {
 		return nil, errors.Join(ErrProveTypeFailed, err)
 	}
-	array := common.GetG1Array([]*math.G1{p.CommitmentToType, p.commitment})
-	var toHash []byte
-	toHash, err = array.Bytes()
+	// Compute the challenge using Fiat-Shamir.
+	chal, err := sameTypeChallenge(p.Curve, p.PedParams, p.CommitmentToType, p.commitment)
 	if err != nil {
 		return nil, errors.Join(ErrProveTypeFailed, err)
 	}
-	// Compute the challenge using Fiat-Shamir.
-	chal := p.Curve.HashToZr(toHash)
 	proof := &SameType{
 		CommitmentToType: p.CommitmentToType,
 		Challenge:        chal,
@@ -187,18 +207,21 @@ func NewSameTypeVerifier(tokens []*math.G1, pp []*math.G1, c *math.Curve) *SameT
 
 // Verify checks the validity of the SameType proof.
 func (v *SameTypeVerifier) Verify(proof *SameType) error {
+	if err := common.CheckPedersenGenerators(v.PedParams); err != nil {
+		return errors.Join(ErrVerifySameTypeProofFailed, err)
+	}
 	// Recompute the commitment to randomness from the proof responses.
 	com := v.PedParams[0].Mul(proof.Type)
 	com.Add(v.PedParams[2].Mul(proof.BlindingFactor))
 	com.Sub(proof.CommitmentToType.Mul(proof.Challenge))
 
 	// Recompute the challenge and check it matches the one in the proof.
-	raw, err := common.GetG1Array([]*math.G1{proof.CommitmentToType, com}).Bytes()
+	chal, err := sameTypeChallenge(v.Curve, v.PedParams, proof.CommitmentToType, com)
 	if err != nil {
 		return errors.Join(ErrVerifySameTypeProofFailed, err)
 	}
 
-	if !v.Curve.HashToZr(raw).Equals(proof.Challenge) {
+	if !chal.Equals(proof.Challenge) {
 		return ErrInvalidSameTypeProof
 	}
 

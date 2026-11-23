@@ -11,6 +11,7 @@ import (
 
 	mathlib "github.com/IBM/mathlib"
 	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/asn1"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
 type Transcript struct {
@@ -75,4 +76,41 @@ func (tr *Transcript) Squeeze() (*mathlib.Zr, error) {
 	tr.Absorb(x.Bytes())
 
 	return x, nil
+}
+
+// pedersenGeneratorsLen is the number of Pedersen generators (g_type, g_value, h).
+const pedersenGeneratorsLen = 3
+
+// CheckPedersenGenerators returns an error if generators are not exactly 3 non-nil elements.
+func CheckPedersenGenerators(generators []*mathlib.G1) error {
+	if len(generators) != pedersenGeneratorsLen {
+		return errors.Errorf("invalid number of pedersen generators: expected %d, got %d", pedersenGeneratorsLen, len(generators))
+	}
+	for i, g := range generators {
+		if g == nil {
+			return errors.Errorf("nil pedersen generator at index %d", i)
+		}
+	}
+
+	return nil
+}
+
+// NewPedersenStatementTranscript returns a transcript seeded with domainSeparator and the
+// Pedersen generators, so that a sigma-protocol challenge squeezed from it is bound to the
+// proof type and to the generators the statement is relative to.
+// It returns an error if the curve is nil or CheckPedersenGenerators fails.
+func NewPedersenStatementTranscript(c *mathlib.Curve, domainSeparator string, generators []*mathlib.G1) (*Transcript, error) {
+	if c == nil {
+		return nil, errors.New("nil curve")
+	}
+	if err := CheckPedersenGenerators(generators); err != nil {
+		return nil, err
+	}
+	tr := &Transcript{Curve: c}
+	tr.InitHasherWithDomain(domainSeparator)
+	for _, g := range generators {
+		tr.Absorb(g.Bytes())
+	}
+
+	return tr, nil
 }
