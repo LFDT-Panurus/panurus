@@ -799,38 +799,49 @@ func (c *CollectEndorsementsView) addPartyToDistributionList(context view.Contex
 	}
 	logger.DebugfContext(context.Context(), "searching for long term identity [%s]", longTermIdentity)
 
+	if isMe {
+		for _, entry := range distributionListCompressed {
+			if longTermIdentity.Equal(entry.LongTerm) {
+				logger.DebugfContext(context.Context(), "skip adding [%s] to distribution list, already added", party)
+
+				return distributionListCompressed, nil
+			}
+		}
+		logger.DebugfContext(context.Context(), "adding [%s] to distribution list", party)
+
+		return append(distributionListCompressed, distributionListEntry{
+			IsMe:     true,
+			LongTerm: longTermIdentity,
+			ID:       party,
+			Auditor:  false,
+		}), nil
+	}
+
+	eID, err := c.enrollmentIDForParty(context.Context(), party)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed getting enrollment ID for [%s]", party.UniqueID())
+	}
+
 	for i, entry := range distributionListCompressed {
 		if longTermIdentity.Equal(entry.LongTerm) {
-			if !isMe && !entry.IsMe && !entry.Auditor {
-				eID, err := c.enrollmentIDForParty(context.Context(), party)
-				if err != nil {
-					return nil, errors.Wrapf(err, "failed getting enrollment ID for [%s]", party.UniqueID())
-				}
-				if !slices.Contains(entry.EIDs, eID) {
-					distributionListCompressed[i].EIDs = append(distributionListCompressed[i].EIDs, eID)
-				}
+			if !slices.Contains(entry.EIDs, eID) {
+				distributionListCompressed[i].EIDs = append(distributionListCompressed[i].EIDs, eID)
+				logger.DebugfContext(context.Context(), "[%s] shares node [%s], EIDs now %v", party, longTermIdentity, distributionListCompressed[i].EIDs)
+			} else {
+				logger.DebugfContext(context.Context(), "skip adding [%s], node and EID already present", party)
 			}
-			logger.DebugfContext(context.Context(), "skip adding [%s] to distribution list, already added", party)
 
 			return distributionListCompressed, nil
 		}
 	}
 
 	logger.DebugfContext(context.Context(), "adding [%s] to distribution list", party)
-	var eIDs []string
-	if !isMe {
-		eID, err := c.enrollmentIDForParty(context.Context(), party)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed getting enrollment ID for [%s]", party.UniqueID())
-		}
-		eIDs = []string{eID}
-	}
 
 	return append(distributionListCompressed, distributionListEntry{
-		IsMe:     isMe,
+		IsMe:     false,
 		LongTerm: longTermIdentity,
 		ID:       party,
-		EIDs:     eIDs,
+		EIDs:     []string{eID},
 		Auditor:  false,
 	}), nil
 }
