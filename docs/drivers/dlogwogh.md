@@ -122,7 +122,7 @@ For production deployments, use `BLS12_381_BBS`.
 
 - **Challenge Hash ($H_{FS}$)**: $\{0,1\}^* \to \mathbb{Z}_r$ used for the Fiat-Shamir heuristic to make ZKPs non-interactive.
 - **Type Hash ($H_{Type}$)**: $\{0,1\}^* \to \mathbb{Z}_r$ used to map token type strings (e.g., "USD") to the scalar field.
-- **Domain Generators**: The Pedersen generators $g_0, g_1, g_2$ are derived using hash-to-group $H_{G1}$ on public domain-separated strings of the form `"lfdt-panurus.<DriverName>.<DriverVersion>.PedersenGenerators.<i>"`. See [Section 2.3](#23-generator-derivation) for the exact strings.
+- **Domain Generators**: The Pedersen generators $g_0, g_1, g_2$ are derived using hash-to-group $H_{G1}$ on public domain-separated strings of the form `"<Label>PedersenGenerators.<i>"`. See [Section 2.3](#23-generator-derivation) for the exact strings.
 
 ### 2.3 Generator Derivation
 
@@ -131,10 +131,21 @@ The Pedersen generators are derived **deterministically via hash-to-curve** from
 **Derivation formula** (implemented in [`GeneratePedersenParameters`](../../token/core/zkatdlog/nogh/v1/setup/setup.go)):
 
 ```
-PedersenGenerators[i] = HashToG1("lfdt-panurus.<DriverName>.<DriverVersion>.PedersenGenerators.<i>")
+PedersenGenerators[i] = HashToG1(<Label> + "PedersenGenerators.<i>")
 ```
 
-For the `zkatdlognogh` v1 driver the three input strings are therefore:
+`<Label>` depends on the optional `GeneratorDomain` field of the public parameters:
+
+| `GeneratorDomain` | `<Label>` |
+|-------------------|-----------|
+| empty (default) | `lfdt-panurus.zkatdlognogh.1.` |
+| `<d>` | `lfdt-panurus.zkatdlognogh.custom.<len(d)>:<d>.` |
+
+The default label is frozen at the v1 value. It does not depend on the driver version, so a driver version bump keeps the generators and the token format, and previously issued tokens stay spendable.
+
+An issuer rotates every generator on purpose by setting `GeneratorDomain` (`SetupParams.GeneratorDomain`). The domain is at most 128 bytes of printable ASCII. The length prefix keeps a custom label distinct from the default label and from the generator suffixes. A rotation changes the token format: tokens issued before it must be upgraded (see the public parameters history in `crypto/upgrade`). Nodes that do not know the `generator_domain` field derive the default generators and reject the rotated parameters.
+
+With the default label, the input strings are:
 
 | Index | Domain-separated input string |
 |-------|-------------------------------|
@@ -142,7 +153,7 @@ For the `zkatdlognogh` v1 driver the three input strings are therefore:
 | 1 | `lfdt-panurus.zkatdlognogh.1.PedersenGenerators.1` |
 | 2 | `lfdt-panurus.zkatdlognogh.1.PedersenGenerators.2` |
 
-The same nothing-up-my-sleeve technique is used for all range-proof generators, ensuring a uniform, auditable setup. The full set of domain strings for `zkatdlognogh` v1 is:
+The same nothing-up-my-sleeve technique is used for all range-proof generators, ensuring a uniform, auditable setup. The full set of default domain strings is (with a `GeneratorDomain`, replace `lfdt-panurus.zkatdlognogh.1.` with the custom label):
 
 **Bulletproof range-proof generators** (implemented in [`GenerateRangeProofParameters`](../../token/core/zkatdlog/nogh/v1/setup/setup.go)):
 
@@ -162,7 +173,9 @@ The same nothing-up-my-sleeve technique is used for all range-proof generators, 
 
 **Security note**: Because the generators are derived from a public hash, no single party—including the operator who ran `tokengen`—knows the discrete-log relation between $g_0$, $g_1$, and $g_2$ with respect to each other. This is a necessary pre-condition for the binding property of Pedersen commitments (see [Section 12.1](#121-soundness)).
 
-**Validation**: `PublicParams.Validate` does not trust the generators it receives. It re-derives the Pedersen generators, the Bulletproof generators (`P`, `Q`, `L_i`, `R_i`), and the CSP generators (`L_i`, `R_i`) from the label above, using the public parameters' driver name, driver version, and bit length. It rejects any parameters that differ, including `NumberOfRounds` mismatches. A generator set such as $g_1 = g_2^x$ is therefore refused, even though each generator is a valid curve point. `Deserialize` also rejects public parameters whose inner driver name or version differs from the checked identifier, so the label cannot be changed independently of the identifier. Validation costs about 4 ms for 64-bit parameters on BN254 and runs when parameters are loaded. Public parameters generated with other generators must be regenerated.
+**Validation**: `PublicParams.Validate` does not trust the generators it receives. It re-derives the Pedersen generators, the Bulletproof generators (`P`, `Q`, `L_i`, `R_i`), and the CSP generators (`L_i`, `R_i`) from the label above and the bit length. It rejects any parameters that differ, including `NumberOfRounds` mismatches. A generator set such as $g_1 = g_2^x$ is therefore refused, even though each generator is a valid curve point. It also rejects an invalid `GeneratorDomain`. `Deserialize` also rejects public parameters whose inner driver name or version differs from the checked identifier. Validation costs about 4 ms for 64-bit parameters on BN254 and runs when parameters are loaded.
+
+**Legacy public parameters**: releases before hash-to-curve derivation (up to v0.13.0) generated random Pedersen generators and used other range-proof strings. `Validate` rejects such public parameters, including when the public parameters history loads them to upgrade old tokens. They must be regenerated, and tokens issued under them cannot be upgraded through the history.
 
 The public parameters include three Pedersen generators `[g_0, g_1, g_2]` used for commitment schemes:
 - `g_0`: Used for token type commitments
@@ -1301,8 +1314,10 @@ The ZKAT-DLOG (NOGH) driver uses Protocol Buffers for all serialized data struct
 - `max_token` (uint64): Maximum token value (2^precision - 1)
 - `quantity_precision` (uint64): Bit-precision for token quantities (16, 32, or 64)
 - `extra_data` (map<string, bytes>): Extensibility map for custom parameters
+- `csp_range_proof_params` (CSPRangeProofParams): CSP parameters for range proofs
+- `generator_domain` (string): Optional domain that replaces the default generator label (see [Section 2.3](#23-generator-derivation))
 
-**RangeProofParams**: Bulletproof configuration for proving values are in valid range. All generators are derived via hash-to-curve from domain-separated strings of the form `"lfdt-panurus.<DriverName>.<DriverVersion>.RangeProof.{P,Q,L.<i>,R.<i>}"` (see [Section 2.3](#23-generator-derivation)).
+**RangeProofParams**: Bulletproof configuration for proving values are in valid range. All generators are derived via hash-to-curve from domain-separated strings of the form `"<Label>RangeProof.{P,Q,L.<i>,R.<i>}"` (see [Section 2.3](#23-generator-derivation)).
 - `left_generators` (repeated G1): Left-side generators for inner product argument; `LeftGenerators[i]` = `HashToG1("lfdt-panurus.zkatdlognogh.1.RangeProof.L.<i>")`
 - `right_generators` (repeated G1): Right-side generators for inner product argument; `RightGenerators[i]` = `HashToG1("lfdt-panurus.zkatdlognogh.1.RangeProof.R.<i>")`
 - `P` (G1): Base point for IPA; `HashToG1("lfdt-panurus.zkatdlognogh.1.RangeProof.P")`
@@ -1310,7 +1325,7 @@ The ZKAT-DLOG (NOGH) driver uses Protocol Buffers for all serialized data struct
 - `bit_length` (uint64): Number of bits in the range (e.g., 64)
 - `number_of_rounds` (uint64): Number of rounds in the protocol (log₂ of bit_length)
 
-**CSPRangeProofParams**: CSP configuration for proving values are in valid range. All generators are derived via hash-to-curve from domain-separated strings of the form `"lfdt-panurus.<DriverName>.<DriverVersion>.CSPRangeProof.{L.<i>,R.<i>}"` (see [Section 2.3](#23-generator-derivation)).
+**CSPRangeProofParams**: CSP configuration for proving values are in valid range. All generators are derived via hash-to-curve from domain-separated strings of the form `"<Label>CSPRangeProof.{L.<i>,R.<i>}"` (see [Section 2.3](#23-generator-derivation)).
 - `left_generators` (repeated G1): Left-side generators; `LeftGenerators[i]` = `HashToG1("lfdt-panurus.zkatdlognogh.1.CSPRangeProof.L.<i>")`
 - `right_generators` (repeated G1): Right-side generators; `RightGenerators[i]` = `HashToG1("lfdt-panurus.zkatdlognogh.1.CSPRangeProof.R.<i>")`
 - `bit_length` (uint64): Number of bits in the range (e.g., 64)

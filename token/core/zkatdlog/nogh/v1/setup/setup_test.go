@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
 
 	math3 "github.com/IBM/mathlib"
@@ -1057,10 +1059,22 @@ func TestValidateRejectsNonDerivedGenerators(t *testing.T) {
 			wantErr:   "invalid pedersen generators",
 		},
 		{
-			name:      "relabelled version without regenerating",
+			name:      "generator domain set without regenerating",
 			proofType: rp.RangeProofType,
-			tamper:    func(pp *PublicParams) { pp.DriverVersion = 2 },
+			tamper:    func(pp *PublicParams) { pp.GeneratorDomain = "rotated" },
 			wantErr:   "invalid pedersen generators",
+		},
+		{
+			name:      "generator domain too long",
+			proofType: rp.RangeProofType,
+			tamper:    func(pp *PublicParams) { pp.GeneratorDomain = strings.Repeat("a", MaxGeneratorDomainLength+1) },
+			wantErr:   "invalid generator domain",
+		},
+		{
+			name:      "generator domain not printable",
+			proofType: rp.RangeProofType,
+			tamper:    func(pp *PublicParams) { pp.GeneratorDomain = "a\x00b" },
+			wantErr:   "invalid generator domain",
 		},
 	}
 	for _, tc := range tests {
@@ -1094,4 +1108,101 @@ func TestDeserializeRejectsInnerLabelMismatch(t *testing.T) {
 	_, err = NewPublicParamsFromBytes(raw, DLogNoGHDriverName, ProtocolV1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid driver name or version")
+}
+
+// TestDefaultGeneratorsArePinned pins the default generators to the v1 derivation strings.
+// Changing them would make every token issued so far unusable.
+func TestDefaultGeneratorsArePinned(t *testing.T) {
+	curve := math3.Curves[math3.BN254]
+	pp, err := WithVersionAndProofType(32, testingHelper(t), math3.BN254, ProtocolV1, rp.RangeProofType)
+	require.NoError(t, err)
+	csp, err := WithVersionAndProofType(32, testingHelper(t), math3.BN254, ProtocolV1, rp.CSPRangeProofType)
+	require.NoError(t, err)
+
+	for i, g := range pp.PedersenGenerators {
+		assert.True(t, g.Equals(curve.HashToG1([]byte("lfdt-panurus.zkatdlognogh.1.PedersenGenerators."+strconv.Itoa(i)))), "pedersen %d", i)
+	}
+	assert.True(t, pp.RangeProofParams.P.Equals(curve.HashToG1([]byte("lfdt-panurus.zkatdlognogh.1.RangeProof.P"))))
+	assert.True(t, pp.RangeProofParams.Q.Equals(curve.HashToG1([]byte("lfdt-panurus.zkatdlognogh.1.RangeProof.Q"))))
+	for i := range pp.RangeProofParams.LeftGenerators {
+		assert.True(t, pp.RangeProofParams.LeftGenerators[i].Equals(curve.HashToG1([]byte("lfdt-panurus.zkatdlognogh.1.RangeProof.L."+strconv.Itoa(i)))), "rp L %d", i)
+		assert.True(t, pp.RangeProofParams.RightGenerators[i].Equals(curve.HashToG1([]byte("lfdt-panurus.zkatdlognogh.1.RangeProof.R."+strconv.Itoa(i)))), "rp R %d", i)
+	}
+	for i := range csp.CSPRangeProofParams.LeftGenerators {
+		assert.True(t, csp.CSPRangeProofParams.LeftGenerators[i].Equals(curve.HashToG1([]byte("lfdt-panurus.zkatdlognogh.1.CSPRangeProof.L."+strconv.Itoa(i)))), "csp L %d", i)
+		assert.True(t, csp.CSPRangeProofParams.RightGenerators[i].Equals(curve.HashToG1([]byte("lfdt-panurus.zkatdlognogh.1.CSPRangeProof.R."+strconv.Itoa(i)))), "csp R %d", i)
+	}
+}
+
+// TestDriverVersionBumpKeepsGenerators checks that the generators do not depend on the driver version.
+func TestDriverVersionBumpKeepsGenerators(t *testing.T) {
+	v1, err := WithVersion(32, testingHelper(t), math3.BN254, ProtocolV1)
+	require.NoError(t, err)
+	v2, err := WithVersion(32, testingHelper(t), math3.BN254, driver.TokenDriverVersion(2))
+	require.NoError(t, err)
+	require.NoError(t, v2.Validate())
+
+	require.Len(t, v2.PedersenGenerators, len(v1.PedersenGenerators))
+	for i := range v1.PedersenGenerators {
+		assert.True(t, v1.PedersenGenerators[i].Equals(v2.PedersenGenerators[i]))
+	}
+	assert.True(t, v1.RangeProofParams.P.Equals(v2.RangeProofParams.P))
+
+	// v1 generators relabelled as v2 stay valid
+	v1.DriverVersion = 2
+	require.NoError(t, v1.Validate())
+}
+
+func TestGeneratorDomain(t *testing.T) {
+	issuerPK := testingHelper(t)
+	def, err := Setup(32, issuerPK, math3.BN254)
+	require.NoError(t, err)
+
+	for _, proofType := range []rp.ProofType{rp.RangeProofType, rp.CSPRangeProofType} {
+		pp, err := NewWith(SetupParams{
+			DriverName:      DLogNoGHDriverName,
+			DriverVersion:   ProtocolV1,
+			BitLength:       32,
+			IdemixIssuerPK:  issuerPK,
+			CurveID:         math3.BN254,
+			ProofType:       proofType,
+			GeneratorDomain: "acme.second-generation",
+		})
+		require.NoError(t, err)
+		require.NoError(t, pp.Validate())
+		for i := range pp.PedersenGenerators {
+			assert.False(t, pp.PedersenGenerators[i].Equals(def.PedersenGenerators[i]), "pedersen %d not rotated", i)
+		}
+
+		// the domain survives serialization and the result still validates
+		raw, err := pp.Serialize()
+		require.NoError(t, err)
+		back, err := NewPublicParamsFromBytes(raw, DLogNoGHDriverName, ProtocolV1)
+		require.NoError(t, err)
+		assert.Equal(t, "acme.second-generation", back.GeneratorDomain)
+		require.NoError(t, back.Validate())
+
+		// dropping the domain without regenerating is rejected
+		back.GeneratorDomain = ""
+		require.Error(t, back.Validate())
+	}
+
+	// a domain that spells the default label still yields different generators
+	pp, err := NewWith(SetupParams{
+		DriverName: DLogNoGHDriverName, DriverVersion: ProtocolV1, BitLength: 32,
+		IdemixIssuerPK: issuerPK, CurveID: math3.BN254, ProofType: rp.RangeProofType,
+		GeneratorDomain: "lfdt-panurus.zkatdlognogh.1.",
+	})
+	require.NoError(t, err)
+	assert.False(t, pp.PedersenGenerators[0].Equals(def.PedersenGenerators[0]))
+
+	for _, bad := range []string{strings.Repeat("a", MaxGeneratorDomainLength+1), "tab\there", "caf\xc3\xa9"} {
+		_, err := NewWith(SetupParams{
+			DriverName: DLogNoGHDriverName, DriverVersion: ProtocolV1, BitLength: 32,
+			IdemixIssuerPK: issuerPK, CurveID: math3.BN254, ProofType: rp.RangeProofType,
+			GeneratorDomain: bad,
+		})
+		require.Error(t, err, "domain %q", bad)
+		assert.Contains(t, err.Error(), "invalid generator domain")
+	}
 }

@@ -41,6 +41,16 @@ const (
 
 var SupportedPrecisions = []uint64{16, 32, 64}
 
+const (
+	// defaultGeneratorLabel is the domain prefix of all generators when no GeneratorDomain is set.
+	// It is frozen at the v1 value so that a driver version bump does not change the generators.
+	defaultGeneratorLabel = "lfdt-panurus.zkatdlognogh.1."
+	// customGeneratorLabelPrefix prefixes the label derived from a GeneratorDomain.
+	customGeneratorLabelPrefix = "lfdt-panurus.zkatdlognogh.custom."
+	// MaxGeneratorDomainLength is the maximum length in bytes of a GeneratorDomain.
+	MaxGeneratorDomainLength = 128
+)
+
 // SetupParams contains all parameters needed to setup public parameters
 type SetupParams struct {
 	DriverName     driver.TokenDriverName
@@ -49,6 +59,8 @@ type SetupParams struct {
 	IdemixIssuerPK []byte
 	CurveID        mathlib.CurveID
 	ProofType      rp.ProofType
+	// GeneratorDomain, if not empty, replaces the default domain of all generators.
+	GeneratorDomain string
 }
 
 type CSPRangeProofParams struct {
@@ -265,6 +277,9 @@ type PublicParams struct {
 	// ExtraData contains any extra custom data
 	ExtraData           driver.Extras
 	CSPRangeProofParams *CSPRangeProofParams
+	// GeneratorDomain, if not empty, replaces the default domain from which all generators are derived.
+	// Changing it rotates every generator and, with them, the token format.
+	GeneratorDomain string
 	// ExecutorProvider is a runtime-only field (not serialized) that controls
 	// how independent range proofs are executed. If nil, SerialProvider is used.
 	ExecutorProvider executor.ExecutorProvider `json:"-"`
@@ -324,10 +339,14 @@ func NewWith(params SetupParams) (*PublicParams, error) {
 	if params.BitLength == 0 {
 		return nil, errors.New("invalid bit length, should be greater than 0")
 	}
+	if err := validateGeneratorDomain(params.GeneratorDomain); err != nil {
+		return nil, err
+	}
 	pp := &PublicParams{
-		DriverName:    params.DriverName,
-		DriverVersion: params.DriverVersion,
-		Curve:         params.CurveID,
+		DriverName:      params.DriverName,
+		DriverVersion:   params.DriverVersion,
+		Curve:           params.CurveID,
+		GeneratorDomain: params.GeneratorDomain,
 		IdemixIssuerPublicKeys: []*IdemixIssuerPublicKey{
 			{
 				PublicKey: params.IdemixIssuerPK,
@@ -460,6 +479,7 @@ func (p *PublicParams) Serialize() ([]byte, error) {
 		MaxToken:               p.MaxToken,
 		QuantityPrecision:      p.QuantityPrecision,
 		Metadata:               p.ExtraData,
+		GeneratorDomain:        p.GeneratorDomain,
 	}
 	raw, err := proto.Marshal(publicParams)
 	if err != nil {
@@ -525,7 +545,7 @@ func (p *PublicParams) Deserialize(raw []byte) error {
 
 	p.DriverName = driver.TokenDriverName(publicParams.TokenDriverName)
 	p.DriverVersion = driver.TokenDriverVersion(publicParams.TokenDriverVersion)
-	// The generator label is derived from the inner name and version: they must match the checked identifier.
+	// The inner name and version must match the checked identifier.
 	if got := string(core.DriverIdentifier(p.DriverName, p.DriverVersion)); got != expectedID {
 		return errors.Errorf("invalid driver name or version, expecting identifier [%s], got [%s]", expectedID, got)
 	}
@@ -568,13 +588,35 @@ func (p *PublicParams) Deserialize(raw []byte) error {
 	if p.ExtraData == nil {
 		p.ExtraData = driver.Extras{}
 	}
+	p.GeneratorDomain = publicParams.GeneratorDomain
 
 	return nil
 }
 
 // generatorLabel returns the public domain-separation prefix used to derive all generators.
+// It does not depend on the driver version. A GeneratorDomain is length-prefixed so that it
+// cannot be confused with the default label or with the generator suffixes.
 func (p *PublicParams) generatorLabel() string {
-	return "lfdt-panurus." + string(p.DriverName) + "." + strconv.Itoa(int(p.DriverVersion)) + "."
+	if p.GeneratorDomain == "" {
+		return defaultGeneratorLabel
+	}
+
+	return customGeneratorLabelPrefix + strconv.Itoa(len(p.GeneratorDomain)) + ":" + p.GeneratorDomain + "."
+}
+
+// validateGeneratorDomain checks that domain is empty, or at most MaxGeneratorDomainLength
+// bytes of printable ASCII.
+func validateGeneratorDomain(domain string) error {
+	if len(domain) > MaxGeneratorDomainLength {
+		return errors.Errorf("invalid generator domain: length [%d] exceeds [%d]", len(domain), MaxGeneratorDomainLength)
+	}
+	for i := range len(domain) {
+		if domain[i] < 0x20 || domain[i] > 0x7e {
+			return errors.Errorf("invalid generator domain: non-printable byte at position [%d]", i)
+		}
+	}
+
+	return nil
 }
 
 func (p *PublicParams) derivePedersenGenerators() []*mathlib.G1 {
@@ -826,6 +868,9 @@ func (p *PublicParams) Validate() error {
 	}
 
 	if err := p.validateIdemixIssuerPublicKeys(); err != nil {
+		return err
+	}
+	if err := validateGeneratorDomain(p.GeneratorDomain); err != nil {
 		return err
 	}
 	if err := math.CheckElements(p.PedersenGenerators, p.Curve, 3); err != nil {

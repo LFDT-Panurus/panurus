@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	math3 "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,13 +36,25 @@ func FuzzPublicParamsDeserializeNoPanic(f *testing.F) {
 	f.Add([]byte{})
 	f.Add([]byte("malformed"))
 	f.Add(raw[:len(raw)/2])
+	withDomain, err := NewWith(SetupParams{
+		DriverName: DLogNoGHDriverName, DriverVersion: ProtocolV1, BitLength: 32,
+		IdemixIssuerPK: issuerPK, CurveID: math3.BN254, ProofType: rp.RangeProofType,
+		GeneratorDomain: "fuzz.domain",
+	})
+	require.NoError(f, err)
+	rawWithDomain, err := withDomain.Serialize()
+	require.NoError(f, err)
+	f.Add(rawWithDomain)
 
 	f.Fuzz(func(t *testing.T, raw []byte) {
 		if len(raw) > maxFuzzPublicParamsBytes {
 			t.Skip()
 		}
 		require.NotPanics(t, func() {
-			_, _ = NewPublicParamsFromBytes(raw, DLogNoGHDriverName, ProtocolV1)
+			pp, err := NewPublicParamsFromBytes(raw, DLogNoGHDriverName, ProtocolV1)
+			if err == nil {
+				_ = pp.Validate()
+			}
 		})
 	})
 }

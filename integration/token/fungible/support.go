@@ -19,7 +19,6 @@ import (
 	"strings"
 	"time"
 
-	mathlib "github.com/IBM/mathlib"
 	tplatform "github.com/LFDT-Panurus/panurus/integration/nwo/token"
 	gfabtokenv1 "github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/fabtokenv1"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
@@ -1275,31 +1274,30 @@ func UpdatePublicParams(network *integration.Infrastructure, publicParams []byte
 	p.(*tplatform.Platform).UpdatePublicParams(tms, publicParams)
 }
 
-// RegeneratePedersenGenerators returns the passed zkatdlog public parameters with a fresh set
-// of Pedersen generators, derived on the same curve from the passed domain separator.
-// Everything else -- curve, precision, range proof parameters, idemix issuer keys, issuers and
+// RegenerateGenerators returns the passed zkatdlog public parameters with every generator
+// rotated: it sets the passed GeneratorDomain and re-derives the Pedersen and range proof
+// generators from it. Everything else -- curve, precision, idemix issuer keys, issuers and
 // auditors -- is left untouched, so every identity, issuer and auditor stays valid across the
 // change.
 //
 // A zkatdlog token format digests the Pedersen generators (see the driver's
-// SupportedTokenFormat), and those generators are derived deterministically from a fixed
-// domain separator, so two independently generated parameter sets of the same precision on the
-// same curve share them. Rederiving them is therefore the way to model a regeneration of the
-// public parameters that renames every token created before it, turning previously issued
-// outputs into tokens the driver no longer lists as supported.
-func RegeneratePedersenGenerators(publicParams []byte, domain string) []byte {
+// SupportedTokenFormat), so the rotation renames every token created before it, turning
+// previously issued outputs into tokens the driver no longer lists as supported.
+func RegenerateGenerators(publicParams []byte, domain string) []byte {
 	pp, err := dlognoghv1.NewPublicParamsFromBytes(publicParams, dlognoghv1.DLogNoGHDriverName, dlognoghv1.ProtocolV1)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	gomega.Expect(pp.Validate()).NotTo(gomega.HaveOccurred())
 	originalFormats, err := dlogtoken.CommTokenFormats(pp)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	curve := mathlib.Curves[pp.Curve]
-	generators := make([]*mathlib.G1, len(pp.PedersenGenerators))
-	for i := range generators {
-		generators[i] = curve.HashToG1([]byte(domain + ".PedersenGenerators." + strconv.Itoa(i)))
+	pp.GeneratorDomain = domain
+	gomega.Expect(pp.GeneratePedersenParameters()).NotTo(gomega.HaveOccurred())
+	if pp.RangeProofParams != nil {
+		gomega.Expect(pp.GenerateRangeProofParameters(pp.RangeProofParams.BitLength)).NotTo(gomega.HaveOccurred())
 	}
-	pp.PedersenGenerators = generators
+	if pp.CSPRangeProofParams != nil {
+		gomega.Expect(pp.GenerateCSPRangeProofParameters(pp.CSPRangeProofParams.BitLength)).NotTo(gomega.HaveOccurred())
+	}
 	gomega.Expect(pp.Validate()).NotTo(gomega.HaveOccurred())
 
 	// the regeneration must really rename every commitment token: if the two generations shared
