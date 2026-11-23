@@ -94,14 +94,14 @@ subsystem. Function names are not unique across packages — for example
 `FuzzActionDeserializerNoPanic` and `FuzzBulletProofVerifierNoPanic` exist in several —
 so the `Package` column is what identifies a row. Paths are relative to the repository root.
 
-Of the 76, **74** run in the nightly campaign (see [Nightly Fuzzing in CI](#nightly-fuzzing-in-ci)).
-The two targets in `token/services/ttx` — `FuzzUnmarshalMetaNeverPanics` and
-`FuzzCompositeRecipientValidationNeverPanics` — are only exercised through their seed corpus
-and are marked with † below.
+All targets run in the nightly campaign except those marked with † below (see
+[Nightly Fuzzing in CI](#nightly-fuzzing-in-ci)); `FuzzUnmarshalMetaNeverPanics` and
+`FuzzCompositeRecipientValidationNeverPanics` in `token/services/ttx` are only exercised
+through their seed corpus.
 
-Nineteen targets live in the separate `x/token/services/network/evm` Go module and one in the
-separate `token/services/storage/db/kvs/hashicorp` module; they are listed in their own
-sections, because `go test` must be run from that module's root.
+Targets in the separate `x/token/services/network/evm` Go module are listed in their own
+section, and the target in `token/services/storage/db/kvs/hashicorp` is noted as a separate
+module, because `go test` must be run from that module's root.
 
 #### Token request and core drivers
 
@@ -116,7 +116,6 @@ sections, because `go test` must be run from that module's root.
 | `FuzzActionResourceLimits` | `token/core/fabtoken/v1/validator` | FabToken issue and transfer actions shaped by input/output counts; over-limit actions must be rejected with a typed error. |
 | `FuzzTransferHTLCValidateNoPanic` | `token/core/fabtoken/v1/validator` | Attacker-controlled owner bytes of a transfer's inputs through `TransferHTLCValidate`; an HTLC-owned input must never be accepted alongside other inputs. |
 | `FuzzTransferValidationStepsNoPanic` | `token/core/fabtoken/v1/validator` | A transfer action deserialized from fuzzed bytes and run through the four transfer validation steps in a fuzz-chosen order. |
-| `FuzzDecodeIdentityNoPanic` | `token/services/identity/marshal` | Malformed DER through `DecodeIdentity`, the base ASN.1 parser underneath every identity type. |
 | `FuzzUnmarshalTypedTokenNoPanic` | `token/services/tokens` | Untrusted, ledger-stored or peer-supplied token bytes through `UnmarshalTypedToken`. |
 | `FuzzUnmarshalTypedMetadataNoPanic` | `token/services/tokens` | Arbitrary bytes through `UnmarshalTypedMetadata`. |
 | `FuzzTokenRequestMetadataFromBytesNoPanic` | `token/driver` | Metadata bytes received from remote peers through `TokenRequestMetadata.FromBytes`. |
@@ -148,6 +147,7 @@ sections, because `go test` must be run from that module's root.
 
 | Target | Package | What it fuzzes |
 | --- | --- | --- |
+| `FuzzDecodeIdentityNoPanic` | `token/services/identity/marshal` | Malformed DER through `DecodeIdentity`, the base ASN.1 parser underneath every identity type. |
 | `FuzzParseNoPanic` | `token/services/identity/boolpolicy` | Policy strings through `Parse`, which must terminate within its length, nesting-depth and node-count caps. |
 | `FuzzPolicyIdentityDeserializeNoPanic` | `token/services/identity/boolpolicy` | Malformed ASN.1 through `PolicyIdentity.Deserialize`. |
 | `FuzzPolicySignatureFromBytesNoPanic` | `token/services/identity/boolpolicy` | Peer-supplied signature bytes through `PolicySignature.FromBytes`. |
@@ -180,7 +180,7 @@ sections, because `go test` must be run from that module's root.
 | `FuzzCheckTokenRequestActions` | `token/services/storage/integrity` | Stored token-request bytes through `CheckTokenRequestActions`. |
 | `FuzzNormalizeIDRoundTrip` | `token/services/storage/db/kvs/hashicorp` (separate module) | Composite keys mapped to a Vault path and back, checking the mapping is injective. |
 
-#### Network (Fabric and FabricX)
+#### Network (Fabric and Chaguar)
 
 | Target | Package | What it fuzzes |
 | --- | --- | --- |
@@ -188,7 +188,7 @@ sections, because `go test` must be run from that module's root.
 | `FuzzQueryStatesLedgerReadsAreBounded` | `token/services/network/fabric/tcc` | Untrusted key lists through `QueryStates`, which must not panic or exceed `MaxQueryItems` ledger reads. |
 | `FuzzAreTokensSpentLedgerReadsAreBounded` | `token/services/network/fabric/tcc` | The same bound for `AreTokensSpent`, including the key-translator path when graph hiding is on. |
 | `FuzzQueryTokensLedgerReadsAreBounded` | `token/services/network/fabric/tcc` | The same bound for `QueryTokens`, which decodes an array of `token.ID` structs. |
-| `FuzzEndorserForThresholdRuleNoPanic` | `token/services/network/fabricx/endorsement` | Malformed `ThresholdRule` public keys, as returned by the FabricX `GetNamespacePolicies` RPC, through `endorserForThresholdRule`. |
+| `FuzzEndorserForThresholdRuleNoPanic` | `token/services/network/fabricx/endorsement` | Malformed `ThresholdRule` public keys, as returned by the Chaguar `GetNamespacePolicies` RPC, through `endorserForThresholdRule`. |
 
 #### EVM driver (separate module)
 
@@ -247,11 +247,11 @@ re-run the failing case as a normal test with `go test -run=<FuzzTestName>/<hash
 
 ### Nightly Fuzzing in CI
 
-`.github/workflows/nightly-fuzz.yml` runs 74 of the 76 fuzz targets above (every one not
-marked †) for up to `4h` each night (02:17 UTC) against `main`, as a `fail-fast: false`
-matrix so one crashing target never stops the others. The EVM and Vault targets run from
-their own module roots, set by the matrix entry's `dir` field. It can also be triggered manually via `workflow_dispatch`, which
-accepts a `fuzztime` input to shorten or lengthen the campaign.
+`.github/workflows/nightly-fuzz.yml` runs all fuzz targets above not marked † for up to `4h`
+each night (02:17 UTC) against `main`, as a `fail-fast: false` matrix so one crashing target
+never stops the others. The EVM and Vault targets run from their own module roots, set by
+the matrix entry's `dir` field. It can also be triggered manually via `workflow_dispatch`,
+which accepts a `fuzztime` input to shorten or lengthen the campaign.
 
 If a target finds a crashing or panicking input, the workflow:
 
