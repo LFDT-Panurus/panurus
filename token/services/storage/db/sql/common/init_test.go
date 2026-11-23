@@ -116,7 +116,7 @@ func TestGetTableNamesPartialOverride(t *testing.T) {
 }
 
 // TestGetTableNamesAllShortCodes exercises every known short code to ensure
-// the override path is wired for all 17 fields.
+// the override path is wired for all fields.
 func TestGetTableNamesAllShortCodes(t *testing.T) {
 	shortCodes := map[string]func(common.TableNames) string{
 		"movements":        func(t common.TableNames) string { return t.Movements },

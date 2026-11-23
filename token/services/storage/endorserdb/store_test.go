@@ -128,6 +128,125 @@ func TestValidationRecordsLifecycle(t *testing.T) {
 	assert.Equal(t, endorserdb.Pending, status)
 }
 
+// TestAlreadyProcessed checks that AlreadyProcessed reports false for a txID with no
+// validation record and true once a record exists, regardless of its later status.
+func TestAlreadyProcessed(t *testing.T) {
+	ctx := t.Context()
+	manager := newStoreServiceManager(t)
+	store, err := manager.StoreServiceByTMSId(token.TMSID{Network: "pineapple", Namespace: "ns"})
+	require.NoError(t, err)
+
+	// an unknown txID has not been processed
+	processed, err := store.AlreadyProcessed(ctx, "processed-1")
+	require.NoError(t, err)
+	assert.False(t, processed)
+
+	// once a validation record exists, the request counts as processed
+	require.NoError(t, store.AppendValidationRecord(ctx, "processed-1", actionsTokenRequest(t, "tr"), nil, driver2.PPHash("pp")))
+	processed, err = store.AlreadyProcessed(ctx, "processed-1")
+	require.NoError(t, err)
+	assert.True(t, processed)
+
+	// a terminal status (e.g. a tx that never committed) does not clear the record:
+	// it still counts as processed, matching the tx_id primary-key behaviour of the insert
+	require.NoError(t, store.SetStatus(ctx, "processed-1", endorserdb.Deleted, "gone"))
+	processed, err = store.AlreadyProcessed(ctx, "processed-1")
+	require.NoError(t, err)
+	assert.True(t, processed)
+
+	// an unrelated txID is still unprocessed
+	processed, err = store.AlreadyProcessed(ctx, "processed-2")
+	require.NoError(t, err)
+	assert.False(t, processed)
+}
+
+// TestDeleteValidationRecord checks that DeleteValidationRecord removes the record so the
+// request no longer counts as processed (used to undo a record whose endorsement failed), and
+// that deleting a txID with no record is not an error.
+func TestDeleteValidationRecord(t *testing.T) {
+	ctx := t.Context()
+	manager := newStoreServiceManager(t)
+	store, err := manager.StoreServiceByTMSId(token.TMSID{Network: "pineapple", Namespace: "ns"})
+	require.NoError(t, err)
+
+	// deleting a txID that has no record is a no-op, not an error
+	require.NoError(t, store.DeleteValidationRecord(ctx, "delete-1"))
+
+	// write a record, then delete it: the request must go back to unprocessed
+	require.NoError(t, store.AppendValidationRecord(ctx, "delete-1", actionsTokenRequest(t, "tr"), nil, driver2.PPHash("pp")))
+	processed, err := store.AlreadyProcessed(ctx, "delete-1")
+	require.NoError(t, err)
+	assert.True(t, processed)
+
+	require.NoError(t, store.DeleteValidationRecord(ctx, "delete-1"))
+	processed, err = store.AlreadyProcessed(ctx, "delete-1")
+	require.NoError(t, err)
+	assert.False(t, processed)
+
+	// the anchor can therefore be appended again, as a retry of a failed endorsement would
+	require.NoError(t, store.AppendValidationRecord(ctx, "delete-1", actionsTokenRequest(t, "tr"), nil, driver2.PPHash("pp")))
+	processed, err = store.AlreadyProcessed(ctx, "delete-1")
+	require.NoError(t, err)
+	assert.True(t, processed)
+}
+
+// TestRecordValidationFailure checks that a recorded failure lives in the same store but does
+// not gate re-evaluation, round-trips its public parameters hash (task 2), and never clobbers
+// or is clobbered by an approval of the same anchor.
+func TestRecordValidationFailure(t *testing.T) {
+	ctx := t.Context()
+	manager := newStoreServiceManager(t)
+	store, err := manager.StoreServiceByTMSId(token.TMSID{Network: "pineapple", Namespace: "ns"})
+	require.NoError(t, err)
+
+	// a recorded failure does not make the request look processed
+	require.NoError(t, store.RecordValidationFailure(ctx, "fail-1", []byte("malformed"), driver2.PPHash("pp-used"), "boom"))
+	processed, err := store.AlreadyProcessed(ctx, "fail-1")
+	require.NoError(t, err)
+	assert.False(t, processed, "a recorded failure must not gate re-evaluation")
+
+	// the failure is queryable, and the pp hash it was evaluated against round-trips so the
+	// rejection can be replayed as it happened
+	failures := readValidationFailures(t, store, endorserdb.QueryValidationFailureRecordsParams{
+		Filter: func(r *endorserdb.ValidationFailureRecord) bool { return r.TxID == "fail-1" },
+	})
+	require.Len(t, failures, 1)
+	assert.Equal(t, []byte("malformed"), failures[0].TokenRequest)
+	assert.Equal(t, driver2.PPHash("pp-used"), failures[0].PPHash)
+	assert.Equal(t, "boom", failures[0].Reason)
+
+	// a rejected anchor is not a validation record
+	assert.Empty(t, readValidationRecords(t, store, endorserdb.QueryValidationRecordsParams{
+		Filter: func(r *endorserdb.ValidationRecord) bool { return r.TxID == "fail-1" },
+	}))
+
+	// the same anchor can still be approved afterwards (retry that succeeds); the approval
+	// takes over the row and it drops out of the failure query
+	require.NoError(t, store.AppendValidationRecord(ctx, "fail-1", actionsTokenRequest(t, "tr"), nil, driver2.PPHash("pp")))
+	processed, err = store.AlreadyProcessed(ctx, "fail-1")
+	require.NoError(t, err)
+	assert.True(t, processed)
+	assert.Empty(t, readValidationFailures(t, store, endorserdb.QueryValidationFailureRecordsParams{
+		Filter: func(r *endorserdb.ValidationFailureRecord) bool { return r.TxID == "fail-1" },
+	}))
+
+	// an empty pp hash is allowed for a failure (validation may fail before it is resolved)
+	require.NoError(t, store.RecordValidationFailure(ctx, "fail-2", []byte("early"), nil, "no tms"))
+}
+
+// TestAppendValidationRecordRejectsDuplicateApproval checks the atomic single-approval
+// backstop: a second approval of an already-approved anchor is refused.
+func TestAppendValidationRecordRejectsDuplicateApproval(t *testing.T) {
+	ctx := t.Context()
+	manager := newStoreServiceManager(t)
+	store, err := manager.StoreServiceByTMSId(token.TMSID{Network: "pineapple", Namespace: "ns"})
+	require.NoError(t, err)
+
+	require.NoError(t, store.AppendValidationRecord(ctx, "dup-1", actionsTokenRequest(t, "tr"), nil, driver2.PPHash("pp")))
+	require.Error(t, store.AppendValidationRecord(ctx, "dup-1", actionsTokenRequest(t, "tr2"), nil, driver2.PPHash("pp")),
+		"re-approving an already-approved anchor must be refused")
+}
+
 // TestSetStatus_NotifyNotDroppedByCallerCanceledContext is a regression test for
 // #2316 on the endorserdb path: SetStatus's notification must not be lost just
 // because the caller's own context has already expired by the time the status
@@ -207,6 +326,25 @@ func readValidationRecords(t *testing.T, store *endorserdb.StoreService, params 
 	defer it.Close()
 
 	var records []*endorserdb.ValidationRecord
+	for {
+		next, err := it.Next()
+		require.NoError(t, err)
+		if next == nil {
+			break
+		}
+		records = append(records, next)
+	}
+
+	return records
+}
+
+func readValidationFailures(t *testing.T, store *endorserdb.StoreService, params endorserdb.QueryValidationFailureRecordsParams) []*endorserdb.ValidationFailureRecord {
+	t.Helper()
+	it, err := store.ValidationFailures(t.Context(), params)
+	require.NoError(t, err)
+	defer it.Close()
+
+	var records []*endorserdb.ValidationFailureRecord
 	for {
 		next, err := it.Next()
 		require.NoError(t, err)
