@@ -963,7 +963,7 @@ func TestSelector(network *integration.Infrastructure, auditorId string, sel *to
 // It honours WithTokenType, the type it issues (default "USD"), and WithRestartAfterUpdate,
 // the nodes it restarts once the update has been picked up by every node, before any
 // transaction is issued against the new parameters. Pass the endorser nodes of a network
-// whose endorsers track the on-chain version of the public parameters (FabricX) to cover
+// whose endorsers track the on-chain version of the public parameters (Chaguar) to cover
 // https://github.com/LFDT-Panurus/panurus/issues/2255: an endorser that rebuilds its
 // public parameters version from scratch on startup attaches a stale version to every
 // transaction it endorses, and the committer rejects them all with an MVCC conflict.

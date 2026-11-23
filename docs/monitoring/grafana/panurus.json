@@ -1036,7 +1036,7 @@
     {
       "type": "row",
       "id": 800,
-      "title": "Fabric-X finality queue",
+      "title": "Chaguar finality queue",
       "gridPos": {
         "h": 1,
         "w": 24,

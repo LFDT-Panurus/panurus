@@ -51,7 +51,7 @@ func (p *SDK) Install() error {
 		p.Container().Provide(dlog.NewTokenDriver, dig.Group("token-drivers")),
 		p.Container().Provide(dlog.NewValidatorDriver, dig.Group("validator-drivers")),
 
-		// fabricx
+		// Chaguar
 		p.Container().Provide(fabricx.NewDriver, dig.Group("network-drivers")),
 		p.Container().Provide(tms.NewSubmitterFromFNS, dig.As(new(tms.Submitter))),
 		p.Container().Provide(tms.NewTMSDeployerService, dig.As(new(tms.DeployerService))),
