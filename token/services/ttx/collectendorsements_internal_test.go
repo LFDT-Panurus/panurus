@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 	driver_mock "github.com/LFDT-Panurus/panurus/token/driver/mock"
 	token_mock "github.com/LFDT-Panurus/panurus/token/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep"
@@ -206,6 +207,146 @@ func TestAddPartyToDistributionList_MultipleOwnersSameNode(t *testing.T) {
 
 	assert.Equal(t, otherNodeLT, distList[1].LongTerm)
 	assert.Equal(t, []string{"dave"}, distList[1].EIDs)
+}
+
+// TestAddPartyToDistributionList_AuditInfoFromMetadata verifies that when a remote
+// counterparty's input or change pseudonym (e.g. in a dlog/Idemix swap) has no audit info
+// stored in the initiator's local WalletService, addPartyToDistributionList resolves its
+// enrollment ID from TokenRequest.Metadata instead of failing.
+func TestAddPartyToDistributionList_AuditInfoFromMetadata(t *testing.T) {
+	remoteNodeLT := view.Identity("remote-node-lt")
+	bobRecipientNym := view.Identity("bob-recipient-nym")
+	bobSwapInputNym := view.Identity("bob-swap-input-nym")
+	bobSwapChangeNym := view.Identity("bob-swap-change-nym")
+	carolRecipientNym := view.Identity("carol-recipient-nym")
+
+	bindingStore := &endpointmock.BindingStore{}
+	bindingStore.GetLongTermStub = func(_ context.Context, ephemeral view.Identity) (view.Identity, error) {
+		return remoteNodeLT, nil
+	}
+	endpointSvc, err := endpoint.NewService(bindingStore)
+	require.NoError(t, err)
+	_, err = endpointSvc.AddResolver("remote-node", "", nil, nil, remoteNodeLT)
+	require.NoError(t, err)
+
+	ctx := &stubDistViewContext{
+		t:           t,
+		endpointSvc: endpointSvc,
+	}
+
+	walletSvc := &driver_mock.WalletService{}
+	walletSvc.OwnerWalletReturns(nil, errors.New("not a local wallet"))
+	// Simulate Idemix/dlog: local wallet store only has audit info for recipients requested
+	// by this node, not for the remote counterparty's swap input or change pseudonyms.
+	walletSvc.GetAuditInfoStub = func(_ context.Context, id token.Identity) ([]byte, error) {
+		switch string(id) {
+		case string(bobRecipientNym):
+			return []byte("bob-audit"), nil
+		case string(carolRecipientNym):
+			return []byte("carol-audit"), nil
+		default:
+			return nil, nil
+		}
+	}
+	walletSvc.GetEnrollmentIDStub = func(_ context.Context, _ token.Identity, auditInfo []byte) (string, error) {
+		switch string(auditInfo) {
+		case "bob-audit":
+			return "bob", nil
+		case "carol-audit":
+			return "carol", nil
+		default:
+			return "", errors.New("empty or invalid audit info")
+		}
+	}
+	walletSvc.GetEIDAndRHStub = func(_ context.Context, _ token.Identity, auditInfo []byte) (string, string, error) {
+		switch string(auditInfo) {
+		case "bob-audit":
+			return "bob", "rh-bob", nil
+		case "carol-audit":
+			return "carol", "rh-carol", nil
+		default:
+			return "", "", errors.New("empty or invalid audit info")
+		}
+	}
+
+	ppm := &driver_mock.PublicParamsManager{}
+	ppm.PublicParametersReturns(&driver_mock.PublicParameters{})
+	driverTMS := &driver_mock.TokenManagerService{}
+	driverTMS.WalletServiceReturns(walletSvc)
+	driverTMS.PublicParamsManagerReturns(ppm)
+
+	tmsID := token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}
+	vaultProvider := &token_mock.VaultProvider{}
+	vaultProvider.VaultReturns(&driver_mock.Vault{}, nil)
+	tms, err := token.NewManagementService(tmsID, driverTMS, nil, vaultProvider, nil, nil)
+	require.NoError(t, err)
+
+	req := token.NewRequest(tms, "anchor")
+	req.Metadata = &driver.TokenRequestMetadata{
+		Actions: []*driver.ActionMetadataEntry{
+			{
+				ActionID: 0,
+				TransferMetadata: &driver.TransferMetadata{
+					Inputs: []*driver.TransferInputMetadata{
+						{
+							Senders: []*driver.AuditableIdentity{
+								{Identity: bobSwapInputNym, AuditInfo: []byte("bob-audit")},
+							},
+						},
+					},
+					Outputs: []*driver.TransferOutputMetadata{
+						{
+							Receivers: []*driver.AuditableIdentity{
+								{Identity: bobSwapChangeNym, AuditInfo: []byte("bob-audit")},
+							},
+						},
+					},
+				},
+			},
+			{
+				ActionID: 1,
+				IssueMetadata: &driver.IssueMetadata{
+					Issuer: driver.AuditableIdentity{
+						Identity:  view.Identity("remote-issuer-nym"),
+						AuditInfo: []byte("bob-audit"),
+					},
+					Outputs: []*driver.IssueOutputMetadata{
+						{
+							Receivers: []*driver.AuditableIdentity{
+								{Identity: view.Identity("carol-issue-nym"), AuditInfo: []byte("carol-audit")},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	tx := &Transaction{
+		Payload: &Payload{
+			TokenRequest: req,
+		},
+		TMS: &stubDistTMS{wm: tms.WalletManager()},
+	}
+	viewInst := &CollectEndorsementsView{tx: tx}
+
+	mine := collections.NewSet[string]()
+	var distList []distributionListEntry
+	for _, party := range []view.Identity{
+		bobRecipientNym,
+		bobSwapInputNym,
+		bobSwapChangeNym,
+		view.Identity("remote-issuer-nym"),
+		view.Identity("carol-issue-nym"),
+		carolRecipientNym,
+	} {
+		distList, err = viewInst.addPartyToDistributionList(ctx, party, mine, distList)
+		require.NoError(t, err)
+	}
+
+	require.Len(t, distList, 1)
+	assert.Equal(t, remoteNodeLT, distList[0].LongTerm)
+	assert.Equal(t, []string{"bob", "carol"}, distList[0].EIDs)
 }
 
 type embeddedViewContext = view.Context

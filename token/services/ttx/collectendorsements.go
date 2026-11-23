@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/boolpolicy"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/multisig"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
@@ -801,7 +802,7 @@ func (c *CollectEndorsementsView) addPartyToDistributionList(context view.Contex
 	for i, entry := range distributionListCompressed {
 		if longTermIdentity.Equal(entry.LongTerm) {
 			if !isMe && !entry.IsMe && !entry.Auditor {
-				eID, err := c.tx.TokenService().WalletManager().GetEnrollmentID(context.Context(), party)
+				eID, err := c.enrollmentIDForParty(context.Context(), party)
 				if err != nil {
 					return nil, errors.Wrapf(err, "failed getting enrollment ID for [%s]", party.UniqueID())
 				}
@@ -818,7 +819,7 @@ func (c *CollectEndorsementsView) addPartyToDistributionList(context view.Contex
 	logger.DebugfContext(context.Context(), "adding [%s] to distribution list", party)
 	var eIDs []string
 	if !isMe {
-		eID, err := c.tx.TokenService().WalletManager().GetEnrollmentID(context.Context(), party)
+		eID, err := c.enrollmentIDForParty(context.Context(), party)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed getting enrollment ID for [%s]", party.UniqueID())
 		}
@@ -832,6 +833,96 @@ func (c *CollectEndorsementsView) addPartyToDistributionList(context view.Contex
 		EIDs:     eIDs,
 		Auditor:  false,
 	}), nil
+}
+
+// enrollmentIDForParty resolves party's enrollment ID using audit info from the token request
+// metadata when available (e.g. for remote counterparties' input/change pseudonyms in a swap
+// whose audit info is not stored in the initiator's local wallet service), falling back to
+// the local wallet manager otherwise.
+func (c *CollectEndorsementsView) enrollmentIDForParty(ctx context.Context, party view.Identity) (string, error) {
+	wm := c.tx.TokenService().WalletManager()
+	if auditInfo := auditInfoFromMetadata(c.tx.TokenRequest, party); len(auditInfo) > 0 {
+		eID, _, err := wm.GetEIDAndRH(ctx, party, auditInfo)
+		if err != nil {
+			return "", err
+		}
+
+		return eID, nil
+	}
+
+	return wm.GetEnrollmentID(ctx, party)
+}
+
+func auditInfoFromMetadata(req *token.Request, party view.Identity) []byte {
+	if req == nil || req.Metadata == nil {
+		return nil
+	}
+	for _, action := range req.Metadata.Actions {
+		if action == nil {
+			continue
+		}
+		if auditInfo := issueAuditInfo(action.IssueMetadata, party); len(auditInfo) > 0 {
+			return auditInfo
+		}
+		if auditInfo := transferAuditInfo(action.TransferMetadata, party); len(auditInfo) > 0 {
+			return auditInfo
+		}
+	}
+
+	return nil
+}
+
+func issueAuditInfo(meta *driver.IssueMetadata, party view.Identity) []byte {
+	if meta == nil {
+		return nil
+	}
+	if len(meta.Issuer.AuditInfo) > 0 && party.Equal(meta.Issuer.Identity) {
+		return meta.Issuer.AuditInfo
+	}
+	for _, out := range meta.Outputs {
+		if out == nil {
+			continue
+		}
+		if auditInfo := findPartyAuditInfo(out.Receivers, party); len(auditInfo) > 0 {
+			return auditInfo
+		}
+	}
+
+	return nil
+}
+
+func transferAuditInfo(meta *driver.TransferMetadata, party view.Identity) []byte {
+	if meta == nil {
+		return nil
+	}
+	for _, in := range meta.Inputs {
+		if in == nil {
+			continue
+		}
+		if auditInfo := findPartyAuditInfo(in.Senders, party); len(auditInfo) > 0 {
+			return auditInfo
+		}
+	}
+	for _, out := range meta.Outputs {
+		if out == nil {
+			continue
+		}
+		if auditInfo := findPartyAuditInfo(out.Receivers, party); len(auditInfo) > 0 {
+			return auditInfo
+		}
+	}
+
+	return nil
+}
+
+func findPartyAuditInfo(parties []*driver.AuditableIdentity, party view.Identity) []byte {
+	for _, p := range parties {
+		if p != nil && len(p.AuditInfo) > 0 && party.Equal(p.Identity) {
+			return p.AuditInfo
+		}
+	}
+
+	return nil
 }
 
 // addAuditorToDistributionList resolves party's long-term identity and appends an auditor entry
