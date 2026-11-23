@@ -240,16 +240,12 @@ func (m *mockQueryEngine) UnspentLedgerTokensIteratorBy(ctx context.Context) (dr
 	return nil, nil
 }
 
-func (m *mockQueryEngine) ListUnspentTokens(ctx context.Context) (*token.UnspentTokens, error) {
-	return nil, nil
-}
-
 func (m *mockQueryEngine) ListAuditTokens(ctx context.Context, ids ...*token.ID) ([]*token.Token, error) {
 	// Return empty list for benchmark tests (no audit tokens needed for issue actions)
 	return make([]*token.Token, len(ids)), nil
 }
 
-func (m *mockQueryEngine) ListHistoryIssuedTokens(ctx context.Context) (*token.IssuedTokens, error) {
+func (m *mockQueryEngine) ListHistoryIssuedTokens(ctx context.Context) (driver.IssuedTokensIterator, error) {
 	return nil, nil
 }
 

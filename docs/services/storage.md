@@ -421,18 +421,42 @@ argument. Streaming iterator reads are **not** row-capped:
 You can override the limits in configuration (`token.storage.maxPayloadSize` /
 `token.storage.maxPageSize`) — see the [Configuration Guide](../configuration.md).
 
-**Not yet covered (tracked follow-up).** Two groups of reads cannot be bounded by a
-wrapper at all, and need query-level work instead:
+### Store-level limits (materialised reads, variadic inputs, opaque writes)
 
-- The streaming iterators listed above. Bounding them requires a SQL-level `LIMIT`
-  on the query (with a defined order and documented truncation) or adding paging to
-  their signatures, so the caller can ask for the next page rather than fail.
-- Reads that materialise a full slice or map before returning (e.g.
-  `ListUnspentTokens`, `QueryTokenDetails`, `ConfigurationsByID`, `GetWalletIDs`) —
-  the SQL has already loaded everything by the time the decorator sees the result.
+The guard decorator can only bound a read it intercepts before the result is built.
+Three groups of paths materialise the full result (or expand the query) *inside* the
+SQL store, below the decorator, so they are bounded there instead, by three limits
+from configuration (`token.storage.maxResultRows`, `token.storage.maxQueryIDs`, and
+the guard's `token.storage.maxPayloadSize`). Each `0`-disables and defaults when
+absent.
 
-The opaque `Keystore.Put` value and input-size caps for variadic id lists
-(`DeleteTokens`, `GetTokens`) are in the same follow-up.
+**Materialised reads — fail-closed row cap (`maxResultRows`, default 100000).**
+`ConfigurationsByID` (identity store) and `GetWalletIDs` (wallet store) load their
+whole result into memory. Each runs with `LIMIT maxResultRows+1` and errors if that
+many rows come back. The cap is **fail-closed, not a silent truncation**: every
+consumer treats the result as complete (identity registration, wallet enumeration),
+so serving a partial set would turn a bounded DoS into silent corruption. No
+`ORDER BY`: a fail-closed read never returns a defined subset, so an order would only
+cost a sort. The larger unbounded reads — `ListUnspentTokens` (and its by-wallet
+batch), `ListHistoryIssuedTokens` and `QueryTokenDetails` — are **not** row-capped:
+the first two were removed in favour of the existing iterators, and the latter two
+now return streaming iterators (`ListHistoryIssuedTokens`, `QueryTokenDetails`) that
+bound memory structurally.
+
+**Variadic id inputs — input-size cap (`maxQueryIDs`, default 1000).**
+`DeleteTokens`, `GetTokens`, `ListAuditTokens`, `GetTokenRequests` and
+`GetExistingSignerInfo` expand a variadic id list into an `IN (...)` clause. A list
+longer than `maxQueryIDs` is rejected before the query is built; callers chunk and
+merge. `DeleteTokens` is a mutation, so rejecting is the only safe bound — a `LIMIT`
+would silently leave tokens undeleted.
+
+**Opaque keystore writes — post-marshal payload cap (`maxPayloadSize`, default 4 MiB).**
+`Keystore.Put` stores an opaque value sized only after marshaling, and sits outside
+the guard decorator, so the check runs inside `Put`.
+
+**Still not covered (tracked follow-up).** The other streaming iterator reads remain
+uncapped: bounding them needs real paging in their signatures, not a `LIMIT`, because
+their consumers drain them in full.
 
 ## Ledger Drift Checks
 

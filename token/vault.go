@@ -73,11 +73,6 @@ func (q *QueryEngine) UnspentTokensIteratorBy(ctx context.Context, id string, to
 	return &UnspentTokensIterator{UnspentTokensIterator: it}, nil
 }
 
-// ListUnspentTokens returns a list of all unspent tokens stored in the vault
-func (q *QueryEngine) ListUnspentTokens(ctx context.Context) (*token.UnspentTokens, error) {
-	return q.qe.ListUnspentTokens(ctx)
-}
-
 func (q *QueryEngine) ListAuditTokens(ctx context.Context, ids ...*token.ID) ([]*token.Token, error) {
 	for i := range q.NumRetries {
 		tokens, err := q.qe.ListAuditTokens(ctx, ids...)
@@ -121,7 +116,7 @@ func (q *QueryEngine) waitIfPending(ctx context.Context, attempt int, ids []*tok
 	return false, nil
 }
 
-func (q *QueryEngine) ListHistoryIssuedTokens(ctx context.Context) (*token.IssuedTokens, error) {
+func (q *QueryEngine) ListHistoryIssuedTokens(ctx context.Context) (driver.IssuedTokensIterator, error) {
 	return q.qe.ListHistoryIssuedTokens(ctx)
 }
 

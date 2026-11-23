@@ -21,7 +21,7 @@ import (
 //go:generate counterfeiter -o mock/tv.go -fake-name TokenVault . TokenVault
 type TokenVault interface {
 	UnspentTokensIteratorBy(ctx context.Context, id string, tokenType token.Type) (driver.UnspentTokensIterator, error)
-	ListHistoryIssuedTokens(ctx context.Context) (*token.IssuedTokens, error)
+	ListHistoryIssuedTokens(ctx context.Context) (driver.IssuedTokensIterator, error)
 	Balance(ctx context.Context, id string, tokenType token.Type) (*big.Int, error)
 	IssuedBalance(ctx context.Context, opts driver.IssuerBalanceQuery) (*big.Int, error)
 	RedeemedBalance(ctx context.Context, opts driver.IssuerBalanceQuery) (*big.Int, error)
