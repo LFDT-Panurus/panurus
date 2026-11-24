@@ -759,7 +759,7 @@ See [Token Chaincode Query Limits](security/tcc_query_limits.md).
 
 ---
 
-### Optional: token.fabricx.lookup
+### Optional: token.chaguar.lookup
 
 If not specified, the default configuration is:
 
