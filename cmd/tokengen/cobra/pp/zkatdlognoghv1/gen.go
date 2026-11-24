@@ -23,6 +23,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// noGeneratorDomainWarning is printed when the public parameters are generated without a generator domain.
+const noGeneratorDomainWarning = "No generator domain specified (--generator-domain). " +
+	"Nodes accept the generators as they are and cannot tell whether they are trapdoored."
+
 // GeneratorArgs defines the arguments for the public parameters generator.
 type GeneratorArgs struct {
 	// IdemixMSPDir is the directory containing the Idemix MSP config (Issuer Key Pair)
@@ -179,6 +183,11 @@ func Gen(args *GeneratorArgs) ([]byte, error) {
 	// warn in case no issuers are specified
 	if len(pp.Issuers()) == 0 {
 		fmt.Println("No issuers specified. The public parameters allow anyone to create tokens.")
+	}
+
+	// warn in case no generator domain is specified
+	if args.GeneratorDomain == "" {
+		fmt.Println(noGeneratorDomainWarning)
 	}
 
 	// Store Public Params

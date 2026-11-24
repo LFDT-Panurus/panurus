@@ -143,7 +143,7 @@ PedersenGenerators[i] = HashToG1(<Label> + "PedersenGenerators.<i>")
 
 The default label is frozen at the v1 value. It does not depend on the driver version, so a driver version bump keeps the generators and the token format, and previously issued tokens stay spendable.
 
-An issuer rotates every generator on purpose by setting `GeneratorDomain`. It can be set when the parameters are generated: `SetupParams.GeneratorDomain` in code, or `--generator-domain` in `tokengen gen zkatdlognogh.v1`. The domain is at most 128 bytes of printable ASCII. The length prefix keeps a custom label distinct from the default label and from the generator suffixes. A rotation changes the token format: tokens issued before it must be upgraded (see the public parameters history in `crypto/upgrade`). Nodes running a release without the `generator_domain` field ignore it.
+An issuer rotates every generator on purpose by setting `GeneratorDomain`. It can be set when the parameters are generated: `SetupParams.GeneratorDomain` in code, or `--generator-domain` in `tokengen gen zkatdlognogh.v1`. `tokengen` prints a warning when no domain is given. The domain is at most 128 bytes of printable ASCII. The length prefix keeps a custom label distinct from the default label and from the generator suffixes. A rotation changes the token format: tokens issued before it must be upgraded (see the public parameters history in `crypto/upgrade`). Nodes running a release without the `generator_domain` field ignore it.
 
 With the default label, the input strings are:
 

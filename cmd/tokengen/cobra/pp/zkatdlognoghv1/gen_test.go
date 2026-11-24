@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package zkatdlognoghv1
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -122,6 +123,26 @@ func TestGen(t *testing.T) {
 		ref, err := setupv1.Setup(64, []byte("dummy ipk"), custom.Curve)
 		require.NoError(t, err)
 		assert.True(t, ref.PedersenGenerators[0].Equals(def.PedersenGenerators[0]))
+	})
+
+	t.Run("generator_domain_warning", func(t *testing.T) {
+		// capture stdout while generating
+		gen := func(domain string) string {
+			orig := os.Stdout
+			r, w, err := os.Pipe()
+			require.NoError(t, err)
+			os.Stdout = w
+			_, genErr := Gen(&GeneratorArgs{IdemixMSPDir: idemixDir, OutputDir: tempDir, BitLength: 64, GeneratorDomain: domain})
+			os.Stdout = orig
+			require.NoError(t, w.Close())
+			out, err := io.ReadAll(r)
+			require.NoError(t, err)
+			require.NoError(t, genErr)
+
+			return string(out)
+		}
+		assert.Contains(t, gen(""), noGeneratorDomainWarning)
+		assert.NotContains(t, gen("my-domain"), noGeneratorDomainWarning)
 	})
 
 	t.Run("success_with_version", func(t *testing.T) {
