@@ -240,27 +240,17 @@ per-TMS state. Notes:
   policy. A selection that cannot satisfy that policy makes endorsement fail, so a
   single-organization selection is only usable where one organization's peers suffice —
   for example `OR('Org1MSP.peer','Org2MSP.peer')`, not `AND(...)`.
-- The same selection is applied to the public-parameters query
-  ([`ppfetcher.go`](../../token/services/network/fabric/ppfetcher.go)), so a node that
-  restricts endorsement does not read public parameters from another organization's peer.
-  When
-  the TMS configuration is not yet resolvable, that query falls back to default
-  discovery, because public parameters may have to be fetched before a namespace has a
-  usable configuration. Any *other* failure to resolve the selection fails the query,
-  matching endorsement: falling back there would read the public parameters from the very
-  peers the selection exists to avoid.
-- This applies to **chaincode endorsement mode only**, for both the approval invocation
-  and the public-parameters query. In FSC endorsement mode the endorsers are FSC nodes
+- It also applies to every query to the token chaincode — `queryPublicParams`,
+  `queryTokens`, `areTokensSpent`, `queryStates` — so reads stay in the organization too. A
+  namespace with no configuration yet falls back to default discovery, so a node can
+  bootstrap; any other resolution failure fails the query. Read once per TMS, so a change
+  needs a restart.
+- This applies to **chaincode endorsement mode only**, for the approval invocation and
+  every query above. In FSC endorsement mode the endorsers are FSC nodes
   selected by `fsc_endorsement.policy.type` (below) and the selection is not applied at
   all — the local organization there frequently hosts no peer, so applying it would
   strand the query with no endorser. Contradictory configuration is still rejected in
   both modes, and a selection set in FSC mode is logged as a warning.
-- **Not yet covered:** the read-only token and state queries
-  ([`tokenfetcher.go`](../../token/services/network/fabric/tokenfetcher.go),
-  `ledger.QueryStates` in [`network.go`](../../token/services/network/fabric/network.go))
-  still use unconstrained discovery. A node with a selection configured therefore keeps
-  endorsement and public-parameters traffic inside its organization, but may still send
-  those queries to another organization's peers.
 
 Integration coverage lives in the `T15` spec of the dlog fungible suite
 (`integration/token/fungible/dlog`, `make integration-tests-dlog-fabric-t15`): an anonymous

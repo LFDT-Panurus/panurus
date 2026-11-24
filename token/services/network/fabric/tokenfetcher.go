@@ -12,27 +12,36 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
 	driver2 "github.com/LFDT-Panurus/panurus/token/services/network/driver"
+	config3 "github.com/LFDT-Panurus/panurus/token/services/network/fabric/config"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
 )
 
-func NewTokenExecutorProvider(fnsProvider *fabric.NetworkServiceProvider) *tokenFetcherProvider {
-	return &tokenFetcherProvider{fnsProvider: fnsProvider}
+// NewTokenExecutorProvider returns a provider of token query executors.
+func NewTokenExecutorProvider(fnsProvider *fabric.NetworkServiceProvider, selectionProvider config3.EndorserSelectionProvider) *tokenFetcherProvider {
+	return &tokenFetcherProvider{fnsProvider: fnsProvider, selectionProvider: selectionProvider}
 }
 
 type tokenFetcherProvider struct {
-	fnsProvider *fabric.NetworkServiceProvider
+	fnsProvider       *fabric.NetworkServiceProvider
+	selectionProvider config3.EndorserSelectionProvider
 }
 
 func (p *tokenFetcherProvider) GetExecutor(network, channel string) (driver2.TokenQueryExecutor, error) {
-	return &tokenFetcher{fnsProvider: p.fnsProvider, network: network, channel: channel}, nil
+	return &tokenFetcher{
+		fnsProvider:       p.fnsProvider,
+		network:           network,
+		channel:           channel,
+		selectionProvider: p.selectionProvider,
+	}, nil
 }
 
 type tokenFetcher struct {
-	fnsProvider *fabric.NetworkServiceProvider
-	network     string
-	channel     string
+	fnsProvider       *fabric.NetworkServiceProvider
+	network           string
+	channel           string
+	selectionProvider config3.EndorserSelectionProvider
 }
 
 // QueryTokens invokes the chaincode's queryTokens function and unboxes its response. It
@@ -54,11 +63,18 @@ func (f *tokenFetcher) QueryTokens(ctx context.Context, namespace string, IDs []
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed getting channel [%s:%s]", f.network, f.channel)
 	}
-	stdChannelChaincode := channel.Chaincode(namespace)
-	query := stdChannelChaincode.Query(QueryTokensFunctions, idsRaw)
-	payloadBoxed, err := query.Call()
+	selection, err := config3.SelectionFor(f.selectionProvider, f.network, f.channel, namespace)
 	if err != nil {
-		return nil, errors.WithMessagef(err, "failed to query the token chaincode for query tokens")
+		return nil, err
+	}
+
+	payloadBoxed, err := config3.RestrictedQuery(
+		channel.Chaincode(namespace).Query(QueryTokensFunctions, idsRaw), selection,
+		(*fabric.ChaincodeQuery).Call,
+		"query tokens of ["+f.network+":"+f.channel+":"+namespace+"]",
+		"failed to query the token chaincode for query tokens")
+	if err != nil {
+		return nil, err
 	}
 
 	// Unbox
@@ -71,28 +87,32 @@ func (f *tokenFetcher) QueryTokens(ctx context.Context, namespace string, IDs []
 }
 
 type spentTokenFetcherProvider struct {
-	fnsProvider   *fabric.NetworkServiceProvider
-	keyTranslator translator.KeyTranslator
+	fnsProvider       *fabric.NetworkServiceProvider
+	keyTranslator     translator.KeyTranslator
+	selectionProvider config3.EndorserSelectionProvider
 }
 
-func NewSpentTokenExecutorProvider(fnsProvider *fabric.NetworkServiceProvider, keyTranslator translator.KeyTranslator) *spentTokenFetcherProvider {
-	return &spentTokenFetcherProvider{fnsProvider: fnsProvider, keyTranslator: keyTranslator}
+// NewSpentTokenExecutorProvider returns a provider of spent-token query executors.
+func NewSpentTokenExecutorProvider(fnsProvider *fabric.NetworkServiceProvider, keyTranslator translator.KeyTranslator, selectionProvider config3.EndorserSelectionProvider) *spentTokenFetcherProvider {
+	return &spentTokenFetcherProvider{fnsProvider: fnsProvider, keyTranslator: keyTranslator, selectionProvider: selectionProvider}
 }
 
 func (p *spentTokenFetcherProvider) GetSpentExecutor(network, channel string) (driver2.SpentTokenQueryExecutor, error) {
 	return &spentTokenFetcher{
-		fnsProvider:   p.fnsProvider,
-		network:       network,
-		channel:       channel,
-		keyTranslator: p.keyTranslator,
+		fnsProvider:       p.fnsProvider,
+		network:           network,
+		channel:           channel,
+		keyTranslator:     p.keyTranslator,
+		selectionProvider: p.selectionProvider,
 	}, nil
 }
 
 type spentTokenFetcher struct {
-	fnsProvider   *fabric.NetworkServiceProvider
-	network       string
-	channel       string
-	keyTranslator translator.KeyTranslator
+	fnsProvider       *fabric.NetworkServiceProvider
+	network           string
+	channel           string
+	keyTranslator     translator.KeyTranslator
+	selectionProvider config3.EndorserSelectionProvider
 }
 
 func (f *spentTokenFetcher) QuerySpentTokens(ctx context.Context, namespace string, IDs []*token.ID, meta []string) ([]bool, error) {
@@ -119,11 +139,18 @@ func (f *spentTokenFetcher) QuerySpentTokens(ctx context.Context, namespace stri
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed getting channel [%s:%s]", f.network, f.channel)
 	}
-	stdChannelChaincode := channel.Chaincode(namespace)
-	query := stdChannelChaincode.Query(AreTokensSpent, idsRaw)
-	payloadBoxed, err := query.Call()
+	selection, err := config3.SelectionFor(f.selectionProvider, f.network, f.channel, namespace)
 	if err != nil {
-		return nil, errors.WithMessagef(err, "failed to query the token chaincode for tokens spent")
+		return nil, err
+	}
+
+	payloadBoxed, err := config3.RestrictedQuery(
+		channel.Chaincode(namespace).Query(AreTokensSpent, idsRaw), selection,
+		(*fabric.ChaincodeQuery).Call,
+		"query spent tokens of ["+f.network+":"+f.channel+":"+namespace+"]",
+		"failed to query the token chaincode for tokens spent")
+	if err != nil {
+		return nil, err
 	}
 
 	// Unbox

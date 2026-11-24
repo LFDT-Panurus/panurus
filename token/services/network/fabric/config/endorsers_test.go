@@ -9,6 +9,7 @@ package config_test
 import (
 	"testing"
 
+	tokenconfig "github.com/LFDT-Panurus/panurus/token/services/config"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/config"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/assert"
@@ -244,4 +245,115 @@ func TestNoUsableEndorserError(t *testing.T) {
 	assert.Contains(t, err.Error(), "Org9MSP")
 	assert.Contains(t, err.Error(), "boom")
 	assert.Contains(t, err.Error(), "host peers able to satisfy the chaincode endorsement policy")
+}
+
+type fakeSelectionProvider struct {
+	selection config.EndorserSelection
+	err       error
+}
+
+func (p *fakeSelectionProvider) EndorserSelectionFor(string, string, string) (config.EndorserSelection, error) {
+	return p.selection, p.err
+}
+
+func TestSelectionFor(t *testing.T) {
+	selection := config.EndorserSelection{MSPIDs: []string{"Org1MSP"}}
+
+	for _, tt := range []struct {
+		name     string
+		provider config.EndorserSelectionProvider
+		want     config.EndorserSelection
+		wantErr  string
+	}{
+		{
+			name:     "a nil provider leaves default discovery",
+			provider: nil,
+		},
+		{
+			name:     "an unset selection leaves default discovery",
+			provider: &fakeSelectionProvider{},
+		},
+		{
+			name:     "a configured selection is returned",
+			provider: &fakeSelectionProvider{selection: selection},
+			want:     selection,
+		},
+		{
+			name:     "a missing configuration leaves default discovery",
+			provider: &fakeSelectionProvider{err: errors.Wrapf(tokenconfig.ErrConfigurationNotFound, "not there")},
+		},
+		{
+			name:     "any other failure is returned",
+			provider: &fakeSelectionProvider{err: errors.New("broken")},
+			wantErr:  "failed resolving the endorser selection for [n1:c1:ns1]",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := config.SelectionFor(tt.provider, "n1", "c1", "ns1")
+			if len(tt.wantErr) > 0 {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				assert.False(t, got.IsSet())
+
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+type fakeQuery struct {
+	mspIDs []string
+	res    []byte
+	err    error
+}
+
+func (q *fakeQuery) WithEndorsersByMSPIDs(mspIDs ...string) *fakeQuery {
+	q.mspIDs = mspIDs
+
+	return q
+}
+
+func (q *fakeQuery) call() ([]byte, error) { return q.res, q.err }
+
+func TestRestrictedQuery(t *testing.T) {
+	selection := config.EndorserSelection{MSPIDs: []string{"Org1MSP"}}
+	call := func(q *fakeQuery) ([]byte, error) { return q.call() }
+
+	t.Run("the selection reaches the query", func(t *testing.T) {
+		q := &fakeQuery{res: []byte("states")}
+
+		res, err := config.RestrictedQuery(q, selection, call, "subject", "fallback")
+		require.NoError(t, err)
+		assert.Equal(t, []byte("states"), res)
+		assert.Equal(t, []string{"Org1MSP"}, q.mspIDs)
+	})
+
+	t.Run("an unset selection leaves the query alone", func(t *testing.T) {
+		q := &fakeQuery{res: []byte("states")}
+
+		_, err := config.RestrictedQuery(q, config.EndorserSelection{}, call, "subject", "fallback")
+		require.NoError(t, err)
+		assert.Nil(t, q.mspIDs)
+	})
+
+	t.Run("a restricted failure names the restriction", func(t *testing.T) {
+		q := &fakeQuery{err: errors.New("no endorser")}
+
+		_, err := config.RestrictedQuery(q, selection, call, "query states", "fallback")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "query states")
+		assert.Contains(t, err.Error(), config.EndorsersMSPIDsKey)
+		assert.Contains(t, err.Error(), "Org1MSP")
+	})
+
+	t.Run("an unrestricted failure keeps the fallback message", func(t *testing.T) {
+		q := &fakeQuery{err: errors.New("peer down")}
+
+		_, err := config.RestrictedQuery(q, config.EndorserSelection{}, call, "subject", "fallback")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "fallback")
+		assert.NotContains(t, err.Error(), config.EndorsersMSPIDsKey)
+	})
 }

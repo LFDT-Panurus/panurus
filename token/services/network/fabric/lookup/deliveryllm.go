@@ -14,6 +14,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/config"
 	finality2 "github.com/LFDT-Panurus/panurus/token/services/network/fabric/finality"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	vault2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/core/generic/vault"
@@ -76,11 +77,12 @@ func (i KeyInfo) ID() driver2.PKey {
 }
 
 type deliveryBasedLLMProvider struct {
-	fnsp            *fabric.NetworkServiceProvider
-	tracerProvider  trace.TracerProvider
-	config          events.DeliveryListenerManagerConfig
-	newMapper       newTxInfoMapper
-	ledgerInfoRetry finality2.LedgerInfoRetry
+	fnsp              *fabric.NetworkServiceProvider
+	tracerProvider    trace.TracerProvider
+	config            events.DeliveryListenerManagerConfig
+	newMapper         newTxInfoMapper
+	ledgerInfoRetry   finality2.LedgerInfoRetry
+	selectionProvider config.EndorserSelectionProvider
 }
 
 // LLMProviderOption customizes a delivery-based lookup listener manager provider.
@@ -92,6 +94,13 @@ type LLMProviderOption func(*deliveryBasedLLMProvider)
 func WithLedgerInfoRetry(retry finality2.LedgerInfoRetry) LLMProviderOption {
 	return func(p *deliveryBasedLLMProvider) {
 		p.ledgerInfoRetry = retry
+	}
+}
+
+// WithEndorserSelection constrains which peers may serve the managers' state queries.
+func WithEndorserSelection(selectionProvider config.EndorserSelectionProvider) LLMProviderOption {
+	return func(p *deliveryBasedLLMProvider) {
+		p.selectionProvider = selectionProvider
 	}
 }
 
@@ -159,7 +168,7 @@ func (p *deliveryBasedLLMProvider) NewManager(network, channel string) (Listener
 		},
 		&DeliveryScanQueryByID{
 			Delivery: ch.Delivery(),
-			Querier:  &ChannelStateQuerier{Channel: ch},
+			Querier:  NewChannelStateQuerier(network, ch, p.selectionProvider),
 			Vault:    ch.Vault(),
 		},
 		p.tracerProvider.Tracer("finality_listener_manager", tracing.WithMetricsOpts(tracing.MetricsOpts{})),
