@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	setupv1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -100,6 +101,27 @@ func TestGen(t *testing.T) {
 		raw, err := Gen(args)
 		require.NoError(t, err)
 		assert.NotNil(t, raw)
+	})
+
+	t.Run("generator_domain", func(t *testing.T) {
+		gen := func(domain string) *setupv1.PublicParams {
+			raw, err := Gen(&GeneratorArgs{IdemixMSPDir: idemixDir, OutputDir: tempDir, BitLength: 64, GeneratorDomain: domain})
+			require.NoError(t, err)
+			pp, err := setupv1.NewPublicParamsFromBytes(raw, setupv1.DLogNoGHDriverName, setupv1.ProtocolV1)
+			require.NoError(t, err)
+			require.NoError(t, pp.Validate())
+
+			return pp
+		}
+		def := gen("")
+		custom := gen("my-domain")
+		assert.Empty(t, def.GeneratorDomain)
+		assert.Equal(t, "my-domain", custom.GeneratorDomain)
+		assert.NotEqual(t, def.PedersenGenerators[0].Bytes(), custom.PedersenGenerators[0].Bytes())
+
+		ref, err := setupv1.Setup(64, []byte("dummy ipk"), custom.Curve)
+		require.NoError(t, err)
+		assert.True(t, ref.PedersenGenerators[0].Equals(def.PedersenGenerators[0]))
 	})
 
 	t.Run("success_with_version", func(t *testing.T) {

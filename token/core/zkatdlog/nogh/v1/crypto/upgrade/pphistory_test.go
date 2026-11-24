@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	math "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/upgrade"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/upgrade/mock"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
@@ -39,29 +40,21 @@ func idemixIssuerPK(t *testing.T) []byte {
 	return raw
 }
 
-// generationCurves maps a generation name to the curve it is generated on. Generators are derived
-// from a public label, so for a given driver name and version only the curve changes them. A
-// public parameters regeneration that changes the bases therefore looks like a curve change:
-// every token created under the previous generation keeps a format no longer produced by the new one.
-var generationCurves = map[string]math.CurveID{
-	"old-generators":        math.BLS12_381_BBS_GURVY,
-	"even-older-generators": math.BLS12_381_GURVY,
-	"generation-a":          math.BLS12_381_BBS_GURVY,
-	"generation-b":          math.BLS12_381_GURVY,
-	"generation-c":          math.BLS12_377_GURVY,
-}
-
-// newPublicParams returns a fresh generation of public parameters. When generation is not empty,
-// the parameters are generated on a different curve, hence with different (still derived) generators.
-func newPublicParams(t *testing.T, generation string) *setup.PublicParams {
+// newPublicParams returns a fresh generation of public parameters. When generatorsDomain is not
+// empty, all generators are derived from that domain instead of the default one, which is exactly
+// what a public parameters regeneration that changes the bases looks like: every token created
+// under the previous generation keeps a format no longer produced by the new one.
+func newPublicParams(t *testing.T, generatorsDomain string) *setup.PublicParams {
 	t.Helper()
-	curve := math.BN254
-	if len(generation) != 0 {
-		c, ok := generationCurves[generation]
-		require.True(t, ok, "unknown generation %q", generation)
-		curve = c
-	}
-	pp, err := setup.Setup(testBitLength, idemixIssuerPK(t), curve)
+	pp, err := setup.NewWith(setup.SetupParams{
+		DriverName:      setup.DLogNoGHDriverName,
+		DriverVersion:   setup.ProtocolV1,
+		BitLength:       testBitLength,
+		IdemixIssuerPK:  idemixIssuerPK(t),
+		CurveID:         math.BN254,
+		ProofType:       rp.RangeProofType,
+		GeneratorDomain: generatorsDomain,
+	})
 	require.NoError(t, err)
 	require.NoError(t, pp.Validate())
 

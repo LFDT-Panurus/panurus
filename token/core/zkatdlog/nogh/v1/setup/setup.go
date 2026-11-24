@@ -619,19 +619,18 @@ func validateGeneratorDomain(domain string) error {
 	return nil
 }
 
-func (p *PublicParams) derivePedersenGenerators() []*mathlib.G1 {
+func (p *PublicParams) derivePedersenGenerators(label string) []*mathlib.G1 {
 	curve := mathlib.Curves[p.Curve]
 	gens := make([]*mathlib.G1, 3)
 	for i := range gens {
-		gens[i] = curve.HashToG1([]byte(p.generatorLabel() + "PedersenGenerators." + strconv.Itoa(i)))
+		gens[i] = curve.HashToG1([]byte(label + "PedersenGenerators." + strconv.Itoa(i)))
 	}
 
 	return gens
 }
 
-func (p *PublicParams) deriveRangeProofParams(bitLength uint64) *RangeProofParams {
+func (p *PublicParams) deriveRangeProofParams(label string, bitLength uint64) *RangeProofParams {
 	curve := mathlib.Curves[p.Curve]
-	label := p.generatorLabel()
 	rpp := &RangeProofParams{
 		P:               curve.HashToG1([]byte(label + "RangeProof.P")),
 		Q:               curve.HashToG1([]byte(label + "RangeProof.Q")),
@@ -648,9 +647,8 @@ func (p *PublicParams) deriveRangeProofParams(bitLength uint64) *RangeProofParam
 	return rpp
 }
 
-func (p *PublicParams) deriveCSPRangeProofParams(bitLength uint64) *CSPRangeProofParams {
+func (p *PublicParams) deriveCSPRangeProofParams(label string, bitLength uint64) *CSPRangeProofParams {
 	curve := mathlib.Curves[p.Curve]
-	label := p.generatorLabel()
 	rpp := &CSPRangeProofParams{
 		BitLength:       bitLength,
 		LeftGenerators:  make([]*mathlib.G1, bitLength+1),
@@ -678,19 +676,19 @@ func equalG1Slices(got, want []*mathlib.G1) bool {
 }
 
 func (p *PublicParams) GeneratePedersenParameters() error {
-	p.PedersenGenerators = p.derivePedersenGenerators()
+	p.PedersenGenerators = p.derivePedersenGenerators(p.generatorLabel())
 
 	return nil
 }
 
 func (p *PublicParams) GenerateRangeProofParameters(bitLength uint64) error {
-	p.RangeProofParams = p.deriveRangeProofParams(bitLength)
+	p.RangeProofParams = p.deriveRangeProofParams(p.generatorLabel(), bitLength)
 
 	return nil
 }
 
 func (p *PublicParams) GenerateCSPRangeProofParameters(bitLength uint64) error {
-	p.CSPRangeProofParams = p.deriveCSPRangeProofParams(bitLength)
+	p.CSPRangeProofParams = p.deriveCSPRangeProofParams(p.generatorLabel(), bitLength)
 
 	// Populate RPTranscriptHeader immediately rather than leaving it for the next
 	// Validate() call: a caller that generates CSP params and then proves/verifies
@@ -821,9 +819,6 @@ func (p *PublicParams) validateRangeProofParams() error {
 	if err := p.RangeProofParams.Validate(p.Curve); err != nil {
 		return errors.Wrap(err, "invalid public parameters")
 	}
-	if err := p.checkRangeProofGenerators(); err != nil {
-		return err
-	}
 	if p.QuantityPrecision != p.RangeProofParams.BitLength {
 		return errors.Errorf("invalid public parameters: quantity precision should be [%d] instead it is [%d]", p.RangeProofParams.BitLength, p.QuantityPrecision)
 	}
@@ -844,11 +839,6 @@ func (p *PublicParams) validateCSPRangeProofParams() error {
 	}
 	if err := p.CSPRangeProofParams.Validate(p.Curve); err != nil {
 		return errors.Wrap(err, "invalid public parameters")
-	}
-	want := p.deriveCSPRangeProofParams(bitLength)
-	if !equalG1Slices(p.CSPRangeProofParams.LeftGenerators, want.LeftGenerators) ||
-		!equalG1Slices(p.CSPRangeProofParams.RightGenerators, want.RightGenerators) {
-		return errors.New("invalid csp range proof generators: they do not match the publicly derived generators")
 	}
 	if p.QuantityPrecision != p.CSPRangeProofParams.BitLength {
 		return errors.Errorf("invalid public parameters: quantity precision should be [%d] instead it is [%d]", p.CSPRangeProofParams.BitLength, p.QuantityPrecision)
@@ -876,10 +866,6 @@ func (p *PublicParams) Validate() error {
 	if err := math.CheckElements(p.PedersenGenerators, p.Curve, 3); err != nil {
 		return errors.Wrapf(err, "invalid pedersen generators")
 	}
-	// The generators must be the publicly derived ones: no party may know a discrete-log relation among them.
-	if !equalG1Slices(p.PedersenGenerators, p.derivePedersenGenerators()) {
-		return errors.New("invalid pedersen generators: they do not match the publicly derived generators")
-	}
 
 	if p.RangeProofParams == nil && p.CSPRangeProofParams == nil {
 		return errors.New("invalid public parameters: nil range proof parameters")
@@ -889,6 +875,9 @@ func (p *PublicParams) Validate() error {
 		return err
 	}
 	if err := p.validateCSPRangeProofParams(); err != nil {
+		return err
+	}
+	if err := p.checkGenerators(); err != nil {
 		return err
 	}
 
@@ -901,15 +890,41 @@ func (p *PublicParams) Validate() error {
 	return nil
 }
 
-func (p *PublicParams) checkRangeProofGenerators() error {
-	got := p.RangeProofParams
-	want := p.deriveRangeProofParams(got.BitLength)
-	if got.NumberOfRounds != want.NumberOfRounds ||
-		got.P == nil || !got.P.Equals(want.P) ||
-		got.Q == nil || !got.Q.Equals(want.Q) ||
-		!equalG1Slices(got.LeftGenerators, want.LeftGenerators) ||
-		!equalG1Slices(got.RightGenerators, want.RightGenerators) {
-		return errors.New("invalid range proof generators: they do not match the publicly derived generators")
+// checkGenerators checks the generators only when the issuer declares a GeneratorDomain: they must
+// then derive from it, so that no party knows a discrete-log relation among them. Without a
+// GeneratorDomain the generators are accepted as they are: choosing them is the issuer's responsibility.
+func (p *PublicParams) checkGenerators() error {
+	if p.GeneratorDomain == "" {
+		return nil
+	}
+
+	return p.checkDerivedGenerators(p.generatorLabel())
+}
+
+// checkDerivedGenerators compares every present generator group against the derivation from label.
+// The sizes of the derived vectors come from the bit lengths of the parameters, which are
+// untrusted. The caller must have checked them first: validateRangeProofParams and
+// validateCSPRangeProofParams restrict them to SupportedPrecisions.
+func (p *PublicParams) checkDerivedGenerators(label string) error {
+	if !equalG1Slices(p.PedersenGenerators, p.derivePedersenGenerators(label)) {
+		return errors.New("invalid pedersen generators: they do not match the publicly derived generators")
+	}
+	if got := p.RangeProofParams; got != nil {
+		want := p.deriveRangeProofParams(label, got.BitLength)
+		if got.NumberOfRounds != want.NumberOfRounds ||
+			got.P == nil || !got.P.Equals(want.P) ||
+			got.Q == nil || !got.Q.Equals(want.Q) ||
+			!equalG1Slices(got.LeftGenerators, want.LeftGenerators) ||
+			!equalG1Slices(got.RightGenerators, want.RightGenerators) {
+			return errors.New("invalid range proof generators: they do not match the publicly derived generators")
+		}
+	}
+	if got := p.CSPRangeProofParams; got != nil {
+		want := p.deriveCSPRangeProofParams(label, got.BitLength)
+		if !equalG1Slices(got.LeftGenerators, want.LeftGenerators) ||
+			!equalG1Slices(got.RightGenerators, want.RightGenerators) {
+			return errors.New("invalid csp range proof generators: they do not match the publicly derived generators")
+		}
 	}
 
 	return nil
