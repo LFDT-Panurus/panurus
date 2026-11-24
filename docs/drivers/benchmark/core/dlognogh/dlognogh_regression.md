@@ -24,6 +24,11 @@ Regression tests ensure **backwards compatibility** of the ZK-ATDLOG validator b
 
 ```
 testdata/
+├── generated/                      # Public-parameter sets only, with their signers
+│   └── <mode>/<proof>/<config>/    # mode: domain|legacy; proof: ipa|csp|open-policy
+│       ├── params.txt              # Base64-encoded public parameters
+│       ├── pp.json                 # Parameters, bit length, curve
+│       └── signers.json            # Test-only auditor/issuer keys and identities
 └── zero/
     ├── 32-BLS12_381_BBS_GURVY/     # 32-bit IPA/bulletproof range proofs, BLS12_381 curve
     │   ├── params.txt              # Base64-encoded public parameters
@@ -50,6 +55,32 @@ testdata/
         ├── 64-BLS12_381_BBS_GURVY/
         └── 64-BN254/
 ```
+
+### Public Parameters Generator Modes
+
+`TestPublicParamsValidate` (`regression/generators_test.go`) checks how `Validate` and the
+validator treat the generators of the public parameters:
+
+- **Stored parameters**: every `params.txt` under `testdata/zero`, `zero/csp` and `zero/open-policy`
+  is loaded and validated. They declare no generator domain. Their token requests are the stored
+  vectors that `TestRegression` verifies. They cannot be regenerated, because the signing keys of
+  the stored parameters are not kept.
+- **Stored parameter sets**: `testdata/generated/<mode>/<proof>/<config>/` holds 24 sets:
+  mode is `domain` or `legacy`, proof is `ipa`, `csp` or `open-policy` (IPA proof, empty issuer
+  policy), and config is `<bits>-<curve>` (4 configurations). Each directory contains:
+  - `params.txt`: base64 public parameters;
+  - `pp.json`: the parameters with their bit length and curve;
+  - `signers.json`: the auditor, second auditor and issuer ECDSA keys (base64 DER), identities and
+    audit info registered in the parameters. These are test-only keys, with no value.
+
+  The test loads each set with `benchmark.LoadSetupConfigurations`, generates a request of every
+  kind (transfer, issue, redeem, swap, upgrade witness, public metadata, multi-auditor, open issuer
+  policy, and the two negative fixtures) signed with the stored keys, and verifies them with the
+  same code as `TestRegression`. Adding a directory adds a subtest. The modes are:
+  - a generator domain (`regression.domain.v1`): the generators derive from it;
+  - legacy-style generators (`benchmark.UseLegacyGenerators`): random Pedersen generators and
+    range-proof generators from plain strings, as in releases up to v0.13.0, with no domain.
+    `Validate` accepts them as they are.
 
 ### Test Vector Format
 
@@ -184,9 +215,16 @@ go run . -bits=32,64 -curves=BN254,BLS12_381_BBS_GURVY -num_inputs=1,2 -num_outp
 # CSP vectors (testdata/zero/csp/<config>)
 go run . -proof_type=csp -bits=32,64 -curves=BN254,BLS12_381_BBS_GURVY -num_inputs=1,2 -num_outputs=1,2
 
-# Or, equivalently, run both go:generate directives in this package:
+# Public-parameter sets only (testdata/generated/<mode>/<proof>/<config>), no vectors
+go run . -generator_domain=regression.domain.v1 -bits=32,64 -curves=BN254,BLS12_381_BBS_GURVY -num_inputs=1 -num_outputs=1
+go run . -legacy_generators -bits=32,64 -curves=BN254,BLS12_381_BBS_GURVY -num_inputs=1 -num_outputs=1
+
+# Or, equivalently, run all go:generate directives in this package:
 go generate .
 ```
+
+`-generator_domain` and `-legacy_generators` are mutually exclusive. When one is set, the
+generator writes only the parameter sets and no `testdata.json`.
 
 This regenerates every `testdata.json` in each affected configuration directory
 (the swept action/input/output cases plus the fixed-shape scenario fixtures, in one

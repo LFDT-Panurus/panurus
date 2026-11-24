@@ -16,8 +16,12 @@ import (
 )
 
 var (
-	proofType    = flag.String("proof_type", "1", "1 or bulletproof or bf, 2 or csp")
-	executorFlag = flag.String("executor", "serial", "execution strategy for range proofs: serial, unbounded, pool")
+	proofType = flag.String("proof_type", "1", "1 or bulletproof or bf, 2 or csp")
+	// generatorDomain and legacyGenerators select the generator mode of the parameter-only
+	// generator runs. They are mutually exclusive.
+	generatorDomain  = flag.String("generator_domain", "", "generator domain; generates only the public parameter sets under testdata/generated")
+	legacyGenerators = flag.Bool("legacy_generators", false, "use legacy-style generators; generates only the public parameter sets under testdata/generated")
+	executorFlag     = flag.String("executor", "serial", "execution strategy for range proofs: serial, unbounded, pool")
 )
 
 // ProofType returns the proof type flag value (0 = RangeProof, 1 = CSPRangeProof).
@@ -60,4 +64,14 @@ func ExecutorProvider() executor.ExecutorProvider {
 		return executor.WorkerPoolProvider{}
 	}
 	panic(fmt.Errorf("invalid executor: %s (want serial, unbounded, or pool)", str))
+}
+
+// GeneratorDomain returns the value of the -generator_domain flag.
+func GeneratorDomain() string {
+	return *generatorDomain
+}
+
+// LegacyGenerators returns the value of the -legacy_generators flag.
+func LegacyGenerators() bool {
+	return *legacyGenerators
 }

@@ -129,12 +129,6 @@ func testRegression(t *testing.T, configDir string) {
 	ppRaw, err := base64.StdEncoding.DecodeString(string(paramsData))
 	require.NoError(t, err)
 
-	pp, tokenValidator, err := tokenServicesFactory(ppRaw)
-	require.NoError(t, err)
-
-	// Create auditor for metadata validation
-	auditor := createAuditor(pp)
-
 	// Read aggregated test data file
 	filePath := path.Join(configDir, "testdata.json")
 	jsonData, err := testDataFS.ReadFile(filePath)
@@ -144,6 +138,20 @@ func testRegression(t *testing.T, configDir string) {
 	var allTestCases map[string]testing2.TestCase
 	err = json.Unmarshal(jsonData, &allTestCases)
 	require.NoError(t, err, "failed to unmarshal aggregated test data from [%s]", filePath)
+
+	verifyTestCases(t, ppRaw, allTestCases)
+}
+
+// verifyTestCases verifies every test case against the validator and the auditor built from the
+// serialized public parameters ppRaw. Negative cases must fail with their expected error.
+func verifyTestCases(t *testing.T, ppRaw []byte, allTestCases map[string]testing2.TestCase) {
+	t.Helper()
+
+	pp, tokenValidator, err := tokenServicesFactory(ppRaw)
+	require.NoError(t, err)
+
+	// Create auditor for metadata validation
+	auditor := createAuditor(pp)
 
 	// Process each test case
 	for testCaseKey, tokenData := range allTestCases {

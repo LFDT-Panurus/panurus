@@ -21,12 +21,22 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/testutils"
 	sbenchmark "github.com/LFDT-Panurus/panurus/token/services/benchmark"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemixnym"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
 //go:generate go run . -bits=32,64 -curves=BN254,BLS12_381_BBS_GURVY -num_inputs=1,2 -num_outputs=1,2
 //go:generate go run . -proof_type=csp -bits=32,64 -curves=BN254,BLS12_381_BBS_GURVY -num_inputs=1,2 -num_outputs=1,2
+//go:generate go run . -generator_domain=regression.domain.v1 -bits=32,64 -curves=BN254,BLS12_381_BBS_GURVY -num_inputs=1 -num_outputs=1
+//go:generate go run . -legacy_generators -bits=32,64 -curves=BN254,BLS12_381_BBS_GURVY -num_inputs=1 -num_outputs=1
 func main() {
 	flag.Parse()
+	if benchmark.GeneratorDomain() != "" || benchmark.LegacyGenerators() {
+		if err := generateParameterSets(); err != nil {
+			panic(err)
+		}
+
+		return
+	}
 	// The -proof_type flag (registered by the benchmark package) selects the
 	// range-proof system: RangeProofType (IPA/bulletproof, the default) or
 	// CSPRangeProofType (CSP). CSP vectors are written to a separate `csp`
@@ -258,6 +268,60 @@ func generateOpenPolicyCorpus(bits []uint64, curves []math.CurveID) error {
 
 		log.Printf("writing aggregated file for open-policy configuration %s...\n", k)
 		if err := testutils.SaveAggregatedToFile(filepath.Join(configDir, "testdata.json"), allTestCases); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// generateParameterSets writes only the public parameter sets, with the signers that
+// are registered in them, under testdata/generated/<mode>/<proof>/<config>/, where mode
+// is domain or legacy and proof is ipa, csp, or open-policy (IPA proof, empty issuer
+// policy). It is selected by -generator_domain or -legacy_generators.
+func generateParameterSets() error {
+	domain, legacy := benchmark.GeneratorDomain(), benchmark.LegacyGenerators()
+	if domain != "" && legacy {
+		return errors.New("-generator_domain and -legacy_generators are mutually exclusive")
+	}
+	bits, curves, _, err := sbenchmark.GenerateCasesWithDefaults()
+	if err != nil {
+		return err
+	}
+
+	mode := "domain"
+	params := benchmark.SetupParams{
+		IdemixTestdataPath: "./../../../../testdata",
+		Bits:               bits,
+		CurveIDs:           curves,
+		OwnerIdentityType:  idemixnym.IdentityType,
+		GeneratorDomain:    domain,
+	}
+	if legacy {
+		mode = "legacy"
+		params.Customize = benchmark.UseLegacyGenerators
+	}
+	root := filepath.Join("./../../generated", mode)
+
+	for _, proof := range []struct {
+		name      string
+		proofType rp.ProofType
+		open      bool
+	}{
+		{"ipa", rp.RangeProofType, false},
+		{"csp", rp.CSPRangeProofType, false},
+		{"open-policy", rp.RangeProofType, true},
+	} {
+		params.ProofType = proof.proofType
+		newConfigurations := benchmark.NewSetupConfigurationsWithParams
+		if proof.open {
+			newConfigurations = benchmark.NewOpenIssuerPolicySetupConfigurations
+		}
+		configurations, err := newConfigurations(params)
+		if err != nil {
+			return err
+		}
+		if err := configurations.SaveWithSignersTo(filepath.Join(root, proof.name)); err != nil {
 			return err
 		}
 	}
