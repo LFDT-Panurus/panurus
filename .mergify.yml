@@ -1,0 +1,53 @@
+# Mergify merge queue for `main`.
+#
+# PRs are queued ONLY on explicit developer request: either comment
+# `@mergifyio queue` on the PR, or tick the "Queue this pull request" checkbox
+# Mergify adds to the PR. There are intentionally no `pull_request_rules`, so
+# nothing is ever queued or merged automatically.
+#
+# The queue runs in-place checks: one PR at a time, Mergify rebases the PR's
+# own branch onto the latest `main`, waits for CI to pass on it again, and
+# squash-merges it as one commit. In-place checks are needed because `main`
+# requires branches to be up to date before merging. Mergify only uses them
+# when the settings below are serial/single-PR and `merge_conditions` is
+# identical to `queue_conditions`.
+# See docs/development/general.md#merge-queue.
+
+shared:
+  # Conditions to enter the queue and to merge (same list, see above).
+  # Check names: job names from .github/workflows/tests.yml (Tests), the DCO
+  # app, and the CodeQL workflow (.github/workflows/codeql-analysis.yml) job
+  # `Analyze`. `publish-coverage` needs every `utest` and `itest` matrix job,
+  # so it succeeds only once all of them have passed; that avoids listing ~90
+  # matrix entries here. Keep this list in sync with the workflows.
+  conditions: &conditions
+    - base=main
+    - -draft
+    - -conflict
+    - "#approved-reviews-by>=1"
+    - "#changes-requested-reviews-by=0"
+    - check-success=DCO
+    - check-success=checks
+    - check-success=lint
+    - check-success=proto-breaking
+    - check-success=bench-check
+    - check-success=cgo-check
+    - check-success=publish-coverage
+    - check-success=Analyze
+
+merge_queue:
+  mode: serial
+  max_parallel_checks: 1
+
+queue_rules:
+  - name: default
+    batch_size: 1
+    max_checks_retries: 0
+    merge_method: squash
+    update_method: rebase
+    # Dequeue the PR if required checks are still pending after 2 hours.
+    # Mergify's default (`auto`) applies no timeout until it has enough CI
+    # history. Successful `Tests` runs take ~30m on average, ~60m at worst.
+    checks_timeout: 2 hours
+    queue_conditions: *conditions
+    merge_conditions: *conditions

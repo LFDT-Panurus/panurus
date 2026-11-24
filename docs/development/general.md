@@ -103,7 +103,8 @@ When ready to make a `Pull request`, do the following:
 
 ### Finalize Pull Request
 
-Once the review process is finished, finalize the PR:
+Once the review process is finished, finalize the PR through the [merge queue](#merge-queue)
+(preferred), or manually:
 - Do a `squash and merge` (NOT `Merge commit`!)
 - Delete the branch
 - Close the PR
@@ -137,6 +138,44 @@ gh pr create --title "Add user management (#123)" --base main \
 ```
 
 Note: GitHub's Issue Type field (Bug/Task/Feature) does **not** exist on pull requests — only on issues (see below). There is nothing to set on the PR for it.
+
+
+### Merge Queue
+
+PRs targeting `main` can be merged through the [Mergify](https://docs.mergify.com/merge-queue/)
+merge queue, configured in `.mergify.yml` at the repository root,
+with a single `default` queue.
+
+A PR is only ever queued on an explicit developer request. Nothing is queued or merged
+automatically. To queue a PR, do one of the following:
+- Comment `@mergifyio queue` on the PR.
+- Tick the **Queue this pull request** checkbox that Mergify adds to the PR.
+
+The queue requires all of the following, both to enter it and to merge:
+- The PR targets `main`, is not a draft, has no conflicts, and has at least one approval with no
+  outstanding change requests.
+- These CI checks pass: the `Tests` workflow jobs `checks`, `lint`, `proto-breaking`, `bench-check`,
+  `cgo-check`, and `publish-coverage` (which passes only if every `utest` and `itest` job passed),
+  plus `DCO` and the CodeQL workflow's `Analyze` job.
+
+If these are not met yet when you queue the PR, Mergify waits until they are. Once the PR is
+queued, Mergify handles queued PRs one at a time (in-place checks):
+1. Rebases the PR's own branch onto the latest `main` (`update_method: rebase`).
+2. Waits for the CI checks above to pass again on the rebased branch.
+3. Squash-merges it as a single commit (`merge_method: squash`).
+
+If the required checks are still pending 2 hours after the rebase (`checks_timeout`), Mergify
+removes the PR from the queue. Re-queue it once CI is fixed or re-run.
+
+Please note here that fork PRs without maintainer-edit access must be rebased by the author before
+queueing. Mergify rebases a fork PR by pushing to the contributor's branch, which GitHub only allows
+when **Allow edits by maintainers** is enabled on the PR.
+
+The queue checks PRs one at a time because `main` requires branches to be up to date before
+merging. Mergify can only merge under that rule when it tests each PR on its own branch.
+
+Comment `@mergifyio dequeue` to take a PR out of the queue. If you rename or add CI jobs in
+`.github/workflows/tests.yml`, update the shared `conditions` list in `.mergify.yml` to match.
 
 ## Issue Creation Guidelines
 
