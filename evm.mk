@@ -33,10 +33,10 @@ test-evm-contracts:
 besu-docker-images:
 	docker pull $(BESU_IMAGE)
 
-.PHONY: fabricx-evm-docker-images
+.PHONY: chaguar-evm-docker-images
 # pull the fabric-x-evm docker image the EVM gateway integration suite runs against
-fabricx-evm-docker-images:
-	docker pull $(FABRICX_EVM_IMAGE)
+chaguar-evm-docker-images:
+	docker pull $(CHAGUAR_EVM_IMAGE)
 
 .PHONY: integration-tests-evm
 # run the fungible integration tests against an EVM backend (Besu).
@@ -107,7 +107,7 @@ integration-tests-evm-fabtoken-t13:
 
 .PHONY: integration-tests-evm-gateway
 # run the fungible integration tests against the fabric-x-evm gateway backend.
-integration-tests-evm-gateway: fabricx-evm-docker-images
+integration-tests-evm-gateway: chaguar-evm-docker-images
 	cd ./integration/token/fungible/evmgw; ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" .
 
 .PHONY: integration-tests-evm-gateway-t1
@@ -144,7 +144,7 @@ integration-tests-evm-gateway-t13:
 
 .PHONY: integration-tests-evm-gateway-fabtoken
 # run the fungible integration tests against the fabric-x-evm gateway backend with the fabtoken driver.
-integration-tests-evm-gateway-fabtoken: fabricx-evm-docker-images
+integration-tests-evm-gateway-fabtoken: chaguar-evm-docker-images
 	cd ./integration/token/fungible/evmgwfabtoken; ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" .
 
 .PHONY: integration-tests-evm-gateway-fabtoken-t1

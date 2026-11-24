@@ -79,7 +79,7 @@ type NetworkHandler struct {
 	Image string
 	// ChainID is the chain the network runs.
 	ChainID int64
-	// NodeKind selects the node to boot: empty/"besu" (default) or "fabricx-evm" gateway.
+	// NodeKind selects the node to boot: empty/"besu" (default) or "chaguar-evm" gateway.
 	NodeKind string
 	// Threshold is the endorsement threshold; when zero every endorser must sign.
 	Threshold uint
@@ -308,7 +308,7 @@ func (p *NetworkHandler) startNode(tms *topology2.TMS) Node {
 	port := int(ctx.ReservePort())
 
 	if p.NodeKind == GatewayTopologyName {
-		node, err := startGatewayNode(context.Background(), resolveImage(p.Image, fabricxEVMImageEnvVar, defaultGatewayImage), p.ChainID, port)
+		node, err := startGatewayNode(context.Background(), resolveImage(p.Image, chaguarEVMImageEnvVar, defaultGatewayImage), p.ChainID, port)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to start the EVM node")
 
 		return node
