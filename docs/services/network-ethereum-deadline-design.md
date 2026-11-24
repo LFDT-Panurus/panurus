@@ -1,8 +1,7 @@
 # Ethereum Driver: Transaction Deadline (Design)
 
-Design for [#2598](https://github.com/LFDT-Panurus/panurus/issues/2598). It builds on
-[#2534](https://github.com/LFDT-Panurus/panurus/pull/2534), which stops the driver from treating a
-finality timeout as `Invalid`.
+Design for giving the EVM driver a verdict for a transaction that never lands. It builds on the change
+that stops the driver from treating a finality timeout as `Invalid`.
 
 ## Problem
 
@@ -13,7 +12,7 @@ transaction was rejected or is still on its way. And it can be on its way for a 
 - the contract does not check `msg.sender`, so any party holding the endorsed delta and its signatures
   can submit it later. Every party receives both in the envelope.
 
-So a missing anchor is never proof of failure, and since #2534 the driver no longer reports it as one.
+So a missing anchor is never proof of failure, and the driver no longer reports it as one.
 What is left without a verdict:
 
 - a transaction that is never mined and never conflicts stays `Pending` on every node, and a caller
@@ -84,27 +83,29 @@ value, so the deltas still match.
 The value comes from configuration. There is no per-transaction option through ttx: nothing needs one
 yet, and it can be added without changing anything here.
 
-The value travels in the token request's **application metadata** under the key `evm.validUntil`:
+The value travels as a field of the EVM endorsement request, `EndorseRequest.ValidUntil`. It cannot ride
+in the token request's application metadata: endorsers receive only the request's actions
+(`RequestToBytes`), never its metadata.
 
-- the endorser already parses the token request, so the request needs no new field;
-- every party persists application metadata with the token request, recipients included
-  (`Metadata.FilterBy` always keeps it), so it survives a restart without a schema change.
+### 4. Every party records the deadline when it receives the transaction
 
-### 4. Every party checks the deadline when it receives the transaction
+The verdict below runs in recovery, possibly after a restart, so every party (sender, recipient, auditor)
+has to keep the deadline. The only copy that can be trusted is the one inside the endorsed delta: anything
+the sender adds next to it, such as application metadata, is not covered by `tokenRequestHash` or by any
+signature, and a dishonest sender could hand a recipient an earlier deadline, making it report `Invalid`
+while the real delta can still land, which is the original bug.
 
-Application metadata is not covered by `tokenRequestHash` or by participant signatures. A dishonest
-sender could give a recipient an earlier `validUntil` than the one endorsed. The recipient would then
-report `Invalid` while the real delta can still land, which is the original bug.
-
-So a party checks the deadline while it still holds the envelope, before it stores the transaction. The
-EVM driver checks:
+So a party reads the deadline from the envelope while it still holds it, before it stores the
+transaction. The EVM driver first checks the envelope belongs to the request being stored:
 
 - the endorsement quorum over the delta's digest, against the configured registry;
-- `delta.tokenRequestHash` equals the hash of the token request being stored;
-- `delta.validUntil` equals the `evm.validUntil` application metadata.
+- `delta.tokenRequestHash` equals the hash of the token request being stored.
 
-On any mismatch the transaction is refused. After that, the stored metadata value can be trusted on its
-own, including after a restart.
+On a mismatch the transaction is refused. Otherwise the driver records `delta.validUntil` in the
+request's application metadata under `evm.validUntil`. Every party persists application metadata with
+the token request, recipients included (`Metadata.FilterBy` always keeps it), so the value survives a
+restart without a schema change, and since this party wrote it from a verified delta, it can be trusted
+on its own afterwards.
 
 This needs two small changes in `token/services/ttx`, which no other driver is affected by:
 
@@ -113,9 +114,10 @@ This needs two small changes in `token/services/ttx`, which no other driver is a
 
   ```go
   // EnvelopeValidator is implemented by a network that must check a received envelope against
-  // the token request it carries before the transaction is stored.
+  // the token request it carries before the transaction is stored. The application metadata it
+  // returns is stored with the request.
   type EnvelopeValidator interface {
-      ValidateEnvelope(ctx context.Context, namespace string, env Envelope, requestRaw []byte) error
+      ValidateEnvelope(ctx context.Context, namespace string, env Envelope, requestRaw []byte) (map[string][]byte, error)
   }
   ```
 
@@ -135,7 +137,7 @@ persisted metadata:
 
 Both reads are at the finality tag, so a reorg cannot undo the verdict. A row with no `evm.validUntil`
 (created before this change) keeps today's behaviour: only conflict evidence condemns it. The finality
-listener stays as it is after #2534: an error at its timeout, never a verdict.
+listener stays as it is: an error at its timeout, never a verdict.
 
 ## Configuration
 
@@ -170,10 +172,37 @@ stay locked until the deadline is final, so a larger window costs availability, 
 ## Phasing
 
 1. **Contract and endorsement.** The contract field and check, Go types, ABI and EIP-712, the domain
-   version bump, the configuration, the requester setting `evm.validUntil`, and the endorser window.
+   version bump, the configuration, the requester proposing the deadline, and the endorser window.
    The contract enforces the deadline, but no verdict uses it yet.
-2. **Receive-time check.** The `EnvelopeValidator` hook and its EVM implementation, and auditors in the
-   post-approval distribution.
+2. **Receive-time check.** The `EnvelopeValidator` hook and its EVM implementation, which records
+   `evm.validUntil`, and auditors in the post-approval distribution.
 3. **Verdict.** The deadline rule in recovery.
 
 Each phase stands on its own: phase 1 only adds a revert path, and phase 3 needs phases 1 and 2 in place.
+
+## Testing
+
+Each phase is tested at three levels.
+
+1. **Contract and endorsement.**
+   - Solidity (forge): a delta applies up to and including its `validUntil` block, reverts with
+     `DeltaExpired` past it and writes nothing, and a submitter extending a signed deadline breaks the
+     signatures.
+   - Go: the EIP-712 golden fixture and the ABI calldata vector are regenerated and cross-checked
+     independently with ethers, and the Solidity tests verify the same fixture. Unit tests cover the
+     configuration rule, the endorser window's edges, an endorser refusing an out-of-window proposal
+     before validating anything, and the initiator rejecting a delta with a deadline other than the
+     one it proposed.
+   - anvil end to end: a fully endorsed delta submitted after its deadline reverts on chain and is never
+     reported `Valid`.
+2. **Receive-time check.** Unit tests for the EVM `EnvelopeValidator`: an envelope whose quorum does
+   not verify, or whose `tokenRequestHash` is not the stored request's, is refused; a valid one records
+   `evm.validUntil`. A ttx test checks the hook runs before anything is stored, that its metadata is
+   persisted, and that networks without it are unaffected. Auditors get a test that they now receive
+   the endorsed envelope.
+3. **Verdict.** Recovery unit tests with a fake chain: an absent anchor before the deadline stays
+   `Pending`; absent at a final block past it becomes `Invalid`; present is `Valid`; and a row without
+   `evm.validUntil` keeps today's behaviour. On anvil, with automine off: a transaction is endorsed and
+   dropped from the pool, blocks are mined past its deadline, and recovery reports `Invalid` on the
+   sender, a recipient and the auditor, while a transaction mined within its window is `Valid`. The
+   existing fungible suite on Besu must keep passing throughout.
