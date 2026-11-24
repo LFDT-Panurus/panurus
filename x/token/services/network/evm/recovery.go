@@ -63,7 +63,7 @@ type selectorManagerProvider interface {
 // The recovery manager is what asks. It periodically claims transactions that have been Pending for
 // longer than its TTL and resolves each through GetTransactionStatus, which for this driver is the
 // same anchor lookup a fresh listener would have done. The Fabric driver starts exactly these two
-// managers for the same reason, and fabricx inherits them by building on it. This driver started
+// managers for the same reason, and Chaguar inherits them by building on it. This driver started
 // none, which stays invisible for as long as no node restarts.
 func (d *Driver) startRecovery(tmsID token2.TMSID, network *Network) error {
 	if d.ttxStores == nil || d.auditStores == nil || d.tokensManager == nil {

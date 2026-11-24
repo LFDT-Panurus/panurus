@@ -23,7 +23,7 @@ import (
 
 var logger = logging.MustGetLogger()
 
-// QueryService models the FabricX query service needed by the NSListenerManager
+// QueryService models the Chaguar query service needed by the NSListenerManager
 //
 //go:generate counterfeiter -o mock/qs.go -fake-name QueryService . QueryService
 type QueryService = queryservice.QueryService

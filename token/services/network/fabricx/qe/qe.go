@@ -86,7 +86,7 @@ func (p *ExecutorProvider) GetStateExecutor(network, channel string) (QueryState
 	return p.p.Get(in{network: network, channel: channel})
 }
 
-// Executor models a state and token query service implementation for FabricX.
+// Executor models a state and token query service implementation for Chaguar.
 type Executor struct {
 	qsProvider    queryservice.Provider
 	keyTranslator translator.KeyTranslator

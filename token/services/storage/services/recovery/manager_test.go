@@ -560,7 +560,7 @@ func TestManager_StopDuringFanOutDoesNotDeadlock(t *testing.T) {
 }
 
 // TestManager_PromoteOrphanOnNoSuchTransactionID verifies that the
-// "no such transaction ID" error message returned by the Fabric-X ledger
+// "no such transaction ID" error message returned by the Chaguar ledger
 // (fabric-smart-client/platform/fabricx/core/ledger/ledger.go) is recognised
 // as a NotFound error, so the manager promotes the tx to storage.Orphan after
 // the NotFoundGracePeriod has elapsed.
@@ -595,7 +595,7 @@ func TestManager_PromoteOrphanOnNoSuchTransactionID(t *testing.T) {
 	mockDB.AcquireRecoveryLeadershipReturns(leadership2, true, nil)
 	mockDB.ClaimPendingTransactionsReturnsOnCall(0, []*ttxdb.RecoveryClaim{txRecord}, nil)
 	mockDB.ClaimPendingTransactionsReturns([]*ttxdb.RecoveryClaim{}, nil)
-	// Use the Fabric-X ledger sentinel substring directly.
+	// Use the Chaguar ledger sentinel substring directly.
 	mockHandler.RecoverReturns(errors.New("Failed to get transaction with id d48c4, error no such transaction ID [d48c] in index"))
 	mockDB.ReleaseRecoveryClaimReturns(nil)
 	mockDB.SetStatusReturns(nil)

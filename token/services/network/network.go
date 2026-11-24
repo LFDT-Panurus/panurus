@@ -203,7 +203,7 @@ func (l *Ledger) TransferMetadataKey(k string) (string, error) {
 	return l.l.TransferMetadataKey(k)
 }
 
-// Network serves as the primary bridge to a specific blockchain network (e.g., Fabric or FabricX).
+// Network serves as the primary bridge to a specific blockchain network (e.g., Fabric or Chaguar).
 // it provides methods for broadcasting transactions, requesting approvals, and monitoring finality.
 type Network struct {
 	n               driver.Network

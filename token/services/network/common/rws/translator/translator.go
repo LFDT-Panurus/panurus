@@ -132,7 +132,7 @@ func (t *Translator) AddPublicParamsDependency() error {
 }
 
 // QueryTokens returns the raw state of each of the passed token ids, one result per id at
-// the same position. An id whose state does not exist gets a nil entry, matching the fabricx
+// the same position. An id whose state does not exist gets a nil entry, matching the Chaguar
 // backend's convention for reporting an absent token, so callers can tell "missing" apart from
 // a genuine read failure. QueryTokens still fails as a whole if any id is nil or cannot be
 // turned into an output key: those are malformed requests, not observations about the ledger.

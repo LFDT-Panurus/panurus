@@ -40,7 +40,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// NewDriver returns a new Driver instance for the FabricX network.
+// NewDriver returns a new Driver instance for the Chaguar network.
 // It initializes core services including the query executor provider, listener managers,
 // and endorsement service provider. It also validates that the finality type
 // is set to "notification" and initializes the event queue for finality notifications.
@@ -130,7 +130,7 @@ func NewDriver(
 	return d, nil
 }
 
-// Driver models the FabricX network driver.
+// Driver models the Chaguar network driver.
 type Driver struct {
 	ttxStoreServiceManager     ttxdb.StoreServiceManager
 	auditStoreServiceManager   auditdb.StoreServiceManager
