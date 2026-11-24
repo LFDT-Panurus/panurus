@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package dbtest
 
 import (
+	"context"
 	"testing"
 
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
@@ -36,6 +37,7 @@ var KeyStoreCases = []struct {
 }{
 	{"TKeyStoreAddGet", TKeyStoreAddGet},
 	{"TKeyStorePutConflict", TKeyStorePutConflict},
+	{"TKeyStoreCount", TKeyStoreCount},
 }
 
 func TKeyStoreAddGet(t *testing.T, db driver.KeyStore) {
@@ -73,6 +75,34 @@ func TKeyStorePutConflict(t *testing.T, db driver.KeyStore) {
 	v := &Value{}
 	require.NoError(t, db.Get("k", v))
 	assert.Equal(t, "original", v.V)
+}
+
+// TKeyStoreCount asserts that Count tracks the number of distinct keys.
+func TKeyStoreCount(t *testing.T, db driver.KeyStore) {
+	t.Helper()
+
+	counter, ok := db.(interface {
+		Count(ctx context.Context) (int, error)
+		Delete(key string) error
+	})
+	require.True(t, ok, "key store [%T] does not implement Count and Delete", db)
+
+	assertCount := func(expected int) {
+		t.Helper()
+		n, err := counter.Count(t.Context())
+		require.NoError(t, err)
+		assert.Equal(t, expected, n)
+	}
+
+	assertCount(0)
+	for _, k := range []string{"v1", "v2", "v3"} {
+		require.NoError(t, db.Put(k, &Value{V: k + "_value"}))
+	}
+	assertCount(3)
+	require.NoError(t, db.Put("v1", &Value{V: "v1_value"}))
+	assertCount(3)
+	require.NoError(t, counter.Delete("v2"))
+	assertCount(2)
 }
 
 type Value struct {

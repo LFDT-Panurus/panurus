@@ -181,6 +181,22 @@ func (db *KeystoreStore) Delete(key string) error {
 	return nil
 }
 
+// Count returns the number of keys in the key store.
+func (db *KeystoreStore) Count(ctx context.Context) (int, error) {
+	query, args := q.Select().
+		FieldsByName("COUNT(*)").
+		From(q.Table(db.table.KeyStore)).
+		Format(db.ci)
+	logging.Debug(logger, query, args)
+
+	count, err := common.QueryUniqueContext[int](ctx, db.readDB, query, args...)
+	if err != nil {
+		return 0, errors.Wrap(err, "failed counting keys")
+	}
+
+	return count, nil
+}
+
 func (db *KeystoreStore) GetSchema() string {
 	return fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (

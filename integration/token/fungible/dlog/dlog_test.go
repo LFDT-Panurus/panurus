@@ -28,7 +28,11 @@ const (
 	WebEnabled
 	WithEndorsers
 	OwnOrgEndorsers
+	KeystoreGrowth
 )
+
+// keystoreGrowthCacheSize is the owner wallet cache size of the T18 node, as in the reported scenario.
+const keystoreGrowthCacheSize = 10
 
 // namespacePolicyEitherOrg lets the peers of either organization endorse the token
 // namespace on their own: a node that selects only its own organization needs a policy
@@ -185,6 +189,19 @@ var _ = Describe("EndToEnd", func() {
 		})
 	})
 
+	// The key store growth benchmark does not depend on the P2P communication type.
+	Describe("Key store growth of a runtime owner wallet", integration2.WebSocketNoReplication.Label, func() {
+		ts, selector := newTestSuite(integration2.WebSocketNoReplication.CommType, Aries|KeystoreGrowth, integration2.WebSocketNoReplication.ReplicationFactor, "", "alice", "bob", "charlie", common.KeystoreGrowthNode)
+		BeforeEach(ts.Setup)
+		AfterEach(ts.TearDown)
+		It("succeeded", Label("T18"), func() {
+			if !fungible.RestartEnabled {
+				Skip("T18 restarts a node")
+			}
+			fungible.TestKeystoreGrowth(ts.II, "auditor", keystoreGrowthCacheSize, selector, nil)
+		})
+	})
+
 	for _, tokenSelector := range integration2.TokenSelectors {
 		Describe("TokenSelector Test", integration2.WebSocketNoReplication.Label, Label(tokenSelector), func() {
 			ts, replicaSelector := newTestSuite(integration2.WebSocketNoReplication.CommType, Aries, integration2.WebSocketNoReplication.ReplicationFactor, tokenSelector, "alice", "bob", "charlie")
@@ -211,6 +228,9 @@ func newTestSuite(commType fsc.P2PCommunicationType, mask int, factor int, token
 		FSCBasedEndorsement: mask&WithEndorsers > 0,
 		FSCLogSpec:          "info",
 		TokenSelector:       tokenSelector,
+	}
+	if mask&KeystoreGrowth > 0 {
+		tmsOpts.KeystoreGrowthCacheSize = keystoreGrowthCacheSize
 	}
 	if mask&OwnOrgEndorsers > 0 {
 		// Both organizations host the token chaincode, so that restricting a node to its
