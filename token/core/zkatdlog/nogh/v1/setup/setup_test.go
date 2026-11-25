@@ -1257,7 +1257,7 @@ func TestLegacyGeneratorsRoundTrip(t *testing.T) {
 	pp2, err := NewPublicParamsFromBytes(raw, DLogNoGHDriverName, ProtocolV1)
 	require.NoError(t, err)
 	require.NoError(t, pp2.Validate())
-	assert.Equal(t, "", pp2.GeneratorDomain)
+	assert.Empty(t, pp2.GeneratorDomain)
 }
 
 // TestValidateRejectsMalformedGenerators checks that structural errors are rejected also without a GeneratorDomain.
