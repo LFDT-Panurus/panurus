@@ -8,8 +8,10 @@ package regression_test
 
 import (
 	"encoding/base64"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"io/fs"
 	"path"
+	"strings"
 	"testing"
 
 	math "github.com/IBM/mathlib"
@@ -37,6 +39,7 @@ func TestPublicParamsValidate(t *testing.T) {
 	t.Parallel()
 
 	t.Run("stored", testStoredPublicParams)
+	t.Run("external", testExternalPublicParams)
 	t.Run("generated", testGeneratedPublicParams)
 }
 
@@ -81,7 +84,58 @@ func testStoredPublicParams(t *testing.T) {
 	}
 }
 
-// generatedSet is a stored public-parameter set under testdata/generated/<mode>/<proof>/<config>.
+// externalDir holds the external public parameters. It is not committed, so it may be missing.
+var externalDir = path.Join("testdata", "external")
+
+// loadExternal loads the external public parameters testdata/external/<name>.json. It returns
+// false if the file is missing.
+func loadExternal(t *testing.T, name string) (*setup.PublicParams, bool) {
+	t.Helper()
+
+	raw, err := testDataFS.ReadFile(path.Join(externalDir, name+".json"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, false
+	}
+	require.NoError(t, err)
+	pp, err := setup.NewPublicParamsFromBytes(raw, setup.DLogNoGHDriverName, setup.ProtocolV1)
+	require.NoError(t, err)
+
+	return pp, true
+}
+
+// testExternalPublicParams checks the external public parameters under testdata/external, produced
+// outside this repository: they validate as they are, and declaring another domain makes them fail.
+// No request can be signed against them, because their idemix issuer is not in the testdata. Their
+// generators are reused by the sets under testdata/generated/custom/<name>. The directory is not committed:
+// the test is skipped without it.
+func testExternalPublicParams(t *testing.T) {
+	t.Parallel()
+
+	files, err := fs.ReadDir(testDataFS, externalDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("%s not found", externalDir)
+	}
+	require.NoError(t, err)
+	for _, file := range files {
+		name := strings.TrimSuffix(file.Name(), ".json")
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			pp, ok := loadExternal(t, name)
+			require.True(t, ok)
+			require.NoError(t, pp.Validate())
+
+			pp.GeneratorDomain += "other"
+			require.Error(t, pp.Validate())
+		})
+	}
+}
+
+// customDir is the directory under testdata/generated that holds the sets generated from external
+// public parameters, one mode per external file.
+const customDir = "custom"
+
+// generatedSet is a stored public-parameter set under testdata/generated/<mode>/<proof>/<config>,
+// or testdata/generated/custom/<mode>/<proof>/<config> for the external modes.
 type generatedSet struct {
 	dir    string
 	mode   string
@@ -98,19 +152,38 @@ func listGeneratedSets(t *testing.T) []generatedSet {
 	modes, err := fs.ReadDir(testDataFS, root)
 	require.NoError(t, err)
 	for _, mode := range modes {
-		proofs, err := fs.ReadDir(testDataFS, path.Join(root, mode.Name()))
+		if mode.Name() != customDir {
+			sets = append(sets, listModeSets(t, path.Join(root, mode.Name()), mode.Name())...)
+
+			continue
+		}
+		customModes, err := fs.ReadDir(testDataFS, path.Join(root, customDir))
 		require.NoError(t, err)
-		for _, proof := range proofs {
-			configs, err := fs.ReadDir(testDataFS, path.Join(root, mode.Name(), proof.Name()))
-			require.NoError(t, err)
-			for _, config := range configs {
-				sets = append(sets, generatedSet{
-					dir:    path.Join(root, mode.Name(), proof.Name(), config.Name()),
-					mode:   mode.Name(),
-					proof:  proof.Name(),
-					config: config.Name(),
-				})
-			}
+		for _, customMode := range customModes {
+			sets = append(sets, listModeSets(t, path.Join(root, customDir, customMode.Name()), customMode.Name())...)
+		}
+	}
+
+	return sets
+}
+
+// listModeSets returns the sets under dir/<proof>/<config>, with the given mode.
+func listModeSets(t *testing.T, dir, mode string) []generatedSet {
+	t.Helper()
+
+	var sets []generatedSet
+	proofs, err := fs.ReadDir(testDataFS, dir)
+	require.NoError(t, err)
+	for _, proof := range proofs {
+		configs, err := fs.ReadDir(testDataFS, path.Join(dir, proof.Name()))
+		require.NoError(t, err)
+		for _, config := range configs {
+			sets = append(sets, generatedSet{
+				dir:    path.Join(dir, proof.Name(), config.Name()),
+				mode:   mode,
+				proof:  proof.Name(),
+				config: config.Name(),
+			})
 		}
 	}
 
@@ -140,8 +213,15 @@ func testGeneratedPublicParams(t *testing.T) {
 	t.Parallel()
 
 	sets := listGeneratedSets(t)
-	// 2 modes x (ipa, csp, open-policy) x 4 configurations
-	require.Len(t, sets, 24)
+	// domain and legacy modes: (ipa, csp, open-policy) x 4 configurations each; the other modes
+	// come from external parameters
+	internal := 0
+	for _, set := range sets {
+		if set.mode == "domain" || set.mode == "legacy" {
+			internal++
+		}
+	}
+	require.Equal(t, 24, internal)
 
 	for _, set := range sets {
 		t.Run(set.dir, func(t *testing.T) {
@@ -293,11 +373,34 @@ func equalAny(a, b []*math.G1) bool {
 }
 
 // checkGeneratorProperty asserts the generator domain and that the generators are derived (domain
-// mode) or are not (legacy mode).
+// mode), are not (legacy mode), or are those of testdata/external/<mode>.json (any other mode,
+// checked only if the file is present).
 func checkGeneratorProperty(t *testing.T, set generatedSet, pp *setup.PublicParams) {
 	t.Helper()
 
 	require.NoError(t, pp.Validate())
+
+	switch set.mode {
+	case "domain", "legacy":
+	default:
+		src, ok := loadExternal(t, set.mode)
+		if !ok {
+			return
+		}
+		assert.Equal(t, src.GeneratorDomain, pp.GeneratorDomain)
+		assert.Equal(t, src.Curve, pp.Curve)
+		assert.True(t, equalAny(pp.PedersenGenerators, src.PedersenGenerators), "pedersen generators differ from the external ones")
+		require.NotNil(t, pp.RangeProofParams)
+		require.NotNil(t, src.RangeProofParams)
+		assert.Equal(t, src.RangeProofParams.BitLength, pp.RangeProofParams.BitLength)
+		assert.Equal(t, src.RangeProofParams.NumberOfRounds, pp.RangeProofParams.NumberOfRounds)
+		assert.True(t, src.RangeProofParams.P.Equals(pp.RangeProofParams.P), "range proof P differs from the external one")
+		assert.True(t, src.RangeProofParams.Q.Equals(pp.RangeProofParams.Q), "range proof Q differs from the external one")
+		assert.True(t, equalAny(pp.RangeProofParams.LeftGenerators, src.RangeProofParams.LeftGenerators), "range proof left generators differ from the external ones")
+		assert.True(t, equalAny(pp.RangeProofParams.RightGenerators, src.RangeProofParams.RightGenerators), "range proof right generators differ from the external ones")
+
+		return
+	}
 
 	if set.mode == "domain" {
 		assert.Equal(t, testGeneratorDomain, pp.GeneratorDomain)
