@@ -743,7 +743,7 @@ See also FSC's
   `serverNameOverride` now takes effect.
 - **Readiness**: alert on the `/readyz` reason `grpc server stopped` (`/healthz` stays 200) and
   restart the node.
-- **Fabric-x**: the ledger retries an `Unavailable` call once on another committer.
+- **Chaguar**: the ledger retries an `Unavailable` call once on another committer.
 
 See FSC's
 [v0.28 to v0.29 upgrade guide](https://github.com/hyperledger-labs/fabric-smart-client/blob/v0.29.1/docs/upgrade/v0.28-to-v0.29.md).

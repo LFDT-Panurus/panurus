@@ -209,7 +209,7 @@ Drivers are registered during system initialization:
 // Example: Registering a network driver
 networkProvider := network.NewProvider(configService)
 networkProvider.RegisterDriver(fabricDriver)
-networkProvider.RegisterDriver(fabricxDriver)
+networkProvider.RegisterDriver(chaguarDriver)
 ```
 
 The provider automatically selects the appropriate driver based on the network configuration when `GetNetwork()` is called.

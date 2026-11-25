@@ -141,7 +141,7 @@ func key(tmsID token2.TMSID) string {
 	return tmsID.Network + tmsID.Channel + tmsID.Namespace
 }
 
-// NamespaceTxProcessor models a namespace transaction processor for fabric X
+// NamespaceTxProcessor models a namespace transaction processor for Chaguar
 type NamespaceTxProcessor struct{}
 
 // EnableTxProcessing is a no-op implementation because for Chaguar

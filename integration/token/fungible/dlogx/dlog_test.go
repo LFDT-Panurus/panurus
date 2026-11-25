@@ -56,7 +56,7 @@ var _ = Describe("EndToEnd", func() {
 		})
 
 		// Shared network (token2.ShareNetwork; docs/development/testing.md "Sharing a network
-		// on Fabric-X"). No TestAll: T13 needs no authorized redeem issuer. T3 revokes bob: last.
+		// on Chaguar"). No TestAll: T13 needs no authorized redeem issuer. T3 revokes bob: last.
 		Describe("Extras", Ordered, ContinueOnFailure, t.Label, func() {
 			ts, selector := newTestSuite(t.CommType, Aries|WithEndorsers|WebEnabled, t.ReplicationFactor, "", "alice", "bob", "charlie")
 			token2.ShareNetwork(ts)
