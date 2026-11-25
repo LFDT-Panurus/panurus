@@ -9,6 +9,7 @@ package identity
 import (
 	"context"
 	"runtime/debug"
+	"sync"
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
@@ -90,6 +91,13 @@ type Provider struct {
 	metrics                 *Metrics
 
 	signers cache[*SignerEntry]
+
+	// ephemeralSigners holds signers registered with Ephemeral set. They are never persisted, so
+	// this map is their only home and must not evict: nothing can rebuild an HTLC claim signer
+	// (it carries the preimage) or a reclaim signer (it wraps another signer).
+	// shortcut: entries live for the process lifetime; see #2823 for a per-transaction lifetime.
+	ephemeralSignersMutex sync.RWMutex
+	ephemeralSigners      map[string]*SignerEntry
 }
 
 // DefaultSignerCacheSize is the default number of entries of the Provider's signer cache.
@@ -138,6 +146,7 @@ func NewProvider(
 		deserializer:            deserializer,
 		storage:                 storage,
 		signers:                 cache2.NewSecondChanceCache[*SignerEntry](o.signerCacheSize, 1),
+		ephemeralSigners:        map[string]*SignerEntry{},
 		metrics:                 m,
 	}
 }
@@ -324,7 +333,7 @@ func (p *Provider) areMe(ctx context.Context, identities ...driver.Identity) ([]
 
 	// check local cache
 	for _, id := range identities {
-		if _, ok := p.signers.Get(id.UniqueID()); ok {
+		if _, ok := p.lookupSigner(id.UniqueID()); ok {
 			p.Logger.DebugfContext(ctx, "is me [%s]? yes, from cache", id)
 			result.Add(id.UniqueID())
 		} else {
@@ -380,7 +389,7 @@ func (p *Provider) getSignerAndCache(ctx context.Context, identity driver.Identi
 	// which zeroes the stored value in place rather than removing the key, so a later Get returns
 	// (nil, true). Treat that as a miss and re-resolve, instead of dereferencing entry.Signer on a
 	// nil *SignerEntry and panicking.
-	if entry, ok := p.signers.Get(idHash); ok && entry != nil {
+	if entry, ok := p.lookupSigner(idHash); ok && entry != nil {
 		p.Logger.DebugfContext(ctx, "signer for [%s] found", idHash)
 
 		return entry.Signer, false, "cache", nil
@@ -457,6 +466,21 @@ func (p *Provider) cacheAndPersistSigner(ctx context.Context, identity driver.Id
 	return signer, shouldCache, nil
 }
 
+// lookupSigner returns the registered entry for idHash. The cache comes first because most nodes
+// register no ephemeral signer, and no identity can be in both stores. A nil cache hit is a
+// tombstone (see getSignerAndCache), so it falls through instead of shadowing the map.
+func (p *Provider) lookupSigner(idHash string) (*SignerEntry, bool) {
+	if entry, ok := p.signers.Get(idHash); ok && entry != nil {
+		return entry, true
+	}
+
+	p.ephemeralSignersMutex.RLock()
+	defer p.ephemeralSignersMutex.RUnlock()
+	entry, ok := p.ephemeralSigners[idHash]
+
+	return entry, ok
+}
+
 func (p *Provider) updateCaches(descriptor *idriver.IdentityDescriptor, alias driver.Identity) {
 	id := descriptor.Identity.UniqueID()
 	setAlias := !alias.IsNone()
@@ -465,12 +489,22 @@ func (p *Provider) updateCaches(descriptor *idriver.IdentityDescriptor, alias dr
 	// signers
 	if descriptor.Signer != nil {
 		entry := &SignerEntry{Signer: descriptor.Signer}
-		if p.Logger.IsEnabledFor(zapcore.DebugLevel) {
-			entry.DebugStack = debug.Stack()
-		}
-		p.signers.Add(id, entry)
-		if setAlias {
-			p.signers.Add(aliasID, entry)
+		if descriptor.Ephemeral {
+			// no DebugStack: nothing evicts these, and the snapshot dwarfs the signer
+			p.ephemeralSignersMutex.Lock()
+			p.ephemeralSigners[id] = entry
+			if setAlias {
+				p.ephemeralSigners[aliasID] = entry
+			}
+			p.ephemeralSignersMutex.Unlock()
+		} else {
+			if p.Logger.IsEnabledFor(zapcore.DebugLevel) {
+				entry.DebugStack = debug.Stack()
+			}
+			p.signers.Add(id, entry)
+			if setAlias {
+				p.signers.Add(aliasID, entry)
+			}
 		}
 	}
 }
