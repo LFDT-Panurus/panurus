@@ -16,6 +16,12 @@ const (
 	// OnceInterval is the configuration key for the polling interval of one-time lookups
 	OnceInterval = "token.chaguar.lookup.once.interval"
 
+	// shortcut: the token.fabricx.lookup.* keys were renamed to token.chaguar.lookup.*;
+	// they are still read when the current key is unset, drop them once deployments migrated.
+	deprecatedPermanentInterval = "token.fabricx.lookup.permanent.interval"
+	deprecatedOnceDeadline      = "token.fabricx.lookup.once.deadline"
+	deprecatedOnceInterval      = "token.fabricx.lookup.once.interval"
+
 	// DefaultPermanentInterval is the default polling interval for permanent lookups
 	DefaultPermanentInterval = 1 * time.Minute
 	// DefaultOnceDeadline is the default deadline for one-time lookups
@@ -52,35 +58,35 @@ type serviceConfig struct {
 	configuration Configuration
 }
 
-// PermanentInterval returns the polling interval for permanent lookups.
-// It retrieves the duration from configuration; if the value is not
-// greater than 0, it defaults to 1 minute.
-func (c *serviceConfig) PermanentInterval() time.Duration {
-	if v := c.configuration.GetDuration(PermanentInterval); v > 0 {
+// duration returns the duration configured under key. A value not greater than 0
+// falls back to the deprecated key, and then to def.
+func (c *serviceConfig) duration(key, deprecated string, def time.Duration) time.Duration {
+	if v := c.configuration.GetDuration(key); v > 0 {
+		return v
+	}
+	if v := c.configuration.GetDuration(deprecated); v > 0 {
+		logger.Warningf("configuration key [%s] is deprecated, use [%s] instead", deprecated, key)
+
 		return v
 	}
 
-	return DefaultPermanentInterval
+	return def
+}
+
+// PermanentInterval returns the polling interval for permanent lookups.
+// It defaults to 1 minute.
+func (c *serviceConfig) PermanentInterval() time.Duration {
+	return c.duration(PermanentInterval, deprecatedPermanentInterval, DefaultPermanentInterval)
 }
 
 // OnceDeadline returns the maximum time allowed for a one-time lookup.
-// It retrieves the duration from configuration; if the value is not
-// greater than 0, it defaults to 5 minutes.
+// It defaults to 5 minutes.
 func (c *serviceConfig) OnceDeadline() time.Duration {
-	if v := c.configuration.GetDuration(OnceDeadline); v > 0 {
-		return v
-	}
-
-	return DefaultOnceDeadline
+	return c.duration(OnceDeadline, deprecatedOnceDeadline, DefaultOnceDeadline)
 }
 
 // OnceInterval returns the polling interval for one-time lookups.
-// It retrieves the duration from configuration; if the value is not
-// greater than 0, it defaults to 2 seconds.
+// It defaults to 2 seconds.
 func (c *serviceConfig) OnceInterval() time.Duration {
-	if v := c.configuration.GetDuration(OnceInterval); v > 0 {
-		return v
-	}
-
-	return DefaultOnceInterval
+	return c.duration(OnceInterval, deprecatedOnceInterval, DefaultOnceInterval)
 }
