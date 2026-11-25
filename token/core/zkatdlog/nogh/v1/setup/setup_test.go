@@ -9,13 +9,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
 
 	math3 "github.com/IBM/mathlib"
+	pp3 "github.com/LFDT-Panurus/panurus/token/core/common/encoding/pp"
+	ppproto "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/v1/pp"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
 	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/encoding/protowire"
 )
 
 // testingHelper is a test helper for creating test data
@@ -439,11 +445,10 @@ func TestWithVersion(t *testing.T) {
 
 func TestSerializationEdgeCases(t *testing.T) {
 	issuerPK := testingHelper(t)
-	pp, err := Setup(32, issuerPK, math3.BN254)
-	require.NoError(t, err)
 
 	// Test invalid driver identifier
-	pp.DriverName = "invalid"
+	pp, err := NewWith(SetupParams{DriverName: "invalid", DriverVersion: ProtocolV1, BitLength: 32, IdemixIssuerPK: issuerPK, CurveID: math3.BN254, ProofType: rp.RangeProofType})
+	require.NoError(t, err)
 	raw, err := pp.Serialize()
 	require.NoError(t, err)
 	_, err = NewPublicParamsFromBytes(raw, DLogNoGHDriverName, ProtocolV1)
@@ -962,4 +967,322 @@ func TestCSPRangeProofParamsValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateRejectsNonDerivedGenerators(t *testing.T) {
+	issuerPK := testingHelper(t)
+	curve := math3.Curves[math3.BN254]
+
+	newPP := func(t *testing.T, proofType rp.ProofType) *PublicParams {
+		t.Helper()
+		pp, err := NewWith(SetupParams{
+			DriverName: DLogNoGHDriverName, DriverVersion: ProtocolV1, BitLength: 32,
+			IdemixIssuerPK: issuerPK, CurveID: math3.BN254, ProofType: proofType,
+			GeneratorDomain: "test.domain",
+		})
+		require.NoError(t, err)
+		require.NoError(t, pp.Validate())
+
+		return pp
+	}
+	rnd, err := curve.Rand()
+	require.NoError(t, err)
+
+	tests := []struct {
+		name      string
+		proofType rp.ProofType
+		tamper    func(pp *PublicParams)
+		wantErr   string
+	}{
+		{
+			name:      "trapdoored pedersen g1 = g2^x",
+			proofType: rp.RangeProofType,
+			tamper: func(pp *PublicParams) {
+				pp.PedersenGenerators[1] = pp.PedersenGenerators[2].Mul(curve.NewRandomZr(rnd))
+			},
+			wantErr: "invalid pedersen generators",
+		},
+		{
+			name:      "pedersen generator replaced by generator point",
+			proofType: rp.RangeProofType,
+			tamper:    func(pp *PublicParams) { pp.PedersenGenerators[0] = curve.GenG1 },
+			wantErr:   "invalid pedersen generators",
+		},
+		{
+			name:      "range proof P trapdoored",
+			proofType: rp.RangeProofType,
+			tamper: func(pp *PublicParams) {
+				pp.RangeProofParams.P = pp.RangeProofParams.Q.Mul(curve.NewRandomZr(rnd))
+			},
+			wantErr: "invalid range proof generators",
+		},
+		{
+			name:      "range proof left generator trapdoored",
+			proofType: rp.RangeProofType,
+			tamper: func(pp *PublicParams) {
+				pp.RangeProofParams.LeftGenerators[3] = pp.RangeProofParams.LeftGenerators[2].Mul(curve.NewRandomZr(rnd))
+			},
+			wantErr: "invalid range proof generators",
+		},
+		{
+			name:      "csp right generator trapdoored",
+			proofType: rp.CSPRangeProofType,
+			tamper: func(pp *PublicParams) {
+				pp.CSPRangeProofParams.RightGenerators[5] = pp.CSPRangeProofParams.RightGenerators[4].Mul(curve.NewRandomZr(rnd))
+			},
+			wantErr: "invalid csp range proof generators",
+		},
+		{
+			name:      "range proof Q trapdoored",
+			proofType: rp.RangeProofType,
+			tamper: func(pp *PublicParams) {
+				pp.RangeProofParams.Q = pp.RangeProofParams.P.Mul(curve.NewRandomZr(rnd))
+			},
+			wantErr: "invalid range proof generators",
+		},
+		{
+			name:      "range proof right generator swapped",
+			proofType: rp.RangeProofType,
+			tamper: func(pp *PublicParams) {
+				r := pp.RangeProofParams.RightGenerators
+				r[0], r[1] = r[1], r[0]
+			},
+			wantErr: "invalid range proof generators",
+		},
+		{
+			name:      "csp left generator trapdoored",
+			proofType: rp.CSPRangeProofType,
+			tamper: func(pp *PublicParams) {
+				pp.CSPRangeProofParams.LeftGenerators[2] = pp.CSPRangeProofParams.LeftGenerators[1].Mul(curve.NewRandomZr(rnd))
+			},
+			wantErr: "invalid csp range proof generators",
+		},
+		{
+			name:      "pedersen generator is nil",
+			proofType: rp.RangeProofType,
+			tamper:    func(pp *PublicParams) { pp.PedersenGenerators[1] = nil },
+			wantErr:   "invalid pedersen generators",
+		},
+		{
+			name:      "generator domain set without regenerating",
+			proofType: rp.RangeProofType,
+			tamper:    func(pp *PublicParams) { pp.GeneratorDomain = "rotated" },
+			wantErr:   "invalid pedersen generators",
+		},
+		{
+			name:      "generator domain too long",
+			proofType: rp.RangeProofType,
+			tamper:    func(pp *PublicParams) { pp.GeneratorDomain = strings.Repeat("a", MaxGeneratorDomainLength+1) },
+			wantErr:   "invalid generator domain",
+		},
+		{
+			name:      "generator domain not printable",
+			proofType: rp.RangeProofType,
+			tamper:    func(pp *PublicParams) { pp.GeneratorDomain = "a\x00b" },
+			wantErr:   "invalid generator domain",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pp := newPP(t, tc.proofType)
+			tc.tamper(pp)
+			err := pp.Validate()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
+}
+
+// TestDefaultGeneratorsArePinned pins the default generators to the v1 derivation strings.
+// Changing them would make every token issued so far unusable.
+func TestDefaultGeneratorsArePinned(t *testing.T) {
+	curve := math3.Curves[math3.BN254]
+	pp, err := WithVersionAndProofType(32, testingHelper(t), math3.BN254, ProtocolV1, rp.RangeProofType)
+	require.NoError(t, err)
+	csp, err := WithVersionAndProofType(32, testingHelper(t), math3.BN254, ProtocolV1, rp.CSPRangeProofType)
+	require.NoError(t, err)
+
+	for i, g := range pp.PedersenGenerators {
+		assert.True(t, g.Equals(curve.HashToG1([]byte("lfdt-panurus.zkatdlognogh.1.PedersenGenerators."+strconv.Itoa(i)))), "pedersen %d", i)
+	}
+	assert.True(t, pp.RangeProofParams.P.Equals(curve.HashToG1([]byte("lfdt-panurus.zkatdlognogh.1.RangeProof.P"))))
+	assert.True(t, pp.RangeProofParams.Q.Equals(curve.HashToG1([]byte("lfdt-panurus.zkatdlognogh.1.RangeProof.Q"))))
+	for i := range pp.RangeProofParams.LeftGenerators {
+		assert.True(t, pp.RangeProofParams.LeftGenerators[i].Equals(curve.HashToG1([]byte("lfdt-panurus.zkatdlognogh.1.RangeProof.L."+strconv.Itoa(i)))), "rp L %d", i)
+		assert.True(t, pp.RangeProofParams.RightGenerators[i].Equals(curve.HashToG1([]byte("lfdt-panurus.zkatdlognogh.1.RangeProof.R."+strconv.Itoa(i)))), "rp R %d", i)
+	}
+	for i := range csp.CSPRangeProofParams.LeftGenerators {
+		assert.True(t, csp.CSPRangeProofParams.LeftGenerators[i].Equals(curve.HashToG1([]byte("lfdt-panurus.zkatdlognogh.1.CSPRangeProof.L."+strconv.Itoa(i)))), "csp L %d", i)
+		assert.True(t, csp.CSPRangeProofParams.RightGenerators[i].Equals(curve.HashToG1([]byte("lfdt-panurus.zkatdlognogh.1.CSPRangeProof.R."+strconv.Itoa(i)))), "csp R %d", i)
+	}
+}
+
+// TestDriverVersionBumpKeepsGenerators checks that the generators do not depend on the driver version.
+func TestDriverVersionBumpKeepsGenerators(t *testing.T) {
+	v1, err := WithVersion(32, testingHelper(t), math3.BN254, ProtocolV1)
+	require.NoError(t, err)
+	v2, err := WithVersion(32, testingHelper(t), math3.BN254, driver.TokenDriverVersion(2))
+	require.NoError(t, err)
+	require.NoError(t, v2.Validate())
+
+	require.Len(t, v2.PedersenGenerators, len(v1.PedersenGenerators))
+	for i := range v1.PedersenGenerators {
+		assert.True(t, v1.PedersenGenerators[i].Equals(v2.PedersenGenerators[i]))
+	}
+	assert.True(t, v1.RangeProofParams.P.Equals(v2.RangeProofParams.P))
+
+	// v1 generators relabelled as v2 stay valid
+	v1.DriverVersion = 2
+	require.NoError(t, v1.Validate())
+}
+
+func TestGeneratorDomain(t *testing.T) {
+	issuerPK := testingHelper(t)
+	def, err := Setup(32, issuerPK, math3.BN254)
+	require.NoError(t, err)
+
+	for _, proofType := range []rp.ProofType{rp.RangeProofType, rp.CSPRangeProofType} {
+		pp, err := NewWith(SetupParams{
+			DriverName:      DLogNoGHDriverName,
+			DriverVersion:   ProtocolV1,
+			BitLength:       32,
+			IdemixIssuerPK:  issuerPK,
+			CurveID:         math3.BN254,
+			ProofType:       proofType,
+			GeneratorDomain: "acme.second-generation",
+		})
+		require.NoError(t, err)
+		require.NoError(t, pp.Validate())
+		for i := range pp.PedersenGenerators {
+			assert.False(t, pp.PedersenGenerators[i].Equals(def.PedersenGenerators[i]), "pedersen %d not rotated", i)
+		}
+
+		// the domain survives serialization and the result still validates
+		raw, err := pp.Serialize()
+		require.NoError(t, err)
+		back, err := NewPublicParamsFromBytes(raw, DLogNoGHDriverName, ProtocolV1)
+		require.NoError(t, err)
+		assert.Equal(t, "acme.second-generation", back.GeneratorDomain)
+		require.NoError(t, back.Validate())
+
+		// changing the domain without regenerating is rejected
+		back.GeneratorDomain = "other"
+		require.Error(t, back.Validate())
+	}
+
+	// a domain that spells the default label still yields different generators
+	pp, err := NewWith(SetupParams{
+		DriverName: DLogNoGHDriverName, DriverVersion: ProtocolV1, BitLength: 32,
+		IdemixIssuerPK: issuerPK, CurveID: math3.BN254, ProofType: rp.RangeProofType,
+		GeneratorDomain: "lfdt-panurus.zkatdlognogh.1.",
+	})
+	require.NoError(t, err)
+	assert.False(t, pp.PedersenGenerators[0].Equals(def.PedersenGenerators[0]))
+
+	for _, bad := range []string{strings.Repeat("a", MaxGeneratorDomainLength+1), "tab\there", "caf\xc3\xa9"} {
+		_, err := NewWith(SetupParams{
+			DriverName: DLogNoGHDriverName, DriverVersion: ProtocolV1, BitLength: 32,
+			IdemixIssuerPK: issuerPK, CurveID: math3.BN254, ProofType: rp.RangeProofType,
+			GeneratorDomain: bad,
+		})
+		require.Error(t, err, "domain %q", bad)
+		assert.Contains(t, err.Error(), "invalid generator domain")
+	}
+}
+
+// TestValidateAcceptsGeneratorsWithoutDomain checks that, without a GeneratorDomain, the generators
+// are accepted as they are: choosing them is the issuer's responsibility.
+func TestValidateAcceptsGeneratorsWithoutDomain(t *testing.T) {
+	curve := math3.Curves[math3.BN254]
+	rnd, err := curve.Rand()
+	require.NoError(t, err)
+
+	pp, err := Setup(32, testingHelper(t), math3.BN254)
+	require.NoError(t, err)
+	// random Pedersen generators and range proof generators from plain strings, as in releases up to v0.13.0
+	for i := range pp.PedersenGenerators {
+		pp.PedersenGenerators[i] = curve.GenG1.Mul(curve.NewRandomZr(rnd))
+	}
+	pp.RangeProofParams.P = curve.HashToG1([]byte("0"))
+	pp.RangeProofParams.Q = curve.HashToG1([]byte("1"))
+	for i := range pp.RangeProofParams.LeftGenerators {
+		pp.RangeProofParams.LeftGenerators[i] = curve.HashToG1([]byte("RangeProof." + strconv.Itoa(2*(i+1))))
+		pp.RangeProofParams.RightGenerators[i] = curve.HashToG1([]byte("RangeProof." + strconv.Itoa(2*(i+1)+1)))
+	}
+	require.NoError(t, pp.Validate())
+
+	// the same parameters declare a domain: now the generators must derive from it
+	pp.GeneratorDomain = "declared"
+	require.Error(t, pp.Validate())
+}
+
+// TestLegacyGeneratorsRoundTrip checks that parameters with legacy non-derived generators and no
+// GeneratorDomain survive Serialize -> NewPublicParamsFromBytes -> Validate, and that no domain is emitted.
+func TestLegacyGeneratorsRoundTrip(t *testing.T) {
+	curve := math3.Curves[math3.BN254]
+	rnd, err := curve.Rand()
+	require.NoError(t, err)
+
+	pp, err := Setup(32, testingHelper(t), math3.BN254)
+	require.NoError(t, err)
+	for i := range pp.PedersenGenerators {
+		pp.PedersenGenerators[i] = curve.GenG1.Mul(curve.NewRandomZr(rnd))
+	}
+	pp.RangeProofParams.P = curve.HashToG1([]byte("0"))
+	pp.RangeProofParams.Q = curve.HashToG1([]byte("1"))
+	for i := range pp.RangeProofParams.LeftGenerators {
+		pp.RangeProofParams.LeftGenerators[i] = curve.HashToG1([]byte("RangeProof." + strconv.Itoa(2*(i+1))))
+		pp.RangeProofParams.RightGenerators[i] = curve.HashToG1([]byte("RangeProof." + strconv.Itoa(2*(i+1)+1)))
+	}
+	require.Empty(t, pp.GeneratorDomain)
+
+	raw, err := pp.Serialize()
+	require.NoError(t, err)
+
+	container, err := pp3.Unmarshal(raw)
+	require.NoError(t, err)
+	inner := &ppproto.PublicParameters{}
+	require.NoError(t, proto.Unmarshal(container.Raw, inner))
+	assert.Empty(t, inner.GeneratorDomain)
+	// field 13 (generator_domain) must be absent from the wire bytes
+	for b := container.Raw; len(b) > 0; {
+		num, typ, n := protowire.ConsumeTag(b)
+		require.GreaterOrEqual(t, n, 0)
+		assert.NotEqual(t, protowire.Number(13), num)
+		m := protowire.ConsumeFieldValue(num, typ, b[n:])
+		require.GreaterOrEqual(t, m, 0)
+		b = b[n+m:]
+	}
+
+	pp2, err := NewPublicParamsFromBytes(raw, DLogNoGHDriverName, ProtocolV1)
+	require.NoError(t, err)
+	require.NoError(t, pp2.Validate())
+	assert.Empty(t, pp2.GeneratorDomain)
+}
+
+// TestValidateRejectsMalformedGenerators checks that structural errors are rejected also without a GeneratorDomain.
+func TestValidateRejectsMalformedGenerators(t *testing.T) {
+	tests := map[string]func(pp *PublicParams){
+		"short pedersen":     func(pp *PublicParams) { pp.PedersenGenerators = pp.PedersenGenerators[:2] },
+		"nil pedersen":       func(pp *PublicParams) { pp.PedersenGenerators[0] = nil },
+		"short left":         func(pp *PublicParams) { pp.RangeProofParams.LeftGenerators = pp.RangeProofParams.LeftGenerators[:31] },
+		"nil right":          func(pp *PublicParams) { pp.RangeProofParams.RightGenerators[7] = nil },
+		"nil P":              func(pp *PublicParams) { pp.RangeProofParams.P = nil },
+		"wrong rounds":       func(pp *PublicParams) { pp.RangeProofParams.NumberOfRounds++ },
+		"unsupported length": func(pp *PublicParams) { pp.RangeProofParams.BitLength = 1 << 40 },
+	}
+	for name, tamper := range tests {
+		t.Run(name, func(t *testing.T) {
+			pp, err := Setup(32, testingHelper(t), math3.BN254)
+			require.NoError(t, err)
+			tamper(pp)
+			require.NotPanics(t, func() { require.Error(t, pp.Validate()) })
+		})
+	}
+	t.Run("csp nil", func(t *testing.T) {
+		pp, err := WithVersionAndProofType(32, testingHelper(t), math3.BN254, ProtocolV1, rp.CSPRangeProofType)
+		require.NoError(t, err)
+		pp.CSPRangeProofParams.LeftGenerators[3] = nil
+		require.NotPanics(t, func() { require.Error(t, pp.Validate()) })
+	})
 }

@@ -10,11 +10,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"testing"
 
 	math "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/upgrade"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/upgrade/mock"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
@@ -40,22 +40,22 @@ func idemixIssuerPK(t *testing.T) []byte {
 	return raw
 }
 
-// newPublicParams returns a fresh generation of public parameters. When generatorsSeed is not
-// empty, the Pedersen generators are replaced by ones derived from that seed, which is exactly
+// newPublicParams returns a fresh generation of public parameters. When generatorsDomain is not
+// empty, all generators are derived from that domain instead of the default one, which is exactly
 // what a public parameters regeneration that changes the bases looks like: every token created
 // under the previous generation keeps a format no longer produced by the new one.
-func newPublicParams(t *testing.T, generatorsSeed string) *setup.PublicParams {
+func newPublicParams(t *testing.T, generatorsDomain string) *setup.PublicParams {
 	t.Helper()
-	pp, err := setup.Setup(testBitLength, idemixIssuerPK(t), math.BN254)
+	pp, err := setup.NewWith(setup.SetupParams{
+		DriverName:      setup.DLogNoGHDriverName,
+		DriverVersion:   setup.ProtocolV1,
+		BitLength:       testBitLength,
+		IdemixIssuerPK:  idemixIssuerPK(t),
+		CurveID:         math.BN254,
+		ProofType:       rp.RangeProofType,
+		GeneratorDomain: generatorsDomain,
+	})
 	require.NoError(t, err)
-	if len(generatorsSeed) != 0 {
-		curve := math.Curves[pp.Curve]
-		generators := make([]*math.G1, len(pp.PedersenGenerators))
-		for i := range generators {
-			generators[i] = curve.HashToG1([]byte(generatorsSeed + "." + strconv.Itoa(i)))
-		}
-		pp.PedersenGenerators = generators
-	}
 	require.NoError(t, pp.Validate())
 
 	return pp

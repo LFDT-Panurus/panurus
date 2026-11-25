@@ -1564,10 +1564,10 @@ func TestDLogTokensUpgrade(network *integration.Infrastructure, auditorId string
 	CheckOwnerStore(network, nil, issuer, alice, bob, charlie, manager)
 	CheckAuditorStore(network, auditor, "", nil)
 
-	// regenerate the public parameters with different Pedersen bases. Same curve, same
+	// regenerate the public parameters with a new generator domain. Same curve, same
 	// precision, same idemix issuer keys, so every identity, issuer and auditor stays valid,
 	// but every token created so far now carries a format the driver no longer recognises.
-	secondGeneration := RegeneratePedersenGenerators(firstGeneration, "lfdt-panurus.itest.dlog-32bits.second-generation")
+	secondGeneration := RegenerateGenerators(firstGeneration, "lfdt-panurus.itest.dlog-32bits.second-generation")
 	UpdatePublicParamsAndWait(network, secondGeneration, tms, issuer, auditor, alice, bob, charlie, manager)
 
 	gomega.Eventually(DoesWalletExist).WithArguments(network, issuer, "", views.IssuerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())

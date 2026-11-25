@@ -105,13 +105,16 @@ Panurus records the public parameters in two places, and both matter for this fl
 > generations published since it joined.
 
 > [!WARNING]
-> **Regenerate public parameters deliberately.** Since Pedersen generators are derived
-> deterministically from the driver name, driver version and curve
-> (`PublicParams.GeneratePedersenParameters`), re-running `tokengen` for the same driver, version and
-> curve reproduces the same bases and therefore the same formats — no upgrade needed. Formats only
-> change when the curve, the driver version, or the generation procedure itself changes. Before
-> publishing new public parameters, compare `SupportedTokenFormats()` before and after: if the set
-> changes, every existing token needs this upgrade path, and owners must be online to run it.
+> **Regenerate public parameters deliberately.** The default Pedersen generators are derived
+> deterministically from a fixed label and the curve (`PublicParams.GeneratePedersenParameters`).
+> They do not depend on the driver name or version. For `zkatdlognogh` with the default label and an
+> unchanged `GeneratorDomain`, re-running `tokengen` for the same curve reproduces the same bases and
+> formats, also after a driver version bump. Public parameters generated before this change with a driver
+> version other than 1 used a version-specific label: regenerating them now yields different generators
+> and token formats. Formats change when the curve, the `GeneratorDomain` or the generation procedure itself
+> changes. Setting `--generator-domain` on `tokengen gen zkatdlognogh.v1` rotates every generator on
+> purpose. Before publishing new public parameters, compare `SupportedTokenFormats()` before and after:
+> if the set changes, every existing token needs this upgrade path, and owners must be online to run it.
 
 ### Code Example: Identifying Unsupported Tokens
 

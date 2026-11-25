@@ -282,8 +282,10 @@ type PublicParameters struct {
 	Metadata map[string][]byte `protobuf:"bytes,11,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// csp_range_proof_params contains parameters for the CSP-based range proof system
 	CspRangeProofParams *CSPRangeProofParams `protobuf:"bytes,12,opt,name=csp_range_proof_params,json=cspRangeProofParams,proto3" json:"csp_range_proof_params,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// generator_domain, if not empty, replaces the default domain from which all generators are derived.
+	GeneratorDomain string `protobuf:"bytes,13,opt,name=generator_domain,json=generatorDomain,proto3" json:"generator_domain,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *PublicParameters) Reset() {
@@ -400,6 +402,13 @@ func (x *PublicParameters) GetCspRangeProofParams() *CSPRangeProofParams {
 	return nil
 }
 
+func (x *PublicParameters) GetGeneratorDomain() string {
+	if x != nil {
+		return x.GeneratorDomain
+	}
+	return ""
+}
+
 var File_noghpp_proto protoreflect.FileDescriptor
 
 const file_noghpp_proto_rawDesc = "" +
@@ -422,7 +431,7 @@ const file_noghpp_proto_rawDesc = "" +
 	"\x10right_generators\x18\x02 \x03(\v2&.fabric_token_sdk.token.zkatdlog.v1.G1R\x0frightGenerators\x12\x1d\n" +
 	"\n" +
 	"bit_length\x18\x03 \x01(\x04R\tbitLength\x12(\n" +
-	"\x10number_of_rounds\x18\x04 \x01(\x04R\x0enumberOfRounds\"\xd0\a\n" +
+	"\x10number_of_rounds\x18\x04 \x01(\x04R\x0enumberOfRounds\"\xfb\a\n" +
 	"\x10PublicParameters\x12*\n" +
 	"\x11token_driver_name\x18\x01 \x01(\tR\x0ftokenDriverName\x120\n" +
 	"\x14token_driver_version\x18\x02 \x01(\rR\x12tokenDriverVersion\x12F\n" +
@@ -436,7 +445,8 @@ const file_noghpp_proto_rawDesc = "" +
 	"\x12quantity_precision\x18\n" +
 	" \x01(\x04R\x11quantityPrecision\x12^\n" +
 	"\bmetadata\x18\v \x03(\v2B.fabric_token_sdk.token.zkatdlog.v1.PublicParameters.MetadataEntryR\bmetadata\x12l\n" +
-	"\x16csp_range_proof_params\x18\f \x01(\v27.fabric_token_sdk.token.zkatdlog.v1.CSPRangeProofParamsR\x13cspRangeProofParams\x1a;\n" +
+	"\x16csp_range_proof_params\x18\f \x01(\v27.fabric_token_sdk.token.zkatdlog.v1.CSPRangeProofParamsR\x13cspRangeProofParams\x12)\n" +
+	"\x10generator_domain\x18\r \x01(\tR\x0fgeneratorDomain\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01BJZHgithub.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/v1/ppb\x06proto3"

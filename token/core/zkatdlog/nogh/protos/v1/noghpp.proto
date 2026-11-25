@@ -82,4 +82,6 @@ message PublicParameters {
   map<string, bytes> metadata = 11;
   // csp_range_proof_params contains parameters for the CSP-based range proof system
   CSPRangeProofParams csp_range_proof_params = 12;
+  // generator_domain, if not empty, replaces the default domain from which all generators are derived.
+  string generator_domain = 13;
 }

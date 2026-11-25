@@ -32,6 +32,8 @@ const DefaultDriverVersion = setup.ProtocolV1
 type DLogPublicParamsGenerator struct {
 	DefaultCurveID math3.CurveID
 	DriverVersion  driver.TokenDriverVersion
+	// GeneratorDomain optionally replaces the default domain from which all generators are derived
+	GeneratorDomain string
 }
 
 // NewDLogPublicParamsGenerator creates a new generator. The version is optional and defaults to v1.
@@ -56,7 +58,15 @@ func (d *DLogPublicParamsGenerator) Generate(tms *topology.TMS, wallets *topolog
 	if zkatdlognoghv1.IsCSP(tms) {
 		proofType = rp.CSPRangeProofType
 	}
-	pp, err := setup.WithVersionAndProofType(bits, ipkBytes, curveID, d.DriverVersion, proofType)
+	pp, err := setup.NewWith(setup.SetupParams{
+		DriverName:      setup.DLogNoGHDriverName,
+		DriverVersion:   d.DriverVersion,
+		BitLength:       bits,
+		IdemixIssuerPK:  ipkBytes,
+		CurveID:         curveID,
+		ProofType:       proofType,
+		GeneratorDomain: d.GeneratorDomain,
+	})
 	if err != nil {
 		return nil, err
 	}

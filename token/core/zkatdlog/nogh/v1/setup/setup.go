@@ -41,6 +41,16 @@ const (
 
 var SupportedPrecisions = []uint64{16, 32, 64}
 
+const (
+	// defaultGeneratorLabel is the domain prefix of all generators when no GeneratorDomain is set.
+	// It is frozen at the v1 value so that a driver version bump does not change the generators.
+	defaultGeneratorLabel = "lfdt-panurus.zkatdlognogh.1."
+	// customGeneratorLabelPrefix prefixes the label derived from a GeneratorDomain.
+	customGeneratorLabelPrefix = "lfdt-panurus.zkatdlognogh.custom."
+	// MaxGeneratorDomainLength is the maximum length in bytes of a GeneratorDomain.
+	MaxGeneratorDomainLength = 128
+)
+
 // SetupParams contains all parameters needed to setup public parameters
 type SetupParams struct {
 	DriverName     driver.TokenDriverName
@@ -49,6 +59,8 @@ type SetupParams struct {
 	IdemixIssuerPK []byte
 	CurveID        mathlib.CurveID
 	ProofType      rp.ProofType
+	// GeneratorDomain, if not empty, replaces the default domain of all generators.
+	GeneratorDomain string
 }
 
 type CSPRangeProofParams struct {
@@ -265,6 +277,9 @@ type PublicParams struct {
 	// ExtraData contains any extra custom data
 	ExtraData           driver.Extras
 	CSPRangeProofParams *CSPRangeProofParams
+	// GeneratorDomain, if not empty, replaces the default domain from which all generators are derived.
+	// Changing it rotates every generator and, with them, the token format.
+	GeneratorDomain string
 	// ExecutorProvider is a runtime-only field (not serialized) that controls
 	// how independent range proofs are executed. If nil, SerialProvider is used.
 	ExecutorProvider executor.ExecutorProvider `json:"-"`
@@ -324,10 +339,14 @@ func NewWith(params SetupParams) (*PublicParams, error) {
 	if params.BitLength == 0 {
 		return nil, errors.New("invalid bit length, should be greater than 0")
 	}
+	if err := validateGeneratorDomain(params.GeneratorDomain); err != nil {
+		return nil, err
+	}
 	pp := &PublicParams{
-		DriverName:    params.DriverName,
-		DriverVersion: params.DriverVersion,
-		Curve:         params.CurveID,
+		DriverName:      params.DriverName,
+		DriverVersion:   params.DriverVersion,
+		Curve:           params.CurveID,
+		GeneratorDomain: params.GeneratorDomain,
 		IdemixIssuerPublicKeys: []*IdemixIssuerPublicKey{
 			{
 				PublicKey: params.IdemixIssuerPK,
@@ -460,6 +479,7 @@ func (p *PublicParams) Serialize() ([]byte, error) {
 		MaxToken:               p.MaxToken,
 		QuantityPrecision:      p.QuantityPrecision,
 		Metadata:               p.ExtraData,
+		GeneratorDomain:        p.GeneratorDomain,
 	}
 	raw, err := proto.Marshal(publicParams)
 	if err != nil {
@@ -564,61 +584,111 @@ func (p *PublicParams) Deserialize(raw []byte) error {
 	if p.ExtraData == nil {
 		p.ExtraData = driver.Extras{}
 	}
+	p.GeneratorDomain = publicParams.GeneratorDomain
 
 	return nil
 }
 
-func (p *PublicParams) GeneratePedersenParameters() error {
-	curve := mathlib.Curves[p.Curve]
-	p.PedersenGenerators = make([]*mathlib.G1, 3)
-
-	for i := 0; i < len(p.PedersenGenerators); i++ {
-		p.PedersenGenerators[i] = curve.HashToG1([]byte("lfdt-panurus." + string(p.DriverName) + "." + strconv.Itoa(int(p.DriverVersion)) + ".PedersenGenerators." + strconv.Itoa(i)))
+// generatorLabel returns the public domain-separation prefix used to derive all generators.
+// It does not depend on the driver version. A GeneratorDomain is length-prefixed so that it
+// cannot be confused with the default label or with the generator suffixes.
+func (p *PublicParams) generatorLabel() string {
+	if p.GeneratorDomain == "" {
+		return defaultGeneratorLabel
 	}
+
+	return customGeneratorLabelPrefix + strconv.Itoa(len(p.GeneratorDomain)) + ":" + p.GeneratorDomain + "."
+}
+
+// validateGeneratorDomain checks that domain is empty, or at most MaxGeneratorDomainLength
+// bytes of printable ASCII.
+func validateGeneratorDomain(domain string) error {
+	if len(domain) > MaxGeneratorDomainLength {
+		return errors.Errorf("invalid generator domain: length [%d] exceeds [%d]", len(domain), MaxGeneratorDomainLength)
+	}
+	for i := range len(domain) {
+		if domain[i] < 0x20 || domain[i] > 0x7e {
+			return errors.Errorf("invalid generator domain: non-printable byte at position [%d]", i)
+		}
+	}
+
+	return nil
+}
+
+func (p *PublicParams) derivePedersenGenerators(label string) []*mathlib.G1 {
+	curve := mathlib.Curves[p.Curve]
+	gens := make([]*mathlib.G1, 3)
+	for i := range gens {
+		gens[i] = curve.HashToG1([]byte(label + "PedersenGenerators." + strconv.Itoa(i)))
+	}
+
+	return gens
+}
+
+func (p *PublicParams) deriveRangeProofParams(label string, bitLength uint64) *RangeProofParams {
+	curve := mathlib.Curves[p.Curve]
+	rpp := &RangeProofParams{
+		P:               curve.HashToG1([]byte(label + "RangeProof.P")),
+		Q:               curve.HashToG1([]byte(label + "RangeProof.Q")),
+		BitLength:       bitLength,
+		NumberOfRounds:  log2(bitLength),
+		LeftGenerators:  make([]*mathlib.G1, bitLength),
+		RightGenerators: make([]*mathlib.G1, bitLength),
+	}
+	for i := range bitLength {
+		rpp.LeftGenerators[i] = curve.HashToG1([]byte(label + "RangeProof.L." + strconv.FormatUint(i, 10)))
+		rpp.RightGenerators[i] = curve.HashToG1([]byte(label + "RangeProof.R." + strconv.FormatUint(i, 10)))
+	}
+
+	return rpp
+}
+
+func (p *PublicParams) deriveCSPRangeProofParams(label string, bitLength uint64) *CSPRangeProofParams {
+	curve := mathlib.Curves[p.Curve]
+	rpp := &CSPRangeProofParams{
+		BitLength:       bitLength,
+		LeftGenerators:  make([]*mathlib.G1, bitLength+1),
+		RightGenerators: make([]*mathlib.G1, bitLength+1),
+	}
+	for i := range bitLength + 1 {
+		rpp.LeftGenerators[i] = curve.HashToG1([]byte(label + "CSPRangeProof.L." + strconv.FormatUint(i, 10)))
+		rpp.RightGenerators[i] = curve.HashToG1([]byte(label + "CSPRangeProof.R." + strconv.FormatUint(i, 10)))
+	}
+
+	return rpp
+}
+
+func equalG1Slices(got, want []*mathlib.G1) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] == nil || !got[i].Equals(want[i]) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func (p *PublicParams) GeneratePedersenParameters() error {
+	p.PedersenGenerators = p.derivePedersenGenerators(p.generatorLabel())
 
 	return nil
 }
 
 func (p *PublicParams) GenerateRangeProofParameters(bitLength uint64) error {
-	curve := mathlib.Curves[p.Curve]
-
-	domainPrefix := "lfdt-panurus." + string(p.DriverName) + "." + strconv.Itoa(int(p.DriverVersion)) + "."
-	p.RangeProofParams = &RangeProofParams{
-		P:              curve.HashToG1([]byte(domainPrefix + "RangeProof.P")),
-		Q:              curve.HashToG1([]byte(domainPrefix + "RangeProof.Q")),
-		BitLength:      bitLength,
-		NumberOfRounds: log2(bitLength),
-	}
-	p.RangeProofParams.LeftGenerators = make([]*mathlib.G1, bitLength)
-	p.RangeProofParams.RightGenerators = make([]*mathlib.G1, bitLength)
-
-	for i := range bitLength {
-		p.RangeProofParams.LeftGenerators[i] = curve.HashToG1([]byte(domainPrefix + "RangeProof.L." + strconv.FormatUint(i, 10)))
-		p.RangeProofParams.RightGenerators[i] = curve.HashToG1([]byte(domainPrefix + "RangeProof.R." + strconv.FormatUint(i, 10)))
-	}
+	p.RangeProofParams = p.deriveRangeProofParams(p.generatorLabel(), bitLength)
 
 	return nil
 }
 
 func (p *PublicParams) GenerateCSPRangeProofParameters(bitLength uint64) error {
-	curve := mathlib.Curves[p.Curve]
-
-	domainPrefix := "lfdt-panurus." + string(p.DriverName) + "." + strconv.Itoa(int(p.DriverVersion)) + "."
-	p.CSPRangeProofParams = &CSPRangeProofParams{
-		BitLength: bitLength,
-	}
-	p.CSPRangeProofParams.LeftGenerators = make([]*mathlib.G1, bitLength+1)
-	p.CSPRangeProofParams.RightGenerators = make([]*mathlib.G1, bitLength+1)
-
-	for i := range bitLength + 1 {
-		p.CSPRangeProofParams.LeftGenerators[i] = curve.HashToG1([]byte(domainPrefix + "CSPRangeProof.L." + strconv.FormatUint(i, 10)))
-		p.CSPRangeProofParams.RightGenerators[i] = curve.HashToG1([]byte(domainPrefix + "CSPRangeProof.R." + strconv.FormatUint(i, 10)))
-	}
+	p.CSPRangeProofParams = p.deriveCSPRangeProofParams(p.generatorLabel(), bitLength)
 
 	// Populate RPTranscriptHeader immediately rather than leaving it for the next
 	// Validate() call: a caller that generates CSP params and then proves/verifies
-	// without an intervening Validate() would otherwise see a nil header. initCSPTranscriptHeader
-	// is idempotent and cheap, so calling it here as well as from NewWith/Validate is safe.
+	// without an intervening Validate() would otherwise see a nil header.
 	p.initCSPTranscriptHeader()
 
 	return nil
@@ -786,6 +856,9 @@ func (p *PublicParams) Validate() error {
 	if err := p.validateIdemixIssuerPublicKeys(); err != nil {
 		return err
 	}
+	if err := validateGeneratorDomain(p.GeneratorDomain); err != nil {
+		return err
+	}
 	if err := math.CheckElements(p.PedersenGenerators, p.Curve, 3); err != nil {
 		return errors.Wrapf(err, "invalid pedersen generators")
 	}
@@ -800,11 +873,54 @@ func (p *PublicParams) Validate() error {
 	if err := p.validateCSPRangeProofParams(); err != nil {
 		return err
 	}
+	if err := p.checkGenerators(); err != nil {
+		return err
+	}
 
 	p.initCSPTranscriptHeader()
 	maxToken := p.ComputeMaxTokenValue()
 	if maxToken != p.MaxToken {
 		return errors.Errorf("invalid max token, [%d]!=[%d]", maxToken, p.MaxToken)
+	}
+
+	return nil
+}
+
+// checkGenerators checks the generators only when the issuer declares a GeneratorDomain: they must
+// then derive from it, so that no party knows a discrete-log relation among them. Without a
+// GeneratorDomain the generators are accepted as they are: choosing them is the issuer's responsibility.
+func (p *PublicParams) checkGenerators() error {
+	if p.GeneratorDomain == "" {
+		return nil
+	}
+
+	return p.checkDerivedGenerators(p.generatorLabel())
+}
+
+// checkDerivedGenerators compares every present generator group against the derivation from label.
+// The sizes of the derived vectors come from the bit lengths of the parameters, which are
+// untrusted. The caller must have checked them first: validateRangeProofParams and
+// validateCSPRangeProofParams restrict them to SupportedPrecisions.
+func (p *PublicParams) checkDerivedGenerators(label string) error {
+	if !equalG1Slices(p.PedersenGenerators, p.derivePedersenGenerators(label)) {
+		return errors.New("invalid pedersen generators: they do not match the publicly derived generators")
+	}
+	if got := p.RangeProofParams; got != nil {
+		want := p.deriveRangeProofParams(label, got.BitLength)
+		if got.NumberOfRounds != want.NumberOfRounds ||
+			got.P == nil || !got.P.Equals(want.P) ||
+			got.Q == nil || !got.Q.Equals(want.Q) ||
+			!equalG1Slices(got.LeftGenerators, want.LeftGenerators) ||
+			!equalG1Slices(got.RightGenerators, want.RightGenerators) {
+			return errors.New("invalid range proof generators: they do not match the publicly derived generators")
+		}
+	}
+	if got := p.CSPRangeProofParams; got != nil {
+		want := p.deriveCSPRangeProofParams(label, got.BitLength)
+		if !equalG1Slices(got.LeftGenerators, want.LeftGenerators) ||
+			!equalG1Slices(got.RightGenerators, want.RightGenerators) {
+			return errors.New("invalid csp range proof generators: they do not match the publicly derived generators")
+		}
 	}
 
 	return nil

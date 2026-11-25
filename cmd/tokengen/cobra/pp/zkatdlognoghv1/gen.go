@@ -16,11 +16,16 @@ import (
 	"github.com/LFDT-Panurus/panurus/cmd/tokengen/cobra/pp/common"
 	"github.com/LFDT-Panurus/panurus/cmd/tokengen/cobra/pp/idemix"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
 	setupv1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/spf13/cobra"
 )
+
+// noGeneratorDomainWarning is printed when the public parameters are generated without a generator domain.
+const noGeneratorDomainWarning = "No generator domain specified (--generator-domain). " +
+	"Nodes accept the generators as they are and cannot tell whether they are trapdoored."
 
 // GeneratorArgs defines the arguments for the public parameters generator.
 type GeneratorArgs struct {
@@ -40,6 +45,8 @@ type GeneratorArgs struct {
 	Aries bool
 	// Version allows the caller of tokengen to override the version number put in the public params
 	Version uint32
+	// GeneratorDomain optionally replaces the default domain from which all generators are derived
+	GeneratorDomain string
 }
 
 var (
@@ -60,6 +67,8 @@ var (
 	Aries bool
 	// Version allows the caller of tokengen to override the version number put in the public params
 	Version uint32
+	// GeneratorDomain optionally replaces the default domain from which all generators are derived
+	GeneratorDomain string
 	// Extras allows the caller to add extra parameters to the public parameters
 	Extras []string
 )
@@ -76,6 +85,7 @@ func Cmd() *cobra.Command {
 	flags.Uint64VarP(&BitLength, "bits", "b", 64, "bits is used to define the maximum quantity a token can contain")
 	flags.BoolVarP(&Aries, "aries", "r", false, "flag to indicate that aries should be used as backend for idemix")
 	flags.Uint32VarP(&Version, "version", "v", 0, "allows the caller of tokengen to override the version number put in the public params")
+	flags.StringVarP(&GeneratorDomain, "generator-domain", "", "", "optional domain (max 128 printable ASCII bytes) replacing the default one from which all generators are derived")
 	flags.StringArrayVarP(&Extras, "extra", "x", []string{}, "extra data in key=value format, where value is the path to a file containing the data to load and store in the key")
 
 	return cobraCommand
@@ -100,6 +110,7 @@ var cobraCommand = &cobra.Command{
 			BitLength:         BitLength,
 			Aries:             Aries,
 			Version:           Version,
+			GeneratorDomain:   GeneratorDomain,
 		})
 		if err != nil {
 			fmt.Printf("failed to generate public parameters [%s]\n", err)
@@ -140,7 +151,15 @@ func Gen(args *GeneratorArgs) ([]byte, error) {
 	if args.BitLength != 0 {
 		bitLength = args.BitLength
 	}
-	pp, err := setupv1.WithVersion(bitLength, ipkBytes, curveID, ver)
+	pp, err := setupv1.NewWith(setupv1.SetupParams{
+		DriverName:      setupv1.DLogNoGHDriverName,
+		DriverVersion:   ver,
+		BitLength:       bitLength,
+		IdemixIssuerPK:  ipkBytes,
+		CurveID:         curveID,
+		ProofType:       rp.RangeProofType,
+		GeneratorDomain: args.GeneratorDomain,
+	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed setting up public parameters")
 	}
@@ -164,6 +183,11 @@ func Gen(args *GeneratorArgs) ([]byte, error) {
 	// warn in case no issuers are specified
 	if len(pp.Issuers()) == 0 {
 		fmt.Println("No issuers specified. The public parameters allow anyone to create tokens.")
+	}
+
+	// warn in case no generator domain is specified
+	if args.GeneratorDomain == "" {
+		fmt.Println(noGeneratorDomainWarning)
 	}
 
 	// Store Public Params

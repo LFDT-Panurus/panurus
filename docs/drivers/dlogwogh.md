@@ -102,7 +102,7 @@ graph TB
 
 The protocol is instantiated over a pairing-friendly elliptic curve $\mathcal{C}$ (default: **BLS12-381**).
 
-- **Group $G_1$**: A cyclic group of prime order $q$. Let $g, h, g_0, g_1, g_2$ be generators of $G_1$. The Pedersen generators $g_0, g_1, g_2$ are derived via hash-to-curve from public, domain-separated strings, so their discrete logarithms relative to each other are unknown to any party (nothing-up-my-sleeve construction).
+- **Group $G_1$**: A cyclic group of prime order $q$. Let $g, h, g_0, g_1, g_2$ be generators of $G_1$. The Pedersen generators $g_0, g_1, g_2$ are derived via hash-to-curve from public, domain-separated strings, so their discrete logarithms relative to each other are unknown to any party (nothing-up-my-sleeve construction). This holds when the generators are derived; see [Section 2.3](#23-generator-derivation) for parameters that declare no `GeneratorDomain`.
 - **Group $G_2$**: A cyclic group of prime order $q$.
 - **Bilinear Map**: $e: G_1 \times G_2 \to G_T$ is a non-degenerate, computable bilinear map.
 - **Scalar Field $\mathbb{Z}_r$**: The field of integers modulo $q$.
@@ -122,19 +122,30 @@ For production deployments, use `BLS12_381_BBS`.
 
 - **Challenge Hash ($H_{FS}$)**: $\{0,1\}^* \to \mathbb{Z}_r$ used for the Fiat-Shamir heuristic to make ZKPs non-interactive.
 - **Type Hash ($H_{Type}$)**: $\{0,1\}^* \to \mathbb{Z}_r$ used to map token type strings (e.g., "USD") to the scalar field.
-- **Domain Generators**: The Pedersen generators $g_0, g_1, g_2$ are derived using hash-to-group $H_{G1}$ on public domain-separated strings of the form `"lfdt-panurus.<DriverName>.<DriverVersion>.PedersenGenerators.<i>"`. See [Section 2.3](#23-generator-derivation) for the exact strings.
+- **Domain Generators**: The Pedersen generators $g_0, g_1, g_2$ are derived using hash-to-group $H_{G1}$ on public domain-separated strings of the form `"<Label>PedersenGenerators.<i>"`. See [Section 2.3](#23-generator-derivation) for the exact strings.
 
 ### 2.3 Generator Derivation
 
-The Pedersen generators are derived **deterministically via hash-to-curve** from fixed, public, domain-separated strings. No randomness or secret trapdoor is involved; any party can independently reproduce and verify each generator.
+The Pedersen generators are derived **deterministically via hash-to-curve** from fixed, public, domain-separated strings. No randomness or secret trapdoor is involved; any party can independently reproduce and verify each generator. This holds for derived sets. Parameters that declare no `GeneratorDomain` are not checked (see Validation below).
 
 **Derivation formula** (implemented in [`GeneratePedersenParameters`](../../token/core/zkatdlog/nogh/v1/setup/setup.go)):
 
 ```
-PedersenGenerators[i] = HashToG1("lfdt-panurus.<DriverName>.<DriverVersion>.PedersenGenerators.<i>")
+PedersenGenerators[i] = HashToG1(<Label> + "PedersenGenerators.<i>")
 ```
 
-For the `zkatdlognogh` v1 driver the three input strings are therefore:
+`<Label>` depends on the optional `GeneratorDomain` field of the public parameters:
+
+| `GeneratorDomain` | `<Label>` |
+|-------------------|-----------|
+| empty (default) | `lfdt-panurus.zkatdlognogh.1.` |
+| `<d>` | `lfdt-panurus.zkatdlognogh.custom.<len(d)>:<d>.` |
+
+The default label is frozen at the v1 value. It does not depend on the driver version, so a driver version bump keeps the generators and the token format, and previously issued tokens stay spendable.
+
+An issuer rotates every generator on purpose by setting `GeneratorDomain`. It can be set when the parameters are generated: `SetupParams.GeneratorDomain` in code, or `--generator-domain` in `tokengen gen zkatdlognogh.v1`. `tokengen` prints a warning when no domain is given. The domain is at most 128 bytes of printable ASCII. The length prefix keeps a custom label distinct from the default label and from the generator suffixes. A rotation changes the token format: tokens issued before it must be upgraded (see the public parameters history in `crypto/upgrade`). Nodes running a release without the `generator_domain` field ignore it.
+
+With the default label, the input strings are:
 
 | Index | Domain-separated input string |
 |-------|-------------------------------|
@@ -142,7 +153,7 @@ For the `zkatdlognogh` v1 driver the three input strings are therefore:
 | 1 | `lfdt-panurus.zkatdlognogh.1.PedersenGenerators.1` |
 | 2 | `lfdt-panurus.zkatdlognogh.1.PedersenGenerators.2` |
 
-The same nothing-up-my-sleeve technique is used for all range-proof generators, ensuring a uniform, auditable setup. The full set of domain strings for `zkatdlognogh` v1 is:
+The same nothing-up-my-sleeve technique is used for all range-proof generators, ensuring a uniform, auditable setup. The full set of default domain strings is (with a `GeneratorDomain`, replace `lfdt-panurus.zkatdlognogh.1.` with the custom label):
 
 **Bulletproof range-proof generators** (implemented in [`GenerateRangeProofParameters`](../../token/core/zkatdlog/nogh/v1/setup/setup.go)):
 
@@ -160,7 +171,13 @@ The same nothing-up-my-sleeve technique is used for all range-proof generators, 
 | LeftGenerators[i] | `lfdt-panurus.zkatdlognogh.1.CSPRangeProof.L.<i>` |
 | RightGenerators[i] | `lfdt-panurus.zkatdlognogh.1.CSPRangeProof.R.<i>` |
 
-**Security note**: Because the generators are derived from a public hash, no single party—including the operator who ran `tokengen`—knows the discrete-log relation between $g_0$, $g_1$, and $g_2$ with respect to each other. This is a necessary pre-condition for the binding property of Pedersen commitments (see [Section 12.1](#121-soundness)).
+**Security note**: For derived sets, because the generators come from a public hash, no single party—including the operator who ran `tokengen`—knows the discrete-log relation between $g_0$, $g_1$, and $g_2$ with respect to each other. This is a necessary pre-condition for the binding property of Pedersen commitments (see [Section 12.1](#121-soundness)).
+
+**Validation**: `PublicParams.Validate` checks the generators only when the issuer declares a `GeneratorDomain`. Then the Pedersen, Bulletproof (`P`, `Q`, `L_i`, `R_i`) and CSP (`L_i`, `R_i`) generators must all derive from the custom label above, so that a set such as $g_1 = g_2^x$ is refused.
+
+Without a `GeneratorDomain`, the generators are accepted as they are. Choosing them is the responsibility of the issuer: `Validate` cannot tell an honest random set from a trapdoored one. This keeps compatibility with public parameters generated in the past, including those of releases up to v0.13.0, which used random Pedersen generators and other range-proof strings. Only nodes running this change enforce the derivation check when a `GeneratorDomain` is declared. Older nodes ignore the new `generator_domain` field (field 13) and accept the generators as they are. Anyone who relies on the binding of commitments must check that the parameters declare a `GeneratorDomain`, or that the generators match the default label above.
+
+`Validate` always checks the structure: the number and validity of the generators, `NumberOfRounds`, the bit length, and an invalid `GeneratorDomain`. Deriving the generators of a declared domain costs about 4 ms for 64-bit parameters on BN254.
 
 The public parameters include three Pedersen generators `[g_0, g_1, g_2]` used for commitment schemes:
 - `g_0`: Used for token type commitments
@@ -1299,8 +1316,10 @@ The ZKAT-DLOG (NOGH) driver uses Protocol Buffers for all serialized data struct
 - `max_token` (uint64): Maximum token value (2^precision - 1)
 - `quantity_precision` (uint64): Bit-precision for token quantities (16, 32, or 64)
 - `extra_data` (map<string, bytes>): Extensibility map for custom parameters
+- `csp_range_proof_params` (CSPRangeProofParams): CSP parameters for range proofs
+- `generator_domain` (string): Optional domain that replaces the default generator label (see [Section 2.3](#23-generator-derivation))
 
-**RangeProofParams**: Bulletproof configuration for proving values are in valid range. All generators are derived via hash-to-curve from domain-separated strings of the form `"lfdt-panurus.<DriverName>.<DriverVersion>.RangeProof.{P,Q,L.<i>,R.<i>}"` (see [Section 2.3](#23-generator-derivation)).
+**RangeProofParams**: Bulletproof configuration for proving values are in valid range. All generators are derived via hash-to-curve from domain-separated strings of the form `"<Label>RangeProof.{P,Q,L.<i>,R.<i>}"` (see [Section 2.3](#23-generator-derivation)). The examples below use the default label.
 - `left_generators` (repeated G1): Left-side generators for inner product argument; `LeftGenerators[i]` = `HashToG1("lfdt-panurus.zkatdlognogh.1.RangeProof.L.<i>")`
 - `right_generators` (repeated G1): Right-side generators for inner product argument; `RightGenerators[i]` = `HashToG1("lfdt-panurus.zkatdlognogh.1.RangeProof.R.<i>")`
 - `P` (G1): Base point for IPA; `HashToG1("lfdt-panurus.zkatdlognogh.1.RangeProof.P")`
@@ -1308,7 +1327,7 @@ The ZKAT-DLOG (NOGH) driver uses Protocol Buffers for all serialized data struct
 - `bit_length` (uint64): Number of bits in the range (e.g., 64)
 - `number_of_rounds` (uint64): Number of rounds in the protocol (log₂ of bit_length)
 
-**CSPRangeProofParams**: CSP configuration for proving values are in valid range. All generators are derived via hash-to-curve from domain-separated strings of the form `"lfdt-panurus.<DriverName>.<DriverVersion>.CSPRangeProof.{L.<i>,R.<i>}"` (see [Section 2.3](#23-generator-derivation)).
+**CSPRangeProofParams**: CSP configuration for proving values are in valid range. All generators are derived via hash-to-curve from domain-separated strings of the form `"<Label>CSPRangeProof.{L.<i>,R.<i>}"` (see [Section 2.3](#23-generator-derivation)). The examples below use the default label.
 - `left_generators` (repeated G1): Left-side generators; `LeftGenerators[i]` = `HashToG1("lfdt-panurus.zkatdlognogh.1.CSPRangeProof.L.<i>")`
 - `right_generators` (repeated G1): Right-side generators; `RightGenerators[i]` = `HashToG1("lfdt-panurus.zkatdlognogh.1.CSPRangeProof.R.<i>")`
 - `bit_length` (uint64): Number of bits in the range (e.g., 64)
@@ -1540,7 +1559,7 @@ For a typical deployment with 1M tokens:
 
 $$\sum_{i=1}^m V_{in,i} = \sum_{j=1}^k V_{out,j}$$
 
-No party can create value out of thin air. This binding property holds unconditionally only when no party knows the discrete-log relation between the Pedersen generators. The generators $g_0, g_1, g_2$ are therefore derived via hash-to-curve from public domain-separated strings (see [Section 2.3](#23-generator-derivation)), guaranteeing that even the operator who ran `tokengen` does not possess a trapdoor that could allow equivocating commitments.
+No party can create value out of thin air. This binding property holds unconditionally only when no party knows the discrete-log relation between the Pedersen generators. The generators $g_0, g_1, g_2$ are therefore derived via hash-to-curve from public domain-separated strings (see [Section 2.3](#23-generator-derivation)). For derived generators, even the operator who ran `tokengen` does not possess a trapdoor that could allow equivocating commitments. A node enforces this derivation only when the public parameters declare a `GeneratorDomain`. Without one, the generators are accepted as they are, and the binding property relies on the issuer having chosen them honestly.
 
 **Range Validity**: Bulletproofs ensure that all output values are in the valid range $[0, 2^{64}-1]$, preventing:
 - Negative values
