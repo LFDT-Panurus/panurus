@@ -36,7 +36,6 @@ type KeyManagerProvider struct {
 	curveID         math.CurveID
 	keyStore        bccsp.KeyStore
 	config          idriver.Config
-	cacheSize       int
 	metricsProvider metrics.Provider
 
 	newKeyManager NewKeyManagerFunc
@@ -50,7 +49,6 @@ func NewKeyManagerProvider(
 	curveID math.CurveID,
 	keyStore bccsp.KeyStore,
 	config idriver.Config,
-	cacheSize int,
 	ignoreVerifyOnlyWallet bool,
 	metricsProvider metrics.Provider,
 ) *KeyManagerProvider {
@@ -59,7 +57,6 @@ func NewKeyManagerProvider(
 		curveID,
 		keyStore,
 		config,
-		cacheSize,
 		ignoreVerifyOnlyWallet,
 		metricsProvider,
 		func(conf *crypto2.Config, sigType bccsp.SignatureType, csp bccsp.BCCSP) (membership.KeyManager, error) {
@@ -73,7 +70,6 @@ func NewKeyManagerProviderWithKeyManagerFactory(
 	curveID math.CurveID,
 	keyStore bccsp.KeyStore,
 	config idriver.Config,
-	cacheSize int,
 	ignoreVerifyOnlyWallet bool,
 	metricsProvider metrics.Provider,
 	newKeyManager NewKeyManagerFunc,
@@ -83,7 +79,6 @@ func NewKeyManagerProviderWithKeyManagerFactory(
 		curveID:                curveID,
 		keyStore:               keyStore,
 		config:                 config,
-		cacheSize:              cacheSize,
 		ignoreVerifyOnlyWallet: ignoreVerifyOnlyWallet,
 		metricsProvider:        metricsProvider,
 		newKeyManager:          newKeyManager,
@@ -116,10 +111,7 @@ func (l *KeyManagerProvider) Get(ctx context.Context, identityConfig *driver.Ide
 		return nil, errors.Wrapf(err, "failed instantiating idemix key manager provider from [%s]", identityConfig.URL)
 	}
 
-	cacheSize, err := l.cacheSizeForID(identityConfig.ID)
-	if err != nil {
-		return nil, err
-	}
+	cacheSize := l.config.CacheSizeForOwnerID(identityConfig.ID)
 
 	var getIdentityFunc func(context.Context, []byte) (*idriver.IdentityDescriptor, error)
 	// identityCache is kept on the wrapper, not discarded: the cache owns a background
@@ -155,16 +147,6 @@ func (l *KeyManagerProvider) Get(ctx context.Context, identityConfig *driver.Ide
 		getIdentityFunc: getIdentityFunc,
 		identityCache:   identityCache,
 	}, nil
-}
-
-func (l *KeyManagerProvider) cacheSizeForID(id string) (int, error) {
-	cacheSize := l.config.CacheSizeForOwnerID(id)
-	if cacheSize <= 0 {
-		logger.Debugf("cache size for %s not configured, using default (%d)", id, l.cacheSize)
-		cacheSize = l.cacheSize
-	}
-
-	return cacheSize, nil
 }
 
 type WrappedKeyManager struct {

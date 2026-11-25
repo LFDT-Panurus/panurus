@@ -26,10 +26,11 @@ import (
 )
 
 type mockConfig struct {
+	cacheSize int
 }
 
 func (m mockConfig) CacheSizeForOwnerID(string) int {
-	return 0
+	return m.cacheSize
 }
 
 func (m mockConfig) TranslatePath(path string) string {
@@ -60,7 +61,6 @@ func testNewKeyManagerProvider(t *testing.T, configPath string, curveID math.Cur
 		curveID,
 		keyStore,
 		&mockConfig{},
-		0,
 		false,
 		&disabled.Provider{},
 	)
@@ -163,7 +163,6 @@ func testKeyManagerProviderErrorPaths(t *testing.T, configPath string, curveID m
 		curveID,
 		keyStore,
 		&mockConfig{},
-		0,
 		false,
 		&disabled.Provider{},
 	)
@@ -233,8 +232,7 @@ func testWrappedKeyManagerIdentity(t *testing.T, configPath string, curveID math
 		config.Ipk,
 		curveID,
 		keyStore,
-		&mockConfig{},
-		3, // Set cache size
+		&mockConfig{cacheSize: 3},
 		false,
 		&disabled.Provider{},
 	)
@@ -260,34 +258,6 @@ func testWrappedKeyManagerIdentity(t *testing.T, configPath string, curveID math
 	assert.Equal(t, id1.AuditInfo, id2.AuditInfo)
 }
 
-// TestCacheSizeConfiguration tests that the cache size configuration
-// is set correctly for a KeyManagerProvider
-func TestCacheSizeConfiguration(t *testing.T) {
-	backend, err := kvs2.NewInMemory()
-	require.NoError(t, err)
-	config, err := crypto.NewConfig("./testdata/bls12_381_bbs_gurvy/idemix")
-	require.NoError(t, err)
-	keyStore, err := crypto.NewKeyStore(math.BLS12_381_BBS_GURVY, kvs2.Keystore(backend))
-	require.NoError(t, err)
-
-	// Test with custom cache size
-	customCacheSize := 10
-	kmp := NewKeyManagerProvider(
-		config.Ipk,
-		math.BLS12_381_BBS_GURVY,
-		keyStore,
-		&mockConfig{},
-		customCacheSize,
-		false,
-		&disabled.Provider{},
-	)
-
-	// Verify cache size is used
-	cacheSize, err := kmp.cacheSizeForID("test-id")
-	require.NoError(t, err)
-	assert.Equal(t, customCacheSize, cacheSize)
-}
-
 // TestKeyManagerProviderWithIgnoreVerifyOnlyWallet tests the ignoreVerifyOnlyWallet flag.
 // The flag is set to true in the test, which should trigger a search in the testdata dir
 // for a signer-configuration that allows signing and not just verification.
@@ -306,7 +276,6 @@ func TestKeyManagerProviderWithIgnoreVerifyOnlyWallet(t *testing.T) {
 		math.BLS12_381_BBS_GURVY,
 		keyStore,
 		&mockConfig{},
-		0,
 		true, // ignoreVerifyOnlyWallet
 		&disabled.Provider{},
 	)
@@ -336,7 +305,6 @@ func TestKeyManagerProviderGetWithRawConfig(t *testing.T) {
 		math.BLS12_381_BBS_GURVY,
 		keyStore,
 		&mockConfig{},
-		0,
 		false,
 		&disabled.Provider{},
 	)
@@ -397,7 +365,7 @@ func TestWrappedKeyManagerClose(t *testing.T) {
 		return idemixProvisioningGoroutines() == 0
 	}, 5*time.Second, 10*time.Millisecond, "a previous test left a provisioning goroutine behind")
 
-	kmp := NewKeyManagerProvider(config.Ipk, curveID, keyStore, &mockConfig{}, 3, false, &disabled.Provider{})
+	kmp := NewKeyManagerProvider(config.Ipk, curveID, keyStore, &mockConfig{cacheSize: 3}, false, &disabled.Provider{})
 	km, err := kmp.Get(context.Background(), &token.IdentityConfiguration{ID: "alice", URL: configPath})
 	require.NoError(t, err)
 

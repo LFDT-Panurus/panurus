@@ -70,6 +70,19 @@ func (c *RecipientDataCache) Close() {
 }
 
 func (c *RecipientDataCache) RecipientData(ctx context.Context) (*driver.RecipientData, error) {
+	// Size 0 disables the cache: no channel will ever be written to, so do not wait on it.
+	if cap(c.cache) == 0 {
+		if ctx.Err() != nil {
+			return nil, errors.New("context is done")
+		}
+		identity, err := c.backed(ctx)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed fetching wallet identity")
+		}
+
+		return identity, nil
+	}
+
 	c.once.Do(func() {
 		c.Logger.Debugf("provision wallet recipient data with cache size [%d]", cap(c.cache))
 		// Do not spawn the goroutine if the cache has already been closed, otherwise

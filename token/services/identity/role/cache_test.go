@@ -349,3 +349,30 @@ func TestRecipientDataCacheCountsProvisionFailures(t *testing.T) {
 		return failures.value() >= 1
 	}, 2*time.Second, 5*time.Millisecond, "the failed provisioning attempt was not counted")
 }
+
+// TestRecipientDataCacheDisabledDoesNotWait checks size 0 does not pay cacheTimeout:
+// these 200 calls took over a second before the fix.
+func TestRecipientDataCacheDisabledDoesNotWait(t *testing.T) {
+	c := newTestCache(t, 0, func(context.Context) (*driver.RecipientData, error) {
+		return newRecipientData("disabled"), nil
+	})
+
+	start := time.Now()
+	for range 200 {
+		_, err := c.RecipientData(t.Context())
+		require.NoError(t, err)
+	}
+	assert.Less(t, time.Since(start), 500*time.Millisecond)
+}
+
+// TestRecipientDataCacheNegativeSize checks a negative size behaves like 0.
+func TestRecipientDataCacheNegativeSize(t *testing.T) {
+	c := newTestCache(t, -1, func(context.Context) (*driver.RecipientData, error) {
+		return newRecipientData("disabled"), nil
+	})
+
+	rd, err := c.RecipientData(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, driver.Identity("disabled"), rd.Identity)
+	c.assertNoProvisioning(t)
+}

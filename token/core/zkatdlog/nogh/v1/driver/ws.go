@@ -96,7 +96,6 @@ func (d *BaseWalletServiceFactory) NewWalletService(
 			key.Curve,
 			keyStore,
 			identityConfig,
-			identityConfig.DefaultCacheSize(),
 			ignoreRemote,
 			metricsProvider,
 			identityDB,

@@ -39,14 +39,12 @@ func NewIdentityConfig(config Config) (*IdentityConfig, error) {
 	return &IdentityConfig{Config: config, Wallets: wallets}, nil
 }
 
+// CacheSizeForOwnerID returns the owner's own cacheSize when set (0 means no cache),
+// otherwise defaultCacheSize.
 func (i *IdentityConfig) CacheSizeForOwnerID(id string) int {
 	for _, owner := range i.Wallets.Owners {
-		if owner.ID == id {
-			if owner.CacheSize <= 0 {
-				return i.Wallets.DefaultCacheSize
-			}
-
-			return owner.CacheSize
+		if owner.ID == id && owner.CacheSize != nil {
+			return *owner.CacheSize
 		}
 	}
 

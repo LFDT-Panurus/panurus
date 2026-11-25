@@ -41,7 +41,6 @@ func testNewKeyManagerProvider(t *testing.T, configPath string, curveID math.Cur
 		curveID,
 		keyStore,
 		&mockConfig{},
-		0,
 		false,
 		&disabled.Provider{},
 		identityStoreService,
