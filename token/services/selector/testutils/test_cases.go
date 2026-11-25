@@ -363,47 +363,47 @@ func (m *enhancedManager) UpdateTokens(deleted []*token.ID, added []token.Unspen
 	if err != nil {
 		return err
 	}
-	if len(deleted) > 0 {
-		for _, t := range deleted {
-			if err := tx.Delete(m.t.Context(), *t, "me"); err != nil {
-				err2 := tx.Rollback()
+	for _, t := range deleted {
+		if err := tx.Delete(m.t.Context(), *t, "me"); err != nil {
+			err2 := tx.Rollback()
 
-				return errors.Wrapf(err, "failed to delete - while rolling back: %v", err2)
-			}
+			return errors.Wrapf(err, "failed to delete - while rolling back: %v", err2)
 		}
 	}
-	if len(added) > 0 {
-		for _, t := range added {
-			quantity, err := token.ToQuantity(t.Quantity, TokenQuantityPrecision)
-			if err != nil {
-				err2 := tx.Rollback()
+	for _, t := range added {
+		if err := m.storeToken(tx, t); err != nil {
+			err2 := tx.Rollback()
 
-				return errors.Wrapf(err, "failed to parse quantity - while rolling back: %v", err2)
-			}
-			if err := tx.StoreToken(m.t.Context(), driver.TokenRecord{
-				TxID:           t.Id.TxId,
-				Index:          t.Id.Index,
-				IssuerRaw:      []byte{},
-				OwnerRaw:       t.Owner,
-				OwnerType:      "idemix",
-				OwnerIdentity:  []byte{},
-				Ledger:         []byte("ledger"),
-				LedgerMetadata: []byte{},
-				Quantity:       t.Quantity,
-				Type:           t.Type,
-				Amount:         quantity.ToBigInt(),
-				Owner:          true,
-				Auditor:        false,
-				Issuer:         false,
-			}, []string{"alice"}); err != nil {
-				err2 := tx.Rollback()
-
-				return errors.Wrapf(err, "failed to insert - while rolling back: %v", err2)
-			}
+			return errors.Wrapf(err, "while rolling back: %v", err2)
 		}
 	}
 
 	return tx.Commit()
+}
+
+// storeToken writes t, owned by this node, through tx.
+func (m *enhancedManager) storeToken(tx driver.TokenStoreTransaction, t token.UnspentToken) error {
+	quantity, err := token.ToQuantity(t.Quantity, TokenQuantityPrecision)
+	if err != nil {
+		return errors.Wrapf(err, "failed to parse quantity")
+	}
+
+	return errors.Wrapf(tx.StoreToken(m.t.Context(), driver.TokenRecord{
+		TxID:           t.Id.TxId,
+		Index:          t.Id.Index,
+		IssuerRaw:      []byte{},
+		OwnerRaw:       t.Owner,
+		OwnerType:      "idemix",
+		OwnerIdentity:  []byte{},
+		Ledger:         []byte("ledger"),
+		LedgerMetadata: []byte{},
+		Quantity:       t.Quantity,
+		Type:           t.Type,
+		Amount:         quantity.ToBigInt(),
+		Owner:          true,
+		Auditor:        false,
+		Issuer:         false,
+	}, []string{"alice"}), "failed to insert")
 }
 
 // Utils

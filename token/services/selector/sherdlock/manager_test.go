@@ -507,17 +507,9 @@ func TestManager_Cleaner(t *testing.T) {
 		)
 
 		// Wait for at least 2 cleanup calls
-		select {
-		case <-cleanupCalled:
-		case <-time.After(200 * time.Millisecond):
-			t.Fatal("cleanup not called in time")
-		}
+		receiveWithin(t, cleanupCalled, 200*time.Millisecond, "cleanup not called in time")
 
-		select {
-		case <-cleanupCalled:
-		case <-time.After(200 * time.Millisecond):
-			t.Fatal("cleanup not called second time")
-		}
+		receiveWithin(t, cleanupCalled, 200*time.Millisecond, "cleanup not called second time")
 
 		// Verify manager is still functional
 		assert.NotNil(t, m)
@@ -546,11 +538,7 @@ func TestManager_Cleaner(t *testing.T) {
 		)
 
 		// Wait for cleanup call (should not panic despite error)
-		select {
-		case <-cleanupCalled:
-		case <-time.After(200 * time.Millisecond):
-			t.Fatal("cleanup not called")
-		}
+		receiveWithin(t, cleanupCalled, 200*time.Millisecond, "cleanup not called")
 
 		// Manager should still be functional
 		assert.NotNil(t, m)
@@ -591,11 +579,7 @@ func TestManager_Cleaner(t *testing.T) {
 			NewMetrics(&disabled.Provider{}),
 		)
 
-		select {
-		case <-leadershipAttempted:
-		case <-time.After(200 * time.Millisecond):
-			t.Fatal("leadership was never attempted")
-		}
+		receiveWithin(t, leadershipAttempted, 200*time.Millisecond, "leadership was never attempted")
 
 		select {
 		case <-cleanupCalled:
@@ -1002,3 +986,19 @@ func (m *mockIterator) Next() (*token2.UnspentTokenInWallet, error) {
 }
 
 func (m *mockIterator) Close() {}
+
+// receiveWithin returns the next value from ch, failing the test with msg if none arrives
+// within timeout.
+func receiveWithin[T any](t *testing.T, ch <-chan T, timeout time.Duration, msg string) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(timeout):
+		t.Fatal(msg)
+
+		var zero T
+
+		return zero
+	}
+}

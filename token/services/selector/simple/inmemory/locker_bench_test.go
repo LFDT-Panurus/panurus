@@ -30,30 +30,22 @@ func BenchmarkLockerContention(b *testing.B) {
 			d := NewLocker(mock, 10*time.Minute, time.Minute).(*locker)
 			b.Cleanup(func() { _ = d.Stop() })
 
-			var next atomic.Int64
-			b.ResetTimer()
-			var wg sync.WaitGroup
+			ownerOf := make([]string, workers)
 			for w := range workers {
-				owner := fmt.Sprintf("owner-%d", w%owners)
-				wg.Go(func() {
-					ctx := context.Background()
-					for {
-						i := next.Add(1) - 1
-						if i >= int64(b.N) {
-							return
-						}
-						id := &token.ID{TxId: fmt.Sprintf("tok-%s-%d", owner, i), Index: 0}
-						txID := fmt.Sprintf("tx-%d", i)
-						if _, err := d.Lock(ctx, owner, id, txID, false); err != nil {
-							b.Error(err)
-
-							return
-						}
-						d.UnlockIDs(ctx, owner, id)
-					}
-				})
+				ownerOf[w] = fmt.Sprintf("owner-%d", w%owners)
 			}
-			wg.Wait()
+			runWorkers(b, workers, func(w int, i int64) bool {
+				owner := ownerOf[w]
+				id := &token.ID{TxId: fmt.Sprintf("tok-%s-%d", owner, i), Index: 0}
+				if _, err := d.Lock(context.Background(), owner, id, fmt.Sprintf("tx-%d", i), false); err != nil {
+					b.Error(err)
+
+					return false
+				}
+				d.UnlockIDs(context.Background(), owner, id)
+
+				return true
+			})
 		})
 	}
 }
@@ -86,24 +78,33 @@ func BenchmarkLockerContentionWithSlowReclaim(b *testing.B) {
 				}
 			}
 
-			var next atomic.Int64
-			b.ResetTimer()
-			var wg sync.WaitGroup
-			for w := range workers {
-				wg.Go(func() {
-					ctx := context.Background()
-					for {
-						i := next.Add(1) - 1
-						if i >= int64(b.N) {
-							return
-						}
-						// reclaim fails (holder is Pending) after paying the
-						// status lookup under the shard lock
-						_, _ = d.Lock(ctx, ownersOf[w], ids[w], fmt.Sprintf("tx-%d", i), true)
-					}
-				})
-			}
-			wg.Wait()
+			runWorkers(b, workers, func(w int, i int64) bool {
+				// reclaim fails (holder is Pending) after paying the
+				// status lookup under the shard lock
+				_, _ = d.Lock(context.Background(), ownersOf[w], ids[w], fmt.Sprintf("tx-%d", i), true)
+
+				return true
+			})
 		})
 	}
+}
+
+// runWorkers resets the timer and runs b.N operations spread over workers goroutines. op
+// gets the worker's index and the operation's index, and returns false to stop its worker.
+func runWorkers(b *testing.B, workers int, op func(w int, i int64) bool) {
+	b.Helper()
+	var next atomic.Int64
+	b.ResetTimer()
+	var wg sync.WaitGroup
+	for w := range workers {
+		wg.Go(func() {
+			for {
+				i := next.Add(1) - 1
+				if i >= int64(b.N) || !op(w, i) {
+					return
+				}
+			}
+		})
+	}
+	wg.Wait()
 }
