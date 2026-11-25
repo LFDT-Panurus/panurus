@@ -384,7 +384,14 @@ the empty identity to the literal string `<empty>` rather than to a hash, so eve
 would collapse onto one row and one cache entry: one caller's audit info would be readable by any
 other empty-identity lookup, and a signer registered for one would be handed back for another. The
 guard therefore also applies to ephemeral registrations, which write nothing to storage but populate
-the same caches.
+the provider's in-memory signer stores.
+
+## Ephemeral Signers
+
+An ephemeral signer (`RegisterEphemeralSigner`, used by HTLC claim and reclaim) is never persisted,
+so the provider's copy is the only one. It is therefore held in a store that never evicts: a claim
+signer carries the preimage and a reclaim signer wraps another signer, so nothing can rebuild either.
+Such an entry lives for the process lifetime.
 
 Two further checks apply where the information to make them exists:
 

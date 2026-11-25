@@ -9,13 +9,16 @@ package identity_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
+	"sync"
 	"testing"
 	"unsafe"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	drvmock "github.com/LFDT-Panurus/panurus/token/driver/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
+	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
 	idmock "github.com/LFDT-Panurus/panurus/token/services/identity/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/stretchr/testify/assert"
@@ -461,4 +464,91 @@ func TestProvider_GetSigner_Metrics(t *testing.T) {
 		assert.Equal(t, 1, provider.counterAddCount("identity_signer_resolutions_total", "outcome", "routed"))
 		assert.Equal(t, 1, provider.histogramObserveCount("identity_get_signer_duration_seconds", "path", "routed"))
 	})
+}
+
+// TestProvider_GetSigner_EphemeralSurvivesCacheEviction is a regression test for #2814.
+func TestProvider_GetSigner_EphemeralSurvivesCacheEviction(t *testing.T) {
+	storage := &idmock.Storage{}
+	des := &idmock.Deserializer{}
+	des.DeserializeSignerReturns(nil, errors.New("not deserializable"))
+	p := identity.NewProvider(logging.MustGetLogger(), storage, des,
+		&idmock.NetworkBinderService{}, &idmock.EnrollmentIDUnmarshaler{}, nil)
+
+	ephemeralID := driver.Identity("ephemeral_id")
+	ephemeralSigner := &drvmock.Signer{}
+	require.NoError(t, p.RegisterSigner(t.Context(), ephemeralID, ephemeralSigner, &drvmock.Verifier{}, nil, true))
+	require.Equal(t, 0, storage.RegisterIdentityDescriptorCallCount(), "an ephemeral signer is not persisted")
+
+	// overflow the signer cache with unrelated identities
+	for i := range 4 * identity.DefaultSignerCacheSize {
+		id := driver.Identity(fmt.Appendf(nil, "other-%d", i))
+		require.NoError(t, p.RegisterSigner(t.Context(), id, &drvmock.Signer{}, &drvmock.Verifier{}, nil, false))
+	}
+
+	signer, err := p.GetSigner(t.Context(), ephemeralID)
+	require.NoError(t, err)
+	assert.Same(t, ephemeralSigner, signer)
+
+	isMe, err := p.IsMe(t.Context(), ephemeralID)
+	require.NoError(t, err)
+	assert.True(t, isMe)
+}
+
+// TestProvider_GetSigner_EphemeralAlias resolves an ephemeral descriptor under both of its keys.
+func TestProvider_GetSigner_EphemeralAlias(t *testing.T) {
+	storage := &idmock.Storage{}
+	des := &idmock.Deserializer{}
+	des.DeserializeSignerReturns(nil, errors.New("not deserializable"))
+	p := identity.NewProvider(logging.MustGetLogger(), storage, des,
+		&idmock.NetworkBinderService{}, &idmock.EnrollmentIDUnmarshaler{}, nil)
+
+	id, alias := driver.Identity("ephemeral_id"), driver.Identity("ephemeral_alias")
+	ephemeralSigner := &drvmock.Signer{}
+	require.NoError(t, p.RegisterIdentityDescriptor(t.Context(), &idriver.IdentityDescriptor{
+		Identity:  id,
+		Signer:    ephemeralSigner,
+		Ephemeral: true,
+	}, alias))
+	require.Equal(t, 0, storage.RegisterIdentityDescriptorCallCount())
+
+	for _, key := range []driver.Identity{id, alias} {
+		signer, err := p.GetSigner(t.Context(), key)
+		require.NoError(t, err, "no signer for [%s]", key)
+		assert.Same(t, ephemeralSigner, signer)
+	}
+}
+
+// TestProvider_EphemeralSigners_Concurrent covers the ephemeral store's lock under -race.
+func TestProvider_EphemeralSigners_Concurrent(t *testing.T) {
+	des := &idmock.Deserializer{}
+	des.DeserializeSignerReturns(nil, errors.New("not deserializable"))
+	p := identity.NewProvider(logging.MustGetLogger(), &idmock.Storage{}, des,
+		&idmock.NetworkBinderService{}, &idmock.EnrollmentIDUnmarshaler{}, nil)
+
+	// errors come back to the test goroutine: require.* may not be called from another one
+	const n = 50
+	errs := make(chan error, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Go(func() {
+			id := driver.Identity(fmt.Appendf(nil, "concurrent-%d", i))
+			signer := &drvmock.Signer{}
+			if err := p.RegisterSigner(t.Context(), id, signer, nil, nil, true); err != nil {
+				errs <- err
+
+				return
+			}
+			switch got, err := p.GetSigner(t.Context(), id); {
+			case err != nil:
+				errs <- err
+			case got != driver.Signer(signer):
+				errs <- errors.New("wrong signer for " + id.String())
+			}
+		})
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
 }
