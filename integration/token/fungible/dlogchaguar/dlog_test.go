@@ -4,7 +4,7 @@ Copyright IBM Corp All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 */
 
-package dlogx
+package dlogchaguar
 
 import (
 	integration2 "github.com/LFDT-Panurus/panurus/integration"
@@ -12,7 +12,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
 	token2 "github.com/LFDT-Panurus/panurus/integration/token"
 	"github.com/LFDT-Panurus/panurus/integration/token/common"
-	"github.com/LFDT-Panurus/panurus/integration/token/common/sdk/fxdlog"
+	"github.com/LFDT-Panurus/panurus/integration/token/common/sdk/chaguardlog"
 	"github.com/LFDT-Panurus/panurus/integration/token/fungible"
 	"github.com/LFDT-Panurus/panurus/integration/token/fungible/topology"
 	endorsementfsc "github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement/fsc"
@@ -213,7 +213,7 @@ func newTestSuite(commType fsc.P2PCommunicationType, mask int, factor int, token
 		AuditorAsIssuer:     mask&AuditorAsIssuer > 0,
 		HSM:                 mask&HSM > 0,
 		WebEnabled:          mask&WebEnabled > 0,
-		SDKs:                []node.SDK{&fxdlog.SDK{}}, // add Chaguar SDK
+		SDKs:                []node.SDK{&chaguardlog.SDK{}}, // add Chaguar SDK
 		Monitoring:          false,
 		ReplicationOpts:     opts,
 		FSCBasedEndorsement: mask&WithEndorsers > 0,

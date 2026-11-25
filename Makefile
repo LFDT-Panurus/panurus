@@ -232,36 +232,8 @@ clean:
 	docker network prune -f
 	docker container prune -f
 	docker volume prune -f
-	rm -rf ./integration/token/fungible/dlog/out/
-	rm -rf ./integration/token/fungible/dlog/testdata/
-	rm -rf ./integration/token/fungible/dlogx/out/
-	rm -rf ./integration/token/fungible/evm/out/
-	rm -rf ./integration/token/fungible/evm/testdata/
-	rm -rf ./integration/token/fungible/evmfabtoken/out/
-	rm -rf ./integration/token/fungible/evmfabtoken/testdata/
-	rm -rf ./integration/token/fungible/evmgw/out/
-	rm -rf ./integration/token/fungible/evmgw/testdata/
-	rm -rf ./integration/token/fungible/evmgwfabtoken/out/
-	rm -rf ./integration/token/fungible/evmgwfabtoken/testdata/
-	rm -rf ./integration/token/fungible/dloghsm/out/
-	rm -rf ./integration/token/fungible/dloghsm/testdata/
-	rm -rf ./integration/token/fungible/dlogstress/out/
-	rm -rf ./integration/token/fungible/dlogstress/testdata/
-	rm -rf ./integration/token/fungible/fabtoken/out/
-	rm -rf ./integration/token/fungible/fabtoken/testdata/
-	rm -rf ./integration/token/fungible/odlog/out/
-	rm -rf ./integration/token/fungible/ofabtoken/out/
-	rm -rf ./integration/token/fungible/mixed/out/
-	rm -rf ./integration/token/nft/dlog/out/
-	rm -rf ./integration/token/nft/fabtoken/out/
-	rm -rf ./integration/token/nft/odlog/out/
-	rm -rf ./integration/token/nft/ofabtoken/out/
-	rm -rf ./integration/token/dvp/dlog/out/
-	rm -rf ./integration/token/dvp/fabtoken/out/
-	rm -rf ./integration/token/interop/fabtoken/out/
-	rm -rf ./integration/token/interop/dlog/out/
-	rm -rf ./integration/token/fungible/update/out/
-	rm -rf ./integration/token/fungible/update/testdata/
+	rm -rf ./integration/token/*/*/out/
+	rm -rf ./integration/token/*/*/testdata/
 
 .PHONY: clean-fabric-peer-images
 # clean up fabric peer images

@@ -405,7 +405,7 @@ Two consequences of reading the version rather than counting notifications:
   its first observation as "initialization" and stayed behind by exactly the number
   of updates it had not witnessed, which permanently broke any endorser restarted
   after a parameters update. The Chaguar fungible suite
-  (`integration/token/fungible/dlogx`) has specs for this end to end: its
+  (`integration/token/fungible/dlogchaguar`) has specs for this end to end: its
   public-parameters-update specs (T2, T2.1, T7) restart the endorser after the
   update and then transact against the new parameters. They are not run in CI yet
   ([#1945](https://github.com/LFDT-Panurus/panurus/issues/1945)); run them locally

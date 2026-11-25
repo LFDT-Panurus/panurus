@@ -4,7 +4,7 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 */
 
-package fxdlog
+package chaguardlog
 
 import (
 	"errors"
@@ -19,7 +19,7 @@ import (
 	common "github.com/hyperledger-labs/fabric-smart-client/platform/common/sdk/dig"
 	digutils "github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/dig"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric/services/state"
-	fabricxsdk "github.com/hyperledger-labs/fabric-smart-client/platform/fabricx/sdk/dig"
+	chaguarsdk "github.com/hyperledger-labs/fabric-smart-client/platform/fabricx/sdk/dig"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services"
 	"go.uber.org/dig"
 )
@@ -29,7 +29,7 @@ type SDK struct {
 }
 
 func NewSDK(registry services.Registry) *SDK {
-	return &SDK{SDK: libp2p.NewFrom(tokensdk.NewFrom(fabricxsdk.NewSDK(registry)))}
+	return &SDK{SDK: libp2p.NewFrom(tokensdk.NewFrom(chaguarsdk.NewSDK(registry)))}
 }
 
 func NewFrom(sdk common.SDK) *SDK {

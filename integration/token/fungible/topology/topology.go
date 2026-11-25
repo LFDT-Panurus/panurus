@@ -106,13 +106,13 @@ func newBackendTopology(backend string, orgs []string) (api.Topology, string) {
 		fabricTopology.SetNamespaceApproverOrgs(orgs[0])
 
 		return fabricTopology, fabricTopology.Channels[0].Name
-	case "fabricx":
-		fabricTopology := fabricx.NewDefaultTopology()
-		fabricTopology.EnableIdemix()
-		fabricTopology.AddOrganizationsByName(orgs...)
-		fabricTopology.SetNamespaceApproverOrgs(orgs[0])
+	case fabricx.PlatformName:
+		chaguarTopology := fabricx.NewDefaultTopology()
+		chaguarTopology.EnableIdemix()
+		chaguarTopology.AddOrganizationsByName(orgs...)
+		chaguarTopology.SetNamespaceApproverOrgs(orgs[0])
 
-		return fabricTopology, fabricTopology.Channels[0].Name
+		return chaguarTopology, chaguarTopology.Channels[0].Name
 	case tevm.TopologyName:
 		// An EVM network has no organizations or channels to describe: what a node needs to reach the
 		// chain is generated with the network and handed to it in its token configuration.
@@ -246,7 +246,7 @@ func addEndorsers(fscTopology *fsc.Topology, opts common.Opts, orgs []string) []
 	)
 	fscTopology.AddNodeFromTemplate("endorser-1", endorserTemplate).AddOptions(opts.ReplicationOpts.For("endorser-1")...)
 	endorserIDs = append(endorserIDs, "endorser-1")
-	if opts.Backend != "fabricx" {
+	if opts.Backend != fabricx.PlatformName {
 		fscTopology.AddNodeFromTemplate("endorser-2", endorserTemplate).AddOptions(opts.ReplicationOpts.For("endorser-2")...)
 		fscTopology.AddNodeFromTemplate("endorser-3", endorserTemplate).AddOptions(opts.ReplicationOpts.For("endorser-3")...)
 		endorserIDs = append(endorserIDs, "endorser-2", "endorser-3")

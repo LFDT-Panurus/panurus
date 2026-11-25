@@ -113,7 +113,7 @@ integration-tests-chaguar-dlog-t16-libp2p:
 integration-tests-chaguar-dlog-t16-replicas:
 	make integration-tests-chaguar-dlog TEST_FILTER="T16 && replicas"
 
-# The dlogx "Extras" container (T12, T13, T4, T5, T3) shares one network per infra type.
+# The dlogchaguar "Extras" container (T12, T13, T4, T5, T3) shares one network per infra type.
 # The filter is what CI runs; T12, T2.1 and T2 are disabled (#1945): widen it to enable them.
 CHAGUAR_DLOG_EXTRAS_FILTER = (T3 || T4 || T5 || T13)
 
@@ -135,4 +135,4 @@ integration-tests-chaguar-dlog-extras-replicas:
 
 .PHONY: integration-tests-chaguar-dlog
 integration-tests-chaguar-dlog:
-	cd ./integration/token/fungible/dlogx; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" .
+	cd ./integration/token/fungible/dlogchaguar; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" .
