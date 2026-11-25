@@ -1239,3 +1239,106 @@ func TestLocalMembership_CloseClosesKeyManagers(t *testing.T) {
 	lm.Close()
 	assert.Equal(t, int32(1), km.closed.Load(), "Close released the key manager twice")
 }
+
+// newAnonModeMembership builds a LocalMembership in anonymity mode whose key managers are
+// anonymous for every configuration id in anonIDs. It returns the membership and its store mock
+// so a caller can drive the notifier path.
+func newAnonModeMembership(t *testing.T, anonymous bool, anonIDs ...string) (*membership.LocalMembership, *mock.IdentityStoreService) {
+	t.Helper()
+
+	ip := &mock.IdentityProvider{}
+	ip.BindReturns(nil)
+	cfg := &mock.Config{}
+	cfg.TranslatePathCalls(func(p string) string { return p })
+
+	iss := &mock.IdentityStoreService{}
+	iss.ConfigurationExistsReturns(false, nil)
+	iss.AddConfigurationReturns(nil)
+	iss.IteratorConfigurationsReturns(&mock.IdentityConfigurationIterator{}, nil)
+	iss.NotifierReturns(nil, storage.ErrNotSupported)
+
+	kmp := &mock.KeyManagerProvider{}
+	kmp.GetCalls(func(_ context.Context, c *membership.IdentityConfiguration) (membership.KeyManager, error) {
+		km := newTestKeyManager("e-"+c.ID, []byte("id-"+c.ID))
+		km.AnonymousReturns(slices.Contains(anonIDs, c.ID))
+
+		return km, nil
+	})
+
+	return membership.NewLocalMembership(
+		logging.MustGetLogger("test"),
+		cfg,
+		[]byte("netid"),
+		&mock.SignerDeserializerManager{},
+		iss,
+		"testType",
+		anonymous,
+		ip,
+		kmp,
+	), iss
+}
+
+// TestLoad_AnonymousModeNonAnonymousDefaultIsNotSelected pins the anonymity half of the
+// default-identity predicate: a configured default whose key manager is not anonymous is not
+// selectable under anonymity mode, and there is no other candidate, so there is no default.
+func TestLoad_AnonymousModeNonAnonymousDefaultIsNotSelected(t *testing.T) {
+	ctx := t.Context()
+	lm, _ := newAnonModeMembership(t, true)
+
+	require.NoError(t, lm.Load(ctx, []idriver.ConfiguredIdentity{
+		{ID: "plain", Default: true, Path: "/tmp/plain"},
+	}, nil))
+
+	assert.Empty(t, lm.GetDefaultIdentifier(),
+		"a non-anonymous identity must never be the default under anonymity mode")
+}
+
+// TestLoad_AnonymousModeFallbackPicksAnonymousIdentity covers the case the cached default
+// identifier used to blank: the configured default is not anonymous, so under anonymity mode the
+// fallback must hand the default to the anonymous identity instead.
+func TestLoad_AnonymousModeFallbackPicksAnonymousIdentity(t *testing.T) {
+	ctx := t.Context()
+	lm, _ := newAnonModeMembership(t, true, "anon")
+
+	require.NoError(t, lm.Load(ctx, []idriver.ConfiguredIdentity{
+		{ID: "plain", Default: true, Path: "/tmp/plain"},
+		{ID: "anon", Path: "/tmp/anon"},
+	}, nil))
+
+	assert.Equal(t, "anon", lm.GetDefaultIdentifier(),
+		"the fallback must pick the identity that is selectable under anonymity mode")
+}
+
+// TestNotifier_RegisteredIdentityIsNotDefault pins the Default half of the predicate: identities
+// that arrive through a store change notification are registered as non-default, so they must not
+// be reported as the default identity.
+func TestNotifier_RegisteredIdentityIsNotDefault(t *testing.T) {
+	ctx := t.Context()
+	lm, iss := newAnonModeMembership(t, false)
+
+	var notify func(idriver.Operation, idriver.IdentityConfigurationRecord)
+	notifier := &mock.IdentityConfigurationNotifier{}
+	notifier.SubscribeCalls(func(cb func(idriver.Operation, idriver.IdentityConfigurationRecord)) error {
+		notify = cb
+
+		return nil
+	})
+	iss.NotifierReturns(notifier, nil)
+	iss.GetConfigurationReturns(&idriver.IdentityConfiguration{
+		ID: "notified", Type: "testType", URL: "/tmp/notified",
+	}, nil)
+
+	// load nothing, so the notified identity is the only one and no default was ever set
+	require.NoError(t, lm.Load(ctx, nil, nil))
+	require.NotNil(t, notify, "Load must subscribe to the identity notifier")
+
+	notify(idriver.Insert, idriver.IdentityConfigurationRecord{
+		ID: "notified", Type: "testType", URL: "/tmp/notified",
+	})
+
+	ids, err := lm.IDs()
+	require.NoError(t, err)
+	require.Equal(t, []string{"notified"}, ids, "the notified identity must be registered")
+	assert.Empty(t, lm.GetDefaultIdentifier(),
+		"an identity registered through the notifier is not the default")
+}

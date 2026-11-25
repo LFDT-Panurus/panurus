@@ -195,7 +195,6 @@ type LocalMembership struct {
 	// keyManagers holds every key manager loaded by this membership, so that Close can
 	// release the ones that own resources. Guarded by localIdentitiesMutex.
 	keyManagers               []KeyManager
-	cachedDefaultIdentifier   string
 	localIdentitiesByName     map[string][]LocalIdentityWithPriority
 	localIdentitiesByIdentity map[string]*LocalIdentity
 	localIdentitiesByConfig   map[string]*LocalIdentity
@@ -446,7 +445,6 @@ func (l *LocalMembership) Load(ctx context.Context, identities []idriver.Configu
 func (l *LocalMembership) resetLoadState(targets []view.Identity) {
 	l.targetIdentities = targets
 	l.localIdentities = make([]*LocalIdentity, 0)
-	l.cachedDefaultIdentifier = ""
 	l.localIdentitiesByName = make(map[string][]LocalIdentityWithPriority, 0)
 	l.localIdentitiesByConfig = make(map[string]*LocalIdentity, 0)
 	// localIdentitiesByIdentity must be reset with the other three: it is the map both lookup
@@ -566,12 +564,18 @@ func (l *LocalMembership) ensureDefaultIdentity() {
 	defaultIdentity := l.firstDefaultIdentifier()
 	if defaultIdentity == nil {
 		l.logger.Warnf("no default identity can be set among the available identities [%d]", len(l.localIdentities))
-	} else {
-		defaultIdentity.Default = true
-		// firstDefaultIdentifier already honors the anonymity mode, so this is selectable.
-		l.cachedDefaultIdentifier = defaultIdentity.Name
+
+		return
 	}
-	l.logger.Warnf("default identity is [%s]", l.getDefaultIdentifier())
+
+	// clear the stale flags first: a configured default that is not selectable under
+	// anonymity mode keeps Default set, and only one identity may carry it.
+	for _, li := range l.localIdentities {
+		li.Default = false
+	}
+	// firstDefaultIdentifier already honors the anonymity mode, so this is selectable.
+	defaultIdentity.Default = true
+	l.logger.Warnf("default identity is [%s]", defaultIdentity.Name)
 }
 
 func (l *LocalMembership) subscribeNotifier() error {
@@ -638,10 +642,16 @@ func (l *LocalMembership) handleConfig(id, typ, url string) {
 	}
 }
 
-// getDefaultIdentifier returns the name of the current default identity (may return empty string).
-// The value is cached (see cachedDefaultIdentifier); maintained by addLocalIdentity and Load.
+// getDefaultIdentifier returns the name of the current default identity that is selectable under
+// the current anonymity setting (may return empty string). Callers must hold localIdentitiesMutex.
 func (l *LocalMembership) getDefaultIdentifier() string {
-	return l.cachedDefaultIdentifier
+	for _, li := range l.localIdentities {
+		if li.Default && (!l.anonymous || li.Anonymous) {
+			return li.Name
+		}
+	}
+
+	return ""
 }
 
 // firstDefaultIdentifier returns the first identity that can be used as default under the current
@@ -885,7 +895,7 @@ func (l *LocalMembership) addLocalIdentity(ctx context.Context, config *Identity
 	l.logger.Debugf("new local identity for [%s:%s] - [%v]", name, eID, localIdentity)
 
 	if defaultID {
-		l.setDefaultLocalIdentity(name, localIdentity)
+		l.setDefaultLocalIdentity(name)
 	}
 
 	l.appendLocalIdentityByName(name, localIdentity, priority)
@@ -974,19 +984,13 @@ func (l *LocalMembership) resolveTargetPriority(name string, config *IdentityCon
 	return MaxPriority
 }
 
-// setDefaultLocalIdentity clears Default on every currently loaded identity and marks
-// li as the new default, updating the cached default identifier if it remains
-// selectable under the current anonymity mode.
-func (l *LocalMembership) setDefaultLocalIdentity(name string, li *LocalIdentity) {
+// setDefaultLocalIdentity clears Default on every currently loaded identity, leaving the
+// identity being registered, which carries Default from its own configuration, as the only
+// one flagged. The caller must hold localIdentitiesMutex.
+func (l *LocalMembership) setDefaultLocalIdentity(name string) {
 	l.logger.Infof("set default identity to [%s]", name)
 	for _, existing := range l.localIdentities {
 		existing.Default = false
-	}
-	// Keep the cached default in sync; empty if not selectable under anonymity mode.
-	if !l.anonymous || li.Anonymous {
-		l.cachedDefaultIdentifier = name
-	} else {
-		l.cachedDefaultIdentifier = ""
 	}
 }
 
