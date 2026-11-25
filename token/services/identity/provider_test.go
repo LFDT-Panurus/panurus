@@ -461,6 +461,7 @@ func TestProvider_GetSigner_Metrics(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, expected, s)
 
+		assert.Equal(t, 1, storage.StoreSignerInfoCallCount())
 		assert.Equal(t, 1, provider.counterAddCount("identity_signer_resolutions_total", "outcome", "routed"))
 		assert.Equal(t, 1, provider.histogramObserveCount("identity_get_signer_duration_seconds", "path", "routed"))
 	})
