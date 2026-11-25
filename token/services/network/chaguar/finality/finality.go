@@ -23,7 +23,7 @@ import (
 	cdriver "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	fdriver "github.com/hyperledger-labs/fabric-smart-client/platform/fabric/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabricx/core/committer/queryservice"
-	finalityx "github.com/hyperledger-labs/fabric-smart-client/platform/fabricx/core/finality"
+	fscfinality "github.com/hyperledger-labs/fabric-smart-client/platform/fabricx/core/finality"
 	"github.com/hyperledger/fabric-x-common/api/applicationpb"
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
 )
@@ -85,10 +85,10 @@ type KeyTranslator = translator.KeyTranslator
 //go:generate counterfeiter -o mock/qps.go -fake-name QueryServiceProvider . QueryServiceProvider
 type QueryServiceProvider = queryservice.Provider
 
-// ListenerManager is an alias for finalityx.ListenerManager
+// ListenerManager is an alias for fscfinality.ListenerManager
 //
 //go:generate counterfeiter -o mock/lm.go -fake-name ListenerManager . ListenerManager
-type ListenerManager = finalityx.ListenerManager
+type ListenerManager = fscfinality.ListenerManager
 
 // ListenerManagerProvider gives access to instances of ListenerManager
 //
@@ -307,7 +307,7 @@ func (l *NSFinalityListener) OnStatus(ctx context.Context, txID cdriver.TxID, st
 // NSListenerManager resolves transaction finality with a single shared poller
 // that batches committer status queries across all pending transactions.
 type NSListenerManager struct {
-	lm            finalityx.ListenerManager // unused by the poller; retained for wiring
+	lm            fscfinality.ListenerManager // unused by the poller; retained for wiring
 	queue         Queue
 	queryService  QueryService
 	keyTranslator KeyTranslator
@@ -332,7 +332,7 @@ type pendingTx struct {
 // NewNSListenerManager creates a new NSListenerManager wrapping an underlying
 // listener manager and utilizing an event queue.
 func NewNSListenerManager(
-	lm finalityx.ListenerManager,
+	lm fscfinality.ListenerManager,
 	queue Queue,
 	qs QueryService,
 	keyTranslator KeyTranslator,

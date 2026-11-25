@@ -232,7 +232,7 @@ Because of this, the suite passed to `token.ShareNetwork` must implement `token.
 with a `TearDown` that is safe to call on a network whose `Setup` failed part-way (or never
 ran) and that is idempotent. `token.TestSuite` does so; a suite embedding FSC's
 `*integration.TestSuite` must override `TearDown`, for example with `token.StopInfrastructure`
-(see the `testSuite` of `integration/token/fungible/dlogx`). `TearDown` clears `II` only once
+(see the `testSuite` of `integration/token/fungible/dlogchaguar`). `TearDown` clears `II` only once
 `Stop` returns, so if `Stop` panics part-way the final cleanup retries it once. It does not stop
 the build server or remove the test directory of an infrastructure whose `Generate` never ran;
 those hold no ports in the start range and are cleaned up by `CleanupBuildArtifacts` and
@@ -304,7 +304,7 @@ container into `TestAll` alone plus a shared container for the small specs.
 
 #### Sharing a network on Chaguar
 
-The Chaguar suite (`integration/token/fungible/dlogx`) shares networks too, with two
+The Chaguar suite (`integration/token/fungible/dlogchaguar`) shares networks too, with two
 differences from the dlog suite:
 
 - **No `TestAll`-first container for the small specs.** Its "Extras" container (T12, T13, T4,

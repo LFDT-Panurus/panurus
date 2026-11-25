@@ -35,7 +35,7 @@ import (
 	fabric2 "github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabricx"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabricx/core/committer/queryservice"
-	finalityx "github.com/hyperledger-labs/fabric-smart-client/platform/fabricx/core/finality"
+	fscfinality "github.com/hyperledger-labs/fabric-smart-client/platform/fabricx/core/finality"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/view"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -60,7 +60,7 @@ func NewDriver(
 	cleanupServiceManager cleanup.ServiceManager,
 	endorserStoreServiceManager endorserdb.StoreServiceManager,
 	queryServiceProvider queryservice.Provider,
-	finalityProvider *finalityx.Provider,
+	finalityProvider *fscfinality.Provider,
 	metricsProvider metrics.Provider,
 	grpcClientProvider queryservice.GRPCClientProvider,
 	ppValidator fsc.PublicParamsValidator,

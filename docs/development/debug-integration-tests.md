@@ -39,7 +39,7 @@ the specs that share one network (`token.ShareNetwork`) it uses the grouped
 targets `integration-tests-dlog-fabric-aries-*` (T1, T17, T4, T5, T3, T2.1,
 T2), `integration-tests-dlog-fabric-t6-t7-*` and
 `integration-tests-fabtoken-fabric-all-*` (T1, T17, T4, T5, T3, T2); Chaguar
-uses `integration-tests-chaguar-dlog-extras` (T13, T4, T5, T3 of the dlogx
+uses `integration-tests-chaguar-dlog-extras` (T13, T4, T5, T3 of the dlogchaguar
 "Extras" container, all three infra types in one job; `-extras-websocket`,
 `-extras-libp2p` and `-extras-replicas` run one type each) and the per-infra
 `-t1-*`, `-t6-*` and `-t16-*` targets for its `TestAll` specs. The plain `-tN`
