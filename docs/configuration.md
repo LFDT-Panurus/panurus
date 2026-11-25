@@ -761,6 +761,10 @@ See [Token Chaincode Query Limits](security/tcc_query_limits.md).
 
 ### Optional: token.chaguar.lookup
 
+> **Deprecated key**: these settings used to live under `token.fabricx.lookup`. That key is still
+> read when the `token.chaguar` one is unset, and logs a warning at startup; move your lookup block
+> to `token.chaguar.lookup`, as the fallback will be removed in a future release.
+
 If not specified, the default configuration is:
 
 ```yaml

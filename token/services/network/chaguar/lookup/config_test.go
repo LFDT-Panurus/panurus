@@ -107,3 +107,60 @@ func TestServiceConfig_OnceInterval(t *testing.T) {
 		assert.Equal(t, lookup.DefaultOnceInterval, cfg.OnceInterval())
 	})
 }
+
+func TestServiceConfig_DeprecatedFabricxKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		current    string
+		deprecated string
+		get        func(lookup.ConfigGetter) time.Duration
+	}{
+		{
+			name:       "permanent.interval",
+			current:    lookup.PermanentInterval,
+			deprecated: "token.fabricx.lookup.permanent.interval",
+			get:        func(c lookup.ConfigGetter) time.Duration { return c.PermanentInterval() },
+		},
+		{
+			name:       "once.deadline",
+			current:    lookup.OnceDeadline,
+			deprecated: "token.fabricx.lookup.once.deadline",
+			get:        func(c lookup.ConfigGetter) time.Duration { return c.OnceDeadline() },
+		},
+		{
+			name:       "once.interval",
+			current:    lookup.OnceInterval,
+			deprecated: "token.fabricx.lookup.once.interval",
+			get:        func(c lookup.ConfigGetter) time.Duration { return c.OnceInterval() },
+		},
+	} {
+		t.Run(tc.name+": falls back to the deprecated key when unset", func(t *testing.T) {
+			m := &mock.Configuration{}
+			m.GetDurationStub = func(key string) time.Duration {
+				if key == tc.deprecated {
+					return 42 * time.Second
+				}
+
+				return 0
+			}
+
+			assert.Equal(t, 42*time.Second, tc.get(lookup.NewConfig(m)))
+		})
+
+		t.Run(tc.name+": prefers the current key over the deprecated one", func(t *testing.T) {
+			m := &mock.Configuration{}
+			m.GetDurationStub = func(key string) time.Duration {
+				switch key {
+				case tc.current:
+					return 7 * time.Second
+				case tc.deprecated:
+					return 42 * time.Second
+				}
+
+				return 0
+			}
+
+			assert.Equal(t, 7*time.Second, tc.get(lookup.NewConfig(m)))
+		})
+	}
+}
