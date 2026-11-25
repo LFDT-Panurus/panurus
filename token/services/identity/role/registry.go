@@ -108,7 +108,7 @@ func (r WalletIDResolution) abortError(id driver.WalletLookupID) error {
 // Registry manages wallets whose long-term identities have a given role.
 //
 // Concurrency and invariants:
-//   - The Wallets map MUST only be accessed while holding WalletMu. Use
+//   - The RegisteredWallets map MUST only be accessed while holding WalletMu. Use
 //     WalletMu.RLock()/RUnlock() for short read-only access and WalletMu.Lock()/Unlock()
 //     for modifications. Methods in this file follow the pattern of taking short
 //     RLocks for map reads and never holding locks while calling out to external
@@ -121,8 +121,8 @@ func (r WalletIDResolution) abortError(id driver.WalletLookupID) error {
 //     deadlock. Concurrent creations of the same wallet are instead coalesced with
 //     walletCreationGroup (see WalletByID).
 //   - Because construction runs outside the lock, it can overlap Done. Nothing may be
-//     written to the Wallets map once closed is set: Done has already dropped the cache
-//     and closed what it held, so a later entry would never be closed by anyone.
+//     written to the RegisteredWallets map once closed is set: Done has already dropped
+//     the map and closed what it held, so a later entry would never be closed by anyone.
 type Registry struct {
 	Logger  logging.Logger
 	Role    idriver.Role
@@ -130,7 +130,11 @@ type Registry struct {
 
 	WalletFactory WalletFactory
 	WalletMu      sync.RWMutex
-	Wallets       map[string]driver.Wallet
+
+	// RegisteredWallets is live state the registry owns, not a cache: Done closes its
+	// entries, WalletByID returns the same instance from it, and it is the fallback when
+	// GetWalletID fails. Never drop or bound it.
+	RegisteredWallets map[string]driver.Wallet
 
 	// walletCreationGroup coalesces concurrent WalletFactory.NewWallet calls for the same
 	// wallet identifier, so that a wallet is built at most once without holding
@@ -139,24 +143,24 @@ type Registry struct {
 
 	// closed is set by Done. It is guarded by WalletMu and exists because construction
 	// no longer runs under that lock: a creation still in flight when Done runs must not
-	// repopulate the cache Done has just dropped.
+	// repopulate the map Done has just dropped.
 	closed bool
 }
 
-// errRegistryClosed is returned by wallet creation once Done has run. The cache has been
-// dropped and its wallets closed, so a wallet created afterwards would be released by
-// nobody.
+// errRegistryClosed is returned by wallet creation once Done has run. The registered
+// wallets have been dropped and closed, so a wallet created afterwards would be released
+// by nobody.
 var errRegistryClosed = errors.New("wallet registry is closed")
 
 // NewRegistry returns a new registry for the passed parameters.
 // A registry is bound to a given role, and it is persistent.
 func NewRegistry(logger logging.Logger, role idriver.Role, storage idriver.WalletStoreService, walletFactory WalletFactory) *Registry {
 	return &Registry{
-		Logger:        logger,
-		Role:          role,
-		Storage:       storage,
-		WalletFactory: walletFactory,
-		Wallets:       map[string]driver.Wallet{},
+		Logger:            logger,
+		Role:              role,
+		Storage:           storage,
+		WalletFactory:     walletFactory,
+		RegisteredWallets: map[string]driver.Wallet{},
 	}
 }
 
@@ -172,8 +176,8 @@ func (r *Registry) RegisterIdentity(ctx context.Context, config driver.IdentityC
 //
 // The lookup strategy is multi-step:
 // 1. Ask the role provider to MapToIdentity (identity, walletID). If that errors, fall back to toViewIdentity/GetWalletID.
-// 2. Check the in-memory cache (r.Wallets) for wallet entries. Map reads are protected by WalletMu.RLock for a short duration.
-// 3. If cache misses, try to resolve identity -> wallet id using storage/role and finally call role.GetIdentityInfo for any discovered wallet identifiers.
+// 2. Check the registered wallets (r.RegisteredWallets). Map reads are protected by WalletMu.RLock for a short duration.
+// 3. If no wallet is registered, try to resolve identity -> wallet id using storage/role and finally call role.GetIdentityInfo for any discovered wallet identifiers.
 //
 // Note: Lookup only takes short RLocks for map reads and does not hold the lock while calling external services.
 func (r *Registry) Lookup(ctx context.Context, id driver.WalletLookupID) (driver.Wallet, idriver.IdentityInfo, idriver.WalletID, error) {
@@ -190,7 +194,7 @@ func (r *Registry) Lookup(ctx context.Context, id driver.WalletLookupID) (driver
 	r.Logger.DebugfContext(ctx, "looked-up identifier [%s:%s]", ident, logging.Prefix(walletID))
 
 	wID := walletID
-	if w, ok := r.cachedWallet(wID); ok {
+	if w, ok := r.registeredWallet(wID); ok {
 		return w, nil, wID, nil
 	}
 	walletIdentifiers := []string{wID}
@@ -228,7 +232,7 @@ func (r *Registry) Lookup(ctx context.Context, id driver.WalletLookupID) (driver
 }
 
 // resolveLookupFallback recovers from a resolveWalletMapping error using state that does not
-// depend on the failed check: the in-memory Wallets cache, an authoritative Unbound answer from
+// depend on the failed check: the in-memory RegisteredWallets map, an authoritative Unbound answer from
 // the wallet store, or (for a string label) the label itself. A mapping error means the resolver
 // "couldn't check" (e.g. a speculative, storage-touching IsMe probe failed), not that the wallet
 // is "not found" — a not-found resolution returns no error. It returns the recovered identity
@@ -255,14 +259,14 @@ func (r *Registry) resolveLookupFallback(ctx context.Context, id driver.WalletLo
 			// same failure that produced the mapping error) or answered Unbound.
 			candidate := string(passedIdentity)
 			r.WalletMu.RLock()
-			cached := r.Wallets[candidate] != nil
+			registered := r.RegisteredWallets[candidate] != nil
 			r.WalletMu.RUnlock()
 			switch {
-			case cached:
-				// Recoverable directly from the in-memory Wallets cache under the raw
-				// identity string — it does not touch the failed storage, exactly as the
+			case registered:
+				// Recoverable directly from the in-memory RegisteredWallets map under the
+				// raw identity string — it does not touch the failed storage, exactly as the
 				// pre-error-propagation fall-through did.
-				r.Logger.DebugfContext(ctx, "lookup failed, but identity [%s] is cached under [%s]", passedIdentity, candidate)
+				r.Logger.DebugfContext(ctx, "lookup failed, but identity [%s] is registered under [%s]", passedIdentity, candidate)
 				walletID = candidate
 				ident = passedIdentity
 				fail = false
@@ -287,26 +291,26 @@ func (r *Registry) resolveLookupFallback(ctx context.Context, id driver.WalletLo
 				fail = false
 			case !res.authoritative():
 				// A storage failure — or a resolution that never went through
-				// GetWalletID — leaves the binding unknown, and nothing is cached to
-				// recover from. It must not be treated as "not registered", or a
-				// transient blip would fall through to wallet creation and duplicate
-				// state (issue #2063).
+				// GetWalletID — leaves the binding unknown, with nothing in
+				// RegisteredWallets to recover from. It must not be treated as "never
+				// bound", or a transient blip would fall through to wallet creation and
+				// duplicate state (issue #2063).
 				return nil, "", res.abortError(id)
 			}
 		}
 	} else if label, isString := id.(string); isString && len(label) != 0 {
-		// A string label can hit the in-memory Registry.Wallets cache directly,
+		// A string label can hit the in-memory Registry.RegisteredWallets map directly,
 		// without the resolution that just failed. Fall back to the label as the
 		// wallet identifier, exactly as a "not a local member" resolution would
-		// have, and let the cache lookup below decide whether it actually exists.
+		// have, and let the lookup below decide whether it actually exists.
 		//
 		// Note the deliberate asymmetry with the identity path above: if the label
-		// then resolves (from cache or via GetIdentityInfo), this lookup succeeds and
+		// then resolves (from the registry or via GetIdentityInfo), this lookup succeeds and
 		// the mapping error — including an IsMe/storage failure — is intentionally NOT
 		// surfaced. That preserves label lookups across a transient blip rather than
 		// failing every one of them; the mapping error is surfaced only when resolution
 		// also fails, via the joined cause at the terminal return below.
-		r.Logger.DebugfContext(ctx, "lookup failed, retry string label [%s] against the registry cache", label)
+		r.Logger.DebugfContext(ctx, "lookup failed, retry string label [%s] against the registered wallets", label)
 		walletID = label
 		fail = false
 	}
@@ -317,13 +321,13 @@ func (r *Registry) resolveLookupFallback(ctx context.Context, id driver.WalletLo
 	return ident, walletID, nil
 }
 
-// cachedWallet performs a short RLock read of the in-memory wallet cache. Do not hold
-// the returned state across calls to external services.
-func (r *Registry) cachedWallet(wID string) (driver.Wallet, bool) {
+// registeredWallet reads RegisteredWallets under a short RLock. Do not hold the result
+// across calls to external services.
+func (r *Registry) registeredWallet(wID string) (driver.Wallet, bool) {
 	r.WalletMu.RLock()
 	defer r.WalletMu.RUnlock()
 
-	w, ok := r.Wallets[wID]
+	w, ok := r.RegisteredWallets[wID]
 
 	return w, ok
 }
@@ -336,7 +340,7 @@ func (r *Registry) resolveWalletMapping(ctx context.Context, id driver.WalletLoo
 }
 
 // tryPassedIdentityWallet attempts to resolve id as a raw identity (via
-// toViewIdentity) and find its cached wallet, appending the wallet identifier it
+// toViewIdentity) and find its registered wallet, appending the wallet identifier it
 // resolved (if any) onto walletIdentifiers for the final identity-info fallback.
 func (r *Registry) tryPassedIdentityWallet(ctx context.Context, id driver.WalletLookupID, wID string, walletIdentifiers []string) (driver.Wallet, string, bool, []string) {
 	// give it a second chance
@@ -357,7 +361,7 @@ func (r *Registry) tryPassedIdentityWallet(ctx context.Context, id driver.Wallet
 		} else if res.Bound() {
 			r.Logger.DebugfContext(ctx, "no wallet found, there is a wallet for identity [%s]: [%s]", passedIdentity, res.WalletID)
 			// we got a hit
-			if w, found := r.cachedWallet(res.WalletID); found {
+			if w, found := r.registeredWallet(res.WalletID); found {
 				return w, res.WalletID, true, walletIdentifiers
 			}
 			r.Logger.DebugfContext(ctx, "no wallet found, there is a wallet for identity [%s]: [%s] but it has not been recreated yet", passedIdentity, res.WalletID)
@@ -372,7 +376,7 @@ func (r *Registry) tryPassedIdentityWallet(ctx context.Context, id driver.Wallet
 	return nil, "", false, walletIdentifiers
 }
 
-// tryIdentWallet looks up ident's bound wallet ID via storage and returns its cached
+// tryIdentWallet looks up ident's bound wallet ID via storage and returns its registered
 // wallet if present, appending the wallet identifier it resolved (if any) onto
 // walletIdentifiers.
 func (r *Registry) tryIdentWallet(ctx context.Context, ident driver.Identity, walletID string, walletIdentifiers []string) (driver.Wallet, string, bool, []string) {
@@ -389,7 +393,7 @@ func (r *Registry) tryIdentWallet(ctx context.Context, ident driver.Identity, wa
 		// lookup on a transient blip (issue #2063).
 		r.Logger.Warnf("failed to check wallet binding for identity [%s], continuing with mapped wallet [%s]: %v", ident, walletID, res.Err)
 	} else if res.Bound() {
-		if w, found := r.cachedWallet(res.WalletID); found {
+		if w, found := r.registeredWallet(res.WalletID); found {
 			r.Logger.DebugfContext(ctx, "found wallet [%s:%s:%s:%s]", ident, walletID, w.ID(), res.WalletID)
 
 			return w, res.WalletID, true, walletIdentifiers
@@ -427,10 +431,10 @@ func (r *Registry) tryWalletIdentifiers(ctx context.Context, walletIdentifiers [
 // RegisterWallet binds the passed wallet to the passed id
 func (r *Registry) RegisterWallet(ctx context.Context, id string, w driver.Wallet) error {
 	r.Logger.DebugfContext(ctx, "register wallet [%s]", id)
-	// Protect writes to the Wallets map
+	// Protect writes to the RegisteredWallets map
 	r.WalletMu.Lock()
 	defer r.WalletMu.Unlock()
-	r.Wallets[id] = w
+	r.RegisteredWallets[id] = w
 
 	return nil
 }
@@ -541,14 +545,14 @@ func (r *Registry) WalletByID(ctx context.Context, role idriver.IdentityRoleType
 	r.Logger.DebugfContext(ctx, "role [%d] lookup wallet by [%T]", role, id)
 	defer r.Logger.DebugfContext(ctx, "role [%d] lookup wallet by [%T] done", role, id)
 
-	r.Logger.DebugfContext(ctx, "is it in cache?")
+	r.Logger.DebugfContext(ctx, "is it already registered?")
 
-	// First, do a fast-path check of the cache without taking a long lock.
+	// First, do a fast-path check of the registered wallets without taking a long lock.
 	v, ok := id.(string)
 	if ok {
 		r.Logger.DebugfContext(ctx, "role [%d] lookup wallet by string [%s]", role, v)
 		r.WalletMu.RLock()
-		w := r.Wallets[v]
+		w := r.RegisteredWallets[v]
 		r.WalletMu.RUnlock()
 		if w != nil {
 			r.Logger.DebugfContext(ctx, "role [%d] lookup wallet by string [%s], found.", role, v)
@@ -557,7 +561,7 @@ func (r *Registry) WalletByID(ctx context.Context, role idriver.IdentityRoleType
 		}
 	}
 
-	// Not in cache: do the lookup to get identity info and wallet id (no locks held across external calls)
+	// Not registered yet: do the lookup to get identity info and wallet id (no locks held across external calls)
 	// Lookup itself takes short RLocks for map reads. We call Lookup without holding
 	// the global mutex to avoid blocking other operations while doing external lookups.
 	w, idInfo, wID, err := r.Lookup(ctx, id)
@@ -653,7 +657,7 @@ func (r *Registry) createWallet(
 	}
 }
 
-// newWallet builds one wallet and puts it in the cache. It runs inside walletCreationGroup, so
+// newWallet builds one wallet and registers it. It runs inside walletCreationGroup, so
 // at most one goroutine executes it per wallet identifier at a time.
 func (r *Registry) newWallet(
 	ctx context.Context,
@@ -665,7 +669,7 @@ func (r *Registry) newWallet(
 	// it. An entry holding a nil wallet counts as absent, exactly as the fast path in
 	// WalletByID treats it, rather than being handed back as a wallet.
 	r.WalletMu.RLock()
-	existing, closed := r.Wallets[wID], r.closed
+	existing, closed := r.RegisteredWallets[wID], r.closed
 	r.WalletMu.RUnlock()
 	if closed {
 		return nil, errRegistryClosed
@@ -684,8 +688,8 @@ func (r *Registry) newWallet(
 	r.Logger.DebugfContext(ctx, "register wallet [%s:%s] with label [%s]", newWallet.ID(), wID, wID)
 
 	// Only the map write needs the write lock. Done may have run while the wallet was being
-	// built: caching it now would resurrect a cache Done has already dropped and leave this
-	// wallet's resources - for an anonymous owner wallet, a provisioning goroutine - running
+	// built: registering it now would resurrect state Done has already dropped and leave
+	// this wallet's resources - for an anonymous owner wallet, a provisioning goroutine - running
 	// with nothing left to close them. Close it here instead.
 	r.WalletMu.Lock()
 	if r.closed {
@@ -697,7 +701,7 @@ func (r *Registry) newWallet(
 
 		return nil, errRegistryClosed
 	}
-	r.Wallets[wID] = newWallet
+	r.RegisteredWallets[wID] = newWallet
 	r.WalletMu.Unlock()
 
 	return newWallet, nil
@@ -713,19 +717,19 @@ type closer interface {
 }
 
 // Done releases all the resources allocated by this service. Wallets created by
-// this registry that hold releasable resources are closed and the wallet cache is
+// this registry that hold releasable resources are closed and the registered wallets are
 // dropped, so their background goroutines terminate instead of living for the
 // lifetime of the process.
 func (r *Registry) Done() error {
 	r.WalletMu.Lock()
-	// Set before dropping the cache, so a creation that completes after this point sees
-	// the registry as closed and releases the wallet it built instead of caching it.
+	// Set before dropping the map, so a creation that completes after this point sees the
+	// registry as closed and releases the wallet it built instead of registering it.
 	r.closed = true
-	wallets := make([]driver.Wallet, 0, len(r.Wallets))
-	for _, w := range r.Wallets {
+	wallets := make([]driver.Wallet, 0, len(r.RegisteredWallets))
+	for _, w := range r.RegisteredWallets {
 		wallets = append(wallets, w)
 	}
-	r.Wallets = map[string]driver.Wallet{}
+	r.RegisteredWallets = map[string]driver.Wallet{}
 	r.WalletMu.Unlock()
 
 	// Close outside the lock: never hold the registry mutex while calling out.

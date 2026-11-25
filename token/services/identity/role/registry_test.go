@@ -42,7 +42,7 @@ func newRegistryWithFakes() (*role.Registry, *imock.WalletStoreService, *imock.R
 
 // --- tests ---
 
-func TestRegisterWallet_AddsToCache(t *testing.T) {
+func TestRegisterWallet_AddsToRegisteredWallets(t *testing.T) {
 	reg, _, _, _ := newRegistryWithFakes()
 	ctx := t.Context()
 	w := &mock2.Wallet{}
@@ -51,18 +51,18 @@ func TestRegisterWallet_AddsToCache(t *testing.T) {
 
 	reg.WalletMu.RLock()
 	defer reg.WalletMu.RUnlock()
-	req, ok := reg.Wallets["w1"]
+	req, ok := reg.RegisteredWallets["w1"]
 	require.True(t, ok)
 	require.Equal(t, "w1", req.ID())
 }
 
-func TestLookup_ReturnsCachedWalletByWalletID(t *testing.T) {
+func TestLookup_ReturnsRegisteredWalletByWalletID(t *testing.T) {
 	reg, _, role, _ := newRegistryWithFakes()
 	ctx := t.Context()
 	w := &mock2.Wallet{}
 	w.IDReturns("cached")
 	reg.WalletMu.Lock()
-	reg.Wallets["w1"] = w
+	reg.RegisteredWallets["w1"] = w
 	reg.WalletMu.Unlock()
 
 	role.MapToIdentityReturns([]byte("id1"), "w1", nil)
@@ -80,7 +80,7 @@ func TestLookup_FallbackToViewIdentityFound(t *testing.T) {
 	w := &mock2.Wallet{}
 	w.IDReturns("cached2")
 	reg.WalletMu.Lock()
-	reg.Wallets["w2"] = w
+	reg.RegisteredWallets["w2"] = w
 	reg.WalletMu.Unlock()
 
 	role.MapToIdentityReturns(nil, "", errors.New("no mapping"))
@@ -94,14 +94,14 @@ func TestLookup_FallbackToViewIdentityFound(t *testing.T) {
 	require.Equal(t, "cached2", wallet.ID())
 }
 
-func TestLookup_MappingErrorResolvesFromCacheWhenStorageFails(t *testing.T) {
+func TestLookup_MappingErrorResolvesFromRegisteredWalletWhenStorageFails(t *testing.T) {
 	reg, storage, role, _ := newRegistryWithFakes()
 	ctx := t.Context()
 	w := &mock2.Wallet{}
 	w.IDReturns("cached3")
-	// wallet is resident in the in-memory cache under the raw identity string
+	// wallet is resident in RegisteredWallets under the raw identity string
 	reg.WalletMu.Lock()
-	reg.Wallets["id4"] = w
+	reg.RegisteredWallets["id4"] = w
 	reg.WalletMu.Unlock()
 
 	// The mapping probe fails (e.g. a storage-touching IsMe error is now propagated)
@@ -109,7 +109,7 @@ func TestLookup_MappingErrorResolvesFromCacheWhenStorageFails(t *testing.T) {
 	// The GetWalletID fallback reads the same failed storage, so it too fails to resolve
 	storage.GetWalletIDReturns("", errors.New("storage unavailable"))
 
-	// The lookup must still be satisfied straight from the in-memory cache
+	// The lookup must still be satisfied straight from RegisteredWallets
 	wallet, idInfo, wID, err := reg.Lookup(ctx, []byte("id4"))
 	require.NoError(t, err)
 	require.Equal(t, "id4", wID)
@@ -117,11 +117,11 @@ func TestLookup_MappingErrorResolvesFromCacheWhenStorageFails(t *testing.T) {
 	require.Equal(t, "cached3", wallet.ID())
 }
 
-func TestLookup_MappingErrorSurfacedWhenNothingCached(t *testing.T) {
+func TestLookup_MappingErrorSurfacedWhenNothingRegistered(t *testing.T) {
 	reg, storage, role, _ := newRegistryWithFakes()
 	ctx := t.Context()
 
-	// Mapping fails and the storage fallback fails together, with nothing in the cache
+	// Mapping fails and the storage fallback fails together, with no registered wallet
 	role.MapToIdentityReturns(nil, "", errors.New("failed checking if identity is me"))
 	storage.GetWalletIDReturns("", errors.New("storage unavailable"))
 
@@ -311,7 +311,7 @@ func TestLookup_StorageErrorDoesNotFallThrough(t *testing.T) {
 
 // TestLookup_MappedWalletIDSurvivesProbeFailure is the complement of the #2063
 // guard: once MapToIdentity has *succeeded*, its wallet id is an authoritative
-// candidate and the later identity->wallet probes are only a cache-reuse
+// candidate and the later identity->wallet probes are only a wallet-reuse
 // optimization. A transient storage error at those probes must NOT abort Lookup —
 // it must fall through to the mapped wallet id, so a storage blip never denies a
 // caller the wallet the role already resolved.
@@ -319,7 +319,7 @@ func TestLookup_MappedWalletIDSurvivesProbeFailure(t *testing.T) {
 	reg, storage, role, _ := newRegistryWithFakes()
 	ctx := t.Context()
 
-	// mapping resolves to a wallet id that is not in the cache, so Lookup falls
+	// mapping resolves to a wallet id that is not registered, so Lookup falls
 	// through to the identity->wallet storage probes, which fail transiently.
 	role.MapToIdentityReturns([]byte("id-with-binding"), "w-not-cached", nil)
 	storage.GetWalletIDReturns("", errors.New("transient DB blip"))
@@ -353,14 +353,14 @@ func TestWalletByID_StorageErrorDoesNotCreateDuplicate(t *testing.T) {
 
 // TestWalletByID_CreatesWalletForMappedIDWhenProbeFails is the complement of the
 // #2063 guard on the WalletByID path: when MapToIdentity has *succeeded*, the later
-// identity->wallet probes are only a cache-reuse optimization, so a transient
+// identity->wallet probes are only a wallet-reuse optimization, so a transient
 // storage error there must not abort. WalletByID must fall through and create the
 // wallet under the *authoritative mapped id* — not a duplicate, and not nothing.
 func TestWalletByID_CreatesWalletForMappedIDWhenProbeFails(t *testing.T) {
 	reg, storage, role, wf := newRegistryWithFakes()
 	ctx := t.Context()
 
-	// The role resolves the identity to a wallet id that is not yet cached, so
+	// The role resolves the identity to a wallet id that is not yet registered, so
 	// WalletByID falls through to the identity->wallet storage probes, which fail
 	// transiently. Since the mapped id is authoritative, the failure is logged and
 	// the wallet is created for that mapped id.
@@ -492,7 +492,7 @@ func TestWalletByID_ConcurrentCreation(t *testing.T) {
 	reg.WalletMu.RLock()
 	defer reg.WalletMu.RUnlock()
 	count := 0
-	for k := range reg.Wallets {
+	for k := range reg.RegisteredWallets {
 		if k == "wc" {
 			count++
 		}
@@ -616,18 +616,18 @@ func TestLookup_WithUnknownType_Error(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestLookup_StringLabel_MappingError_RecoversFromCache verifies that when
+// TestLookup_StringLabel_MappingError_RecoversFromRegistry verifies that when
 // MapToIdentity fails on a string label — a "couldn't check" error, e.g. a
 // storage-touching IsMe probe failing — Lookup still resolves the wallet from
-// the in-memory Registry.Wallets cache instead of erroring out, since that
+// the in-memory Registry.RegisteredWallets map instead of erroring out, since that
 // lookup never needed storage in the first place.
-func TestLookup_StringLabel_MappingError_RecoversFromCache(t *testing.T) {
+func TestLookup_StringLabel_MappingError_RecoversFromRegistry(t *testing.T) {
 	reg, _, r, _ := newRegistryWithFakes()
 	ctx := t.Context()
 	w := &mock2.Wallet{}
 	w.IDReturns("alice")
 	reg.WalletMu.Lock()
-	reg.Wallets["alice"] = w
+	reg.RegisteredWallets["alice"] = w
 	reg.WalletMu.Unlock()
 
 	// the resolver "couldn't check": mapping the label fails with a transient error
@@ -744,7 +744,7 @@ func TestDoneClosesRegisteredWallets(t *testing.T) {
 
 	reg.WalletMu.RLock()
 	defer reg.WalletMu.RUnlock()
-	assert.Empty(t, reg.Wallets, "the wallet cache was not dropped")
+	assert.Empty(t, reg.RegisteredWallets, "the registered wallets were not dropped")
 }
 
 // TestWalletByID_CancelledCallerDoesNotFailOthers checks that a caller abandoning its
@@ -876,11 +876,11 @@ func TestWalletByID_CancelledCallerStopsWaiting(t *testing.T) {
 	}
 }
 
-// TestWalletByID_NilCachedWalletIsRebuilt checks that an entry holding a nil wallet is
+// TestWalletByID_NilRegisteredWalletIsRebuilt checks that an entry holding a nil wallet is
 // treated as absent, the way the fast path of WalletByID already treats it. RegisterWallet
 // accepts a nil wallet, so such an entry is reachable, and handing it back as a wallet
 // panics the caller instead of returning it a wallet it can use.
-func TestWalletByID_NilCachedWalletIsRebuilt(t *testing.T) {
+func TestWalletByID_NilRegisteredWalletIsRebuilt(t *testing.T) {
 	reg, _, r, wf := newRegistryWithFakes()
 	ctx := t.Context()
 	require.NoError(t, reg.RegisterWallet(ctx, "wnil", nil))
@@ -899,7 +899,7 @@ func TestWalletByID_NilCachedWalletIsRebuilt(t *testing.T) {
 }
 
 // TestWalletByID_FactoryReturningNoWalletIsAnError checks that a factory returning
-// (nil, nil) is reported rather than cached and handed on as a wallet.
+// (nil, nil) is reported rather than registered and handed on as a wallet.
 func TestWalletByID_FactoryReturningNoWalletIsAnError(t *testing.T) {
 	reg, _, r, wf := newRegistryWithFakes()
 	ctx := t.Context()
@@ -913,12 +913,12 @@ func TestWalletByID_FactoryReturningNoWalletIsAnError(t *testing.T) {
 
 	reg.WalletMu.RLock()
 	defer reg.WalletMu.RUnlock()
-	assert.Empty(t, reg.Wallets, "a missing wallet was cached")
+	assert.Empty(t, reg.RegisteredWallets, "a missing wallet was registered")
 }
 
 // TestWalletByID_CreationDuringDoneReleasesTheWallet checks the window opened by building
-// wallets outside WalletMu: Done can drop the cache while a creation is in flight. The
-// wallet that creation produces must not land in the cache Done has just cleared, because
+// wallets outside WalletMu: Done can drop the map while a creation is in flight. The
+// wallet that creation produces must not land in the map Done has just cleared, because
 // nothing would ever close it - and for an anonymous owner wallet that leaves a recipient
 // data provisioning goroutine running for the lifetime of the process, which is exactly
 // what Done exists to prevent.
@@ -968,5 +968,5 @@ func TestWalletByID_CreationDuringDoneReleasesTheWallet(t *testing.T) {
 
 	reg.WalletMu.RLock()
 	defer reg.WalletMu.RUnlock()
-	assert.Empty(t, reg.Wallets, "the wallet cache was repopulated after Done")
+	assert.Empty(t, reg.RegisteredWallets, "the registered wallets were repopulated after Done")
 }
