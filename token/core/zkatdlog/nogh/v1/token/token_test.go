@@ -54,7 +54,7 @@ func TestToken(t *testing.T) {
 	require.NoError(t, err)
 
 	tok2 := &Token{}
-	err = tok2.Deserialize(raw)
+	err = tok2.Deserialize(raw, math.BN254)
 	require.NoError(t, err)
 	assert.Equal(t, tok.Owner, tok2.Owner)
 	assert.True(t, tok.Data.Equals(tok2.Data))
@@ -139,7 +139,7 @@ func TestMetadata(t *testing.T) {
 	require.NoError(t, err)
 
 	meta2 := &Metadata{}
-	err = meta2.Deserialize(raw)
+	err = meta2.Deserialize(raw, math.BN254)
 	require.NoError(t, err)
 	assert.Equal(t, meta.Type, meta2.Type)
 	assert.True(t, meta.Value.Equals(meta2.Value))
@@ -421,13 +421,13 @@ func TestToken_DeserializeExtra(t *testing.T) {
 	tok := &Token{}
 
 	// failed to unmarshal typed token
-	err := tok.Deserialize([]byte("invalid"))
+	err := tok.Deserialize([]byte("invalid"), math.BN254)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed deserializing token")
 
 	// invalid token type
 	raw, _ := tokens.WrapWithType(3, []byte("data"))
-	err = tok.Deserialize(raw)
+	err = tok.Deserialize(raw, math.BN254)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid token type [3]")
 
@@ -437,7 +437,7 @@ func TestToken_DeserializeExtra(t *testing.T) {
 		Token: []byte("invalid proto"),
 	}
 	raw, _ = typed.Bytes()
-	err = tok.Deserialize(raw)
+	err = tok.Deserialize(raw, math.BN254)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed unmarshalling token")
 }
@@ -446,7 +446,7 @@ func TestMetadata_DeserializeExtra(t *testing.T) {
 	m := &Metadata{}
 
 	// failed to unmarshal typed token
-	err := m.Deserialize([]byte("invalid"))
+	err := m.Deserialize([]byte("invalid"), math.BN254)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed deserializing metadata")
 
@@ -456,7 +456,7 @@ func TestMetadata_DeserializeExtra(t *testing.T) {
 		Metadata: []byte("invalid proto"),
 	}
 	raw, _ := typed.Bytes()
-	err = m.Deserialize(raw)
+	err = m.Deserialize(raw, math.BN254)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed unmarshalling metadata")
 
@@ -477,7 +477,7 @@ func TestMetadata_DeserializeExtra(t *testing.T) {
 	metaProto.Value.Raw = []byte("invalid")
 	rawProto, _ := proto.Marshal(metaProto)
 	rawTyped, _ := comm.WrapMetadataWithType(rawProto)
-	err = m.Deserialize(rawTyped)
+	err = m.Deserialize(rawTyped, math.BN254)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to deserialize metadata")
 
@@ -486,7 +486,7 @@ func TestMetadata_DeserializeExtra(t *testing.T) {
 	metaProto.BlindingFactor.Raw = []byte("invalid")
 	rawProto, _ = proto.Marshal(metaProto)
 	rawTyped, _ = comm.WrapMetadataWithType(rawProto)
-	err = m.Deserialize(rawTyped)
+	err = m.Deserialize(rawTyped, math.BN254)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to deserialize metadata")
 }
@@ -770,21 +770,21 @@ func TestTokensService_getOutput_Extra(t *testing.T) {
 	assert.Contains(t, err.Error(), "data is invalid in output")
 	assert.Contains(t, err.Error(), "element is nil")
 
-	// data is invalid (wrong curve)
+	// data is invalid (wrong curve): rejected at decode time
 	tok = &Token{Owner: []byte("owner"), Data: math.Curves[math.BLS12_381_GURVY].GenG1}
 	raw, _ = tok.Serialize()
 	_, err = s.getOutput(context.Background(), raw, false)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "data is invalid in output")
-	assert.Contains(t, err.Error(), "element curve must equal curve ID")
+	assert.Contains(t, err.Error(), "failed to deserialize token")
+	assert.Contains(t, err.Error(), "invalid G1: expected curve")
 
-	// data is infinity
+	// data is infinity: rejected at decode time
 	tok = &Token{Owner: []byte("owner"), Data: c.NewG1()}
 	raw, _ = tok.Serialize()
 	_, err = s.getOutput(context.Background(), raw, false)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "data is invalid in output")
-	assert.Contains(t, err.Error(), "element is infinity")
+	assert.Contains(t, err.Error(), "failed to deserialize token")
+	assert.Contains(t, err.Error(), "invalid G1: point at infinity")
 }
 
 func TestTokensService_Deobfuscate_Extra(t *testing.T) {
@@ -945,4 +945,32 @@ func TestTokensService_Recipients_DeserializeError(t *testing.T) {
 	_, err := s.Recipients([]byte("invalid"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to deserialize token")
+}
+
+// TestTokenDeserializeRejectsWrongCurve checks that a commitment on another curve is rejected at decode time.
+func TestTokenDeserializeRejectsWrongCurve(t *testing.T) {
+	c := math.Curves[math.BN254]
+	raw, err := (&Token{Owner: []byte("owner"), Data: c.GenG1}).Serialize()
+	require.NoError(t, err)
+
+	require.NoError(t, (&Token{}).Deserialize(raw, math.BN254))
+	err = (&Token{}).Deserialize(raw, math.FP256BN_AMCL)
+	require.ErrorContains(t, err, "invalid G1: expected curve")
+}
+
+// TestMetadataDeserializeRejectsWrongCurve checks that a value or blinding factor on another curve is rejected at decode time.
+func TestMetadataDeserializeRejectsWrongCurve(t *testing.T) {
+	local := math.Curves[math.BN254]
+	foreign := math.Curves[math.FP256BN_AMCL]
+	for name, meta := range map[string]*Metadata{
+		"value":           {Type: "COIN", Value: foreign.NewZrFromInt(1), BlindingFactor: local.NewZrFromInt(2)},
+		"blinding factor": {Type: "COIN", Value: local.NewZrFromInt(1), BlindingFactor: foreign.NewZrFromInt(2)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw, err := meta.Serialize()
+			require.NoError(t, err)
+			err = (&Metadata{}).Deserialize(raw, math.BN254)
+			require.ErrorContains(t, err, "invalid Zr: expected curve")
+		})
+	}
 }

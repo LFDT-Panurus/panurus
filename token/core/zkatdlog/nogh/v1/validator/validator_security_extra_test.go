@@ -438,10 +438,10 @@ func TestSecurityZKProofCrossActionSwap(t *testing.T) {
 		"Step E: swap request must have at least 2 transfer actions")
 
 	action1 := &transfer.Action{}
-	require.NoError(t, action1.Deserialize(transfers[0]))
+	require.NoError(t, action1.Deserialize(transfers[0], testUseCaseExtra.CurveID))
 
 	action2 := &transfer.Action{}
-	require.NoError(t, action2.Deserialize(transfers[1]))
+	require.NoError(t, action2.Deserialize(transfers[1], testUseCaseExtra.CurveID))
 
 	// Swap the ZK proofs: action1 carries action2's proof and vice versa.
 	proof1, proof2 := action1.Proof, action2.Proof

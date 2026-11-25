@@ -91,7 +91,7 @@ func NewTokensService(logger logging.Logger, publicParametersManager common.Publ
 // Recipients returns the identities of the token recipients.
 func (s *TokensService) Recipients(output driver.TokenOutput) ([]driver.Identity, error) {
 	tok := &Token{}
-	if err := tok.Deserialize(output); err != nil {
+	if err := tok.Deserialize(output, s.PublicParametersManager.PublicParams().Curve); err != nil {
 		return nil, errors.Wrap(err, "failed to deserialize token")
 	}
 	recipients, err := s.IdentityDeserializer.Recipients(tok.Owner)
@@ -224,7 +224,7 @@ func (s *TokensService) deserializeTokenWithOutputTokenFormat(ctx context.Contex
 
 	// get metadata
 	metadata := &Metadata{}
-	err = metadata.Deserialize(metadataRaw)
+	err = metadata.Deserialize(metadataRaw, s.PublicParametersManager.PublicParams().Curve)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "failed to deserialize token metadata")
 	}
@@ -240,13 +240,13 @@ func (s *TokensService) deserializeCommToken(ctx context.Context, outputRaw []by
 		return nil, nil, nil, errors.Wrapf(err, "failed getting token output")
 	}
 
+	pp := s.PublicParametersManager.PublicParams()
 	// get metadata
 	metadata := &Metadata{}
-	err = metadata.Deserialize(metadataRaw)
+	err = metadata.Deserialize(metadataRaw, pp.Curve)
 	if err != nil {
 		return nil, nil, nil, errors.Wrapf(err, "failed to deserialize token metadata [%d][%v]", len(metadataRaw), metadataRaw)
 	}
-	pp := s.PublicParametersManager.PublicParams()
 
 	tok, err := output.ToClear(metadata, pp)
 	if err != nil {
@@ -259,7 +259,7 @@ func (s *TokensService) deserializeCommToken(ctx context.Context, outputRaw []by
 // getOutput unmarshals and validates the token output from raw bytes.
 func (s *TokensService) getOutput(ctx context.Context, outputRaw []byte, checkOwner bool) (*Token, error) {
 	output := &Token{}
-	if err := output.Deserialize(outputRaw); err != nil {
+	if err := output.Deserialize(outputRaw, s.PublicParametersManager.PublicParams().Curve); err != nil {
 		return nil, errors.Wrap(err, "failed to deserialize token")
 	}
 	if checkOwner && len(output.Owner) == 0 {

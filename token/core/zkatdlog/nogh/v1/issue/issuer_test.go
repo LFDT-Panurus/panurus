@@ -145,7 +145,7 @@ func BenchmarkProofVerificationIssuer(b *testing.B) {
 				e := env.IssuerEnvs[i%len(env.IssuerEnvs)]
 				// deserialize action
 				action := &issue2.Action{}
-				require.NoError(b, action.Deserialize(e.actionRaw))
+				require.NoError(b, action.Deserialize(e.actionRaw, e.pp.Curve))
 
 				// verify
 				coms := make([]*math.G1, len(action.Outputs))

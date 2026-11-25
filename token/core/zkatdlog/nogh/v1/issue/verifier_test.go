@@ -44,7 +44,7 @@ func TestBulletProofVerifierRejectsInfinityInRangeCorrectnessProof(t *testing.T)
 	require.NoError(t, err)
 
 	bp := &issue.BulletProof{}
-	require.NoError(t, bp.Deserialize(proofBytes))
+	require.NoError(t, bp.Deserialize(proofBytes, pp.Curve))
 
 	// Substitute the point at infinity for the first IPA.L element of the
 	// first range proof.
@@ -90,7 +90,8 @@ func TestBulletProofVerifierRejectsTruncatedRangeCorrectnessProof(t *testing.T) 
 	require.NoError(t, err)
 
 	bp := &issue.BulletProof{}
-	require.NoError(t, bp.Deserialize(proofBytes))
+	require.ErrorContains(t, bp.Deserialize(proofBytes, math.FP256BN_AMCL), "element curve must equal curve ID")
+	require.NoError(t, bp.Deserialize(proofBytes, pp.Curve))
 
 	// Truncate: serialize the first range proof's IPA with only Left/Right,
 	// dropping the L/R commitment arrays.

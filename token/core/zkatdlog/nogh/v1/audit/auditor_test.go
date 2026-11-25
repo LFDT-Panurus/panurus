@@ -1141,3 +1141,28 @@ func buildAuditTokensFromInputs(t *testing.T, metadata *driver.TransferMetadata,
 
 	return auditTokens
 }
+
+// TestAuditor_CurveChecks checks that the auditor fails closed without public parameters and rejects
+// actions whose elements are on another curve at decode time.
+func TestAuditor_CurveChecks(t *testing.T) {
+	t.Run("nil public params", func(t *testing.T) {
+		_, _, err := (&audit.ActionDeserializer{}).DeserializeActions(&driver.TokenRequest{})
+		require.ErrorContains(t, err, "public parameters not set")
+	})
+
+	t.Run("issue output on another curve", func(t *testing.T) {
+		_, pp, auditor := setupAuditorTest(t)
+		ia, meta := createIssue(t, pp)
+		ia.Outputs[0].Data = math.Curves[math.BLS12_381_GURVY].GenG1
+		raw, err := ia.Serialize()
+		require.NoError(t, err)
+		err = auditor.Check(
+			t.Context(),
+			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: raw}}},
+			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: meta}}},
+			"1",
+			map[string]*token3.Token{},
+		)
+		require.ErrorContains(t, err, "invalid G1: expected curve")
+	})
+}

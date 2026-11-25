@@ -352,7 +352,7 @@ func (s *TransferService) VerifyTransfer(ctx context.Context, transferAction dri
 			continue
 		}
 		metadata := &token.Metadata{}
-		if err := metadata.Deserialize(outputMetadata[i].OutputMetadata); err != nil {
+		if err := metadata.Deserialize(outputMetadata[i].OutputMetadata, pp.Curve); err != nil {
 			return errors.Wrap(err, "failed unmarshalling metadata")
 		}
 		if err := metadata.Validate(false); err != nil {
@@ -385,7 +385,7 @@ func (s *TransferService) VerifyTransfer(ctx context.Context, transferAction dri
 // It returns an error if the un-marshalling fails.
 func (s *TransferService) DeserializeTransferAction(raw []byte) (driver.TransferAction, error) {
 	transferAction := &transfer.Action{}
-	err := transferAction.Deserialize(raw)
+	err := transferAction.Deserialize(raw, s.PublicParametersManager.PublicParams().Curve)
 	if err != nil {
 		return nil, err
 	}

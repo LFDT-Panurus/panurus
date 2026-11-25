@@ -30,13 +30,19 @@ func (p *BulletProof) Serialize() ([]byte, error) {
 	return asn1.Marshal[asn1.Serializer](p.SameType, p.RangeCorrectness)
 }
 
-// Deserialize unmarshals the BulletProof from its byte representation.
-func (p *BulletProof) Deserialize(bytes []byte) error {
+// Deserialize unmarshals the BulletProof from its byte representation and validates it: every element must be non-nil and on curve.
+func (p *BulletProof) Deserialize(bytes []byte, curve math.CurveID) error {
 	p.SameType = &SameType{}
 	p.RangeCorrectness = &bulletproof.RangeCorrectness{}
 
 	if err := asn1.Unmarshal[asn1.Serializer](bytes, p.SameType, p.RangeCorrectness); err != nil {
 		return errors.Join(ErrDeserializeProofFailed, err)
+	}
+	if err := p.SameType.Validate(curve); err != nil {
+		return errors.Join(ErrInvalidIssueProof, err)
+	}
+	if err := p.RangeCorrectness.Validate(curve); err != nil {
+		return errors.Join(ErrInvalidIssueProof, err)
 	}
 
 	return nil

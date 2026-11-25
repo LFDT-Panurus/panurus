@@ -225,7 +225,7 @@ func BenchmarkVerificationSenderProof(b *testing.B) {
 		func(ctx context.Context, env *benchmarkSenderEnv) error {
 			// deserialize action
 			ta := &transfer.Action{}
-			if err := ta.Deserialize(env.SenderEnvs[0].transferRaw); err != nil {
+			if err := ta.Deserialize(env.SenderEnvs[0].transferRaw, env.SenderEnvs[0].sender.PublicParams.Curve); err != nil {
 				return err
 			}
 			inputTokens := make([]*math.G1, len(ta.Inputs))
@@ -264,7 +264,7 @@ func BenchmarkVerificationParallelSenderProof(b *testing.B) {
 		func(ctx context.Context, env *benchmarkSenderEnv) error {
 			// deserialize action
 			ta := &transfer.Action{}
-			if err := ta.Deserialize(env.SenderEnvs[0].transferRaw); err != nil {
+			if err := ta.Deserialize(env.SenderEnvs[0].transferRaw, env.SenderEnvs[0].sender.PublicParams.Curve); err != nil {
 				return err
 			}
 			inputTokens := make([]*math.G1, len(ta.Inputs))
@@ -303,7 +303,7 @@ func TestParallelBenchmarkVerificationSenderProof(t *testing.T) {
 		func(ctx context.Context, env *benchmarkSenderEnv) error {
 			// deserialize action
 			ta := &transfer.Action{}
-			if err := ta.Deserialize(env.SenderEnvs[0].transferRaw); err != nil {
+			if err := ta.Deserialize(env.SenderEnvs[0].transferRaw, env.SenderEnvs[0].sender.PublicParams.Curve); err != nil {
 				return err
 			}
 			inputTokens := make([]*math.G1, len(ta.Inputs))

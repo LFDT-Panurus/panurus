@@ -17,7 +17,6 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	protosv1 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1"
 	"github.com/LFDT-Panurus/panurus/token/services/utils/protos"
-	"github.com/LFDT-Panurus/panurus/token/services/utils/slices"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
@@ -81,7 +80,8 @@ func (a *ActionInput) ToProtos() (*actions.TransferActionInput, error) {
 }
 
 // FromProtos populates the ActionInput from its protobuf representation.
-func (a *ActionInput) FromProtos(input *actions.TransferActionInput) error {
+// It rejects elements that are not on curve.
+func (a *ActionInput) FromProtos(input *actions.TransferActionInput, curve math.CurveID) error {
 	if input.TokenId != nil {
 		a.ID = &token2.ID{
 			TxId:  input.TokenId.TxId,
@@ -89,7 +89,7 @@ func (a *ActionInput) FromProtos(input *actions.TransferActionInput) error {
 		}
 	}
 	if input.Input != nil {
-		data, err := utils.FromG1Proto(input.Input.Data)
+		data, err := utils.FromG1Proto(input.Input.Data, curve)
 		if err != nil {
 			return err
 		}
@@ -99,7 +99,7 @@ func (a *ActionInput) FromProtos(input *actions.TransferActionInput) error {
 		}
 	}
 	if input.UpgradeWitness != nil {
-		blindingFactor, err := utils.FromZrProto(input.UpgradeWitness.BlindingFactor)
+		blindingFactor, err := utils.FromZrProto(input.UpgradeWitness.BlindingFactor, curve)
 		if err != nil {
 			return err
 		}
@@ -191,10 +191,10 @@ func NewAction(
 	}, nil
 }
 
-// NewActionFromProtos creates a new action from protos
-func NewActionFromProtos(raw []byte) (*Action, error) {
+// NewActionFromProtos creates a new action from protos, rejecting elements not on curve.
+func NewActionFromProtos(raw []byte, curve math.CurveID) (*Action, error) {
 	action := &Action{}
-	err := action.Deserialize(raw)
+	err := action.Deserialize(raw, curve)
 	if err != nil {
 		return nil, err
 	}
@@ -490,8 +490,9 @@ func (t *Action) Serialize() ([]byte, error) {
 	return proto.Marshal(action)
 }
 
-// Deserialize un-marshals a TransferAction from bytes
-func (t *Action) Deserialize(raw []byte) error {
+// Deserialize un-marshals a TransferAction from bytes.
+// It rejects elements that are not on curve.
+func (t *Action) Deserialize(raw []byte, curve math.CurveID) error {
 	action := &actions.TransferAction{}
 	err := proto.Unmarshal(raw, action)
 	if err != nil {
@@ -522,9 +523,14 @@ func (t *Action) Deserialize(raw []byte) error {
 
 	// inputs
 	t.Inputs = make([]*ActionInput, len(action.Inputs))
-	t.Inputs = slices.GenericSliceOfPointers[ActionInput](len(action.Inputs))
-	if err := protos.FromProtosSlice(action.Inputs, t.Inputs); err != nil {
-		return errors.Wrap(err, "failed unmarshalling inputs")
+	for i, in := range action.Inputs {
+		if in == nil {
+			continue
+		}
+		t.Inputs[i] = &ActionInput{}
+		if err := t.Inputs[i].FromProtos(in, curve); err != nil {
+			return errors.Wrap(err, "failed unmarshalling inputs")
+		}
 	}
 
 	// outputs
@@ -536,7 +542,7 @@ func (t *Action) Deserialize(raw []byte) error {
 		if output.Token == nil {
 			return errors.Errorf("invalid transfer action: token of output at index [%d] is nil", j)
 		}
-		data, err := utils.FromG1Proto(output.Token.Data)
+		data, err := utils.FromG1Proto(output.Token.Data, curve)
 		if err != nil {
 			return errors.Wrapf(err, "failed to deserialize output")
 		}

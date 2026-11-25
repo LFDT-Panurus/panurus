@@ -98,15 +98,21 @@ type ValidateTransferAuditFunc = common.ValidateTransferAuditFunc[*v1.PublicPara
 type AuditContext = common.AuditContext[*v1.PublicParams, *issue.Action, *transfer.Action, driver.Deserializer]
 
 // ActionDeserializer deserializes zkatdlog actions.
-type ActionDeserializer struct{}
+type ActionDeserializer struct {
+	// PublicParams provides the curve every decoded element must belong to.
+	PublicParams *v1.PublicParams
+}
 
 // DeserializeActions deserializes issue and transfer actions from a token request.
 func (a *ActionDeserializer) DeserializeActions(tr *driver.TokenRequest) ([]*issue.Action, []*transfer.Action, error) {
+	if a.PublicParams == nil {
+		return nil, nil, errors.New("public parameters not set")
+	}
 	issues := tr.GetIssues()
 	issueActions := make([]*issue.Action, len(issues))
 	for i := range issues {
 		ia := &issue.Action{}
-		if err := ia.Deserialize(issues[i]); err != nil {
+		if err := ia.Deserialize(issues[i], a.PublicParams.Curve); err != nil {
 			return nil, nil, err
 		}
 		issueActions[i] = ia
@@ -116,7 +122,7 @@ func (a *ActionDeserializer) DeserializeActions(tr *driver.TokenRequest) ([]*iss
 	transferActions := make([]*transfer.Action, len(transfers))
 	for i := range transfers {
 		ta := &transfer.Action{}
-		if err := ta.Deserialize(transfers[i]); err != nil {
+		if err := ta.Deserialize(transfers[i], a.PublicParams.Curve); err != nil {
 			return nil, nil, err
 		}
 		transferActions[i] = ta
@@ -131,6 +137,7 @@ type Auditor = common.Auditor[*v1.PublicParams, *issue.Action, *transfer.Action,
 // NewAuditor creates a new Auditor for zkatdlog validation.
 func NewAuditor(logger logging.Logger, tracer trace.Tracer, infoMatcher InfoMatcher, pp []*math.G1, c *math.Curve, precision uint64, issuers []driver.Identity) *Auditor {
 	publicParams := &v1.PublicParams{
+		Curve:              c.ID(),
 		PedersenGenerators: pp,
 		QuantityPrecision:  precision,
 		IssuerIDs:          issuers,
@@ -149,7 +156,7 @@ func NewAuditor(logger logging.Logger, tracer trace.Tracer, infoMatcher InfoMatc
 		tracer,
 		publicParams,
 		nil, // deserializer not needed for zkatdlog auditor
-		&ActionDeserializer{},
+		&ActionDeserializer{PublicParams: publicParams},
 		issueValidators,
 		transferValidators,
 	)
@@ -287,7 +294,7 @@ func TransferAuditValidate(infoMatcher InfoMatcher, pedersenParams []*math.G1, c
 		// Independent value-conservation cross-check (defense-in-depth vs. the transfer proof's
 		// TypeAndSumVerifier): the auditor has already opened and verified both the input and the
 		// output values, so it can confirm the sums balance from its own data.
-		if err := validateTransferValueConservation(metadata, auditCtx.AuditTokens, auditCtx.PP.Precision()); err != nil {
+		if err := validateTransferValueConservation(metadata, auditCtx.AuditTokens, auditCtx.PP.Precision(), curve.ID()); err != nil {
 			return errors.Wrapf(err, "value conservation check failed for transfer action")
 		}
 
@@ -320,12 +327,13 @@ func validateTransferValueConservation(
 	metadata *driver.TransferMetadata,
 	auditTokens map[string]*token2.Token,
 	precision uint64,
+	curve math.CurveID,
 ) error {
 	inputSum, err := sumTransferInputValues(metadata.Inputs, auditTokens, precision)
 	if err != nil {
 		return err
 	}
-	outputSum, err := sumTransferOutputValues(metadata.Outputs)
+	outputSum, err := sumTransferOutputValues(metadata.Outputs, curve)
 	if err != nil {
 		return err
 	}
@@ -368,14 +376,14 @@ func sumTransferInputValues(
 
 // sumTransferOutputValues sums the output values from the (already commitment-verified) output
 // metadata openings.
-func sumTransferOutputValues(outputs []*driver.TransferOutputMetadata) (*big.Int, error) {
+func sumTransferOutputValues(outputs []*driver.TransferOutputMetadata, curve math.CurveID) (*big.Int, error) {
 	outputSum := big.NewInt(0)
 	for i, out := range outputs {
 		if out == nil {
 			return nil, errors.Errorf("transfer output metadata at index [%d] is nil", i)
 		}
 		tm := &token.Metadata{}
-		if err := tm.Deserialize(out.OutputMetadata); err != nil {
+		if err := tm.Deserialize(out.OutputMetadata, curve); err != nil {
 			return nil, errors.Wrapf(err, "failed to deserialize output metadata at index [%d]", i)
 		}
 		if tm.Value == nil {
@@ -453,7 +461,7 @@ func validateIssueOutputs(ctx context.Context, infoMatcher InfoMatcher, pedersen
 
 		// Deserialize token metadata
 		tokenMetadata := &token.Metadata{}
-		if err := tokenMetadata.Deserialize(outputMetadata.OutputMetadata); err != nil {
+		if err := tokenMetadata.Deserialize(outputMetadata.OutputMetadata, curve.ID()); err != nil {
 			return errors.Wrapf(err, "failed to deserialize token metadata at index [%d]", i)
 		}
 		if err := tokenMetadata.Validate(true); err != nil {
@@ -599,7 +607,7 @@ func validateTransferOutput(ctx context.Context, infoMatcher InfoMatcher, peders
 
 	// Deserialize token metadata
 	tokenMetadata := &token.Metadata{}
-	if err := tokenMetadata.Deserialize(outputMetadata.OutputMetadata); err != nil {
+	if err := tokenMetadata.Deserialize(outputMetadata.OutputMetadata, curve.ID()); err != nil {
 		return errors.Wrapf(err, "failed to deserialize token metadata at index [%d]", i)
 	}
 	if err := tokenMetadata.Validate(false); err != nil {

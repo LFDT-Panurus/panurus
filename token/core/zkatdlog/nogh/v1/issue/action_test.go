@@ -29,7 +29,7 @@ func TestSerialization(t *testing.T) {
 	require.NoError(t, err, "failed to serialize a new transfer action")
 
 	action2 := &Action{}
-	err = action2.Deserialize(raw)
+	err = action2.Deserialize(raw, math.BN254)
 	require.NoError(t, err, "failed to deserialize a new transfer action")
 	assert.Equal(t, action, action2, "deserialized action is not equal to the original one")
 
@@ -37,20 +37,20 @@ func TestSerialization(t *testing.T) {
 	require.NoError(t, err, "failed to serialize a new transfer action")
 
 	action3 := &Action{}
-	err = action3.Deserialize(raw2)
+	err = action3.Deserialize(raw2, math.BN254)
 	require.NoError(t, err, "failed to deserialize a new transfer action")
 	assert.Equal(t, action2, action3, "deserialized action is not equal to the original one")
 }
 
 func TestDeserializeError(t *testing.T) {
 	action := &Action{}
-	err := action.Deserialize([]byte("invalid"))
+	err := action.Deserialize([]byte("invalid"), math.BN254)
 	require.ErrorIs(t, err, ErrDeserializeIssueActionFailed)
 
 	// Invalid version
 	raw, err := proto.Marshal(&actions.IssueAction{Version: ProtocolV1 + 1})
 	require.NoError(t, err)
-	err = action.Deserialize(raw)
+	err = action.Deserialize(raw, math.BN254)
 	require.ErrorIs(t, err, ErrInvalidProtocolVersion)
 }
 
@@ -276,4 +276,16 @@ func TestValidateRejectsNilOutputCommitment(t *testing.T) {
 		require.NoError(t, verr)
 		_ = verifier.Verify(action.GetProof())
 	})
+}
+
+// TestActionDeserializeRejectsWrongCurve checks that an output on another curve is rejected at decode time.
+func TestActionDeserializeRejectsWrongCurve(t *testing.T) {
+	action := randomAction(math.Curves[math.BN254], rand.Reader, t)
+	action.Outputs[0].Data = math.Curves[math.FP256BN_AMCL].GenG1
+	raw, err := action.Serialize()
+	require.NoError(t, err)
+
+	err = (&Action{}).Deserialize(raw, math.BN254)
+	require.ErrorIs(t, err, ErrDeserializeOutputFailed)
+	require.ErrorContains(t, err, "invalid G1: expected curve")
 }

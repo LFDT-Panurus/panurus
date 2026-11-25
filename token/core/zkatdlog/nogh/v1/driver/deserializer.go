@@ -9,7 +9,6 @@ package driver
 import (
 	"github.com/LFDT-Panurus/panurus/token/core/common"
 	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
-	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/boolpolicy"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/deserializer"
@@ -50,29 +49,6 @@ func NewDeserializer(pp *v1.PublicParams) (*Deserializer, error) {
 	des.AddTypedVerifierDeserializer(boolpolicy.Policy, boolpolicy.NewTypedIdentityDeserializer(des, des))
 
 	return &Deserializer{Deserializer: common.NewDeserializer(des, des, des, des, des)}, nil
-}
-
-// TokenDeserializer deserializes zkatdlog tokens and metadata.
-type TokenDeserializer struct{}
-
-// DeserializeMetadata deserializes the passed bytes into a zkatdlog token metadata.
-func (d *TokenDeserializer) DeserializeMetadata(raw []byte) (*token.Metadata, error) {
-	metadata := &token.Metadata{}
-	if err := metadata.Deserialize(raw); err != nil {
-		return nil, err
-	}
-
-	return metadata, nil
-}
-
-// DeserializeToken deserializes the passed bytes into a zkatdlog token.
-func (d *TokenDeserializer) DeserializeToken(raw []byte) (*token.Token, error) {
-	token := &token.Token{}
-	if err := token.Deserialize(raw); err != nil {
-		return nil, err
-	}
-
-	return token, nil
 }
 
 // PublicParamsDeserializer deserializes zkatdlog public parameters.

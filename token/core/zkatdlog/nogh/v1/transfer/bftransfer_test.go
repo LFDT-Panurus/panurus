@@ -86,14 +86,16 @@ func TestTransfer(t *testing.T) {
 
 				if pt.proofType == rp.CSPRangeProofType {
 					proof := &transfer.CSPProof{}
-					err = proof.Deserialize(proofRaw)
+					err = proof.Deserialize(proofRaw, TestCurve)
 					require.NoError(t, err)
+					require.ErrorContains(t, proof.Deserialize(proofRaw, math.BLS12_381_BBS_GURVY), "element curve must equal curve ID")
 					assert.NotNil(t, proof.TypeAndSum)
 					assert.NotNil(t, proof.RangeCorrectness)
 				} else {
 					proof := &transfer.Proof{}
-					err = proof.Deserialize(proofRaw)
+					err = proof.Deserialize(proofRaw, TestCurve)
 					require.NoError(t, err)
+					require.ErrorContains(t, proof.Deserialize(proofRaw, math.BLS12_381_BBS_GURVY), "element curve must equal curve ID")
 					assert.NotNil(t, proof.TypeAndSum)
 					assert.NotNil(t, proof.RangeCorrectness)
 				}
@@ -494,7 +496,7 @@ func TestBulletProofVerifier_1to1WithAttachedRangeProof(t *testing.T) {
 	// An empty-but-non-nil RangeCorrectness is sufficient to show the verifier
 	// ignores it for 1-to-1 transfers.
 	proof := &transfer.Proof{}
-	require.NoError(t, proof.Deserialize(proofRaw))
+	require.NoError(t, proof.Deserialize(proofRaw, pp.Curve))
 
 	// Attach a non-nil but empty range correctness structure.
 	proof.RangeCorrectness = &bulletproof.RangeCorrectness{

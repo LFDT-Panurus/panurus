@@ -59,7 +59,7 @@ func TestCSPVerifierRejectsTruncatedSameTypeProof(t *testing.T) {
 	require.NoError(t, err)
 
 	cp := &issue.CSPProof{}
-	require.NoError(t, cp.Deserialize(proofBytes))
+	require.NoError(t, cp.Deserialize(proofBytes, pp.Curve))
 
 	// Truncate the SameType sub-proof to only its first 2 of 4 elements.
 	truncatedSameType, err := asn1.MarshalMath(cp.SameType.Type, cp.SameType.BlindingFactor)
@@ -114,7 +114,31 @@ func TestCSPVerifierRejectsTruncatedRangeCorrectnessProof(t *testing.T) {
 	require.NoError(t, err)
 
 	cp := &issue.CSPProof{}
-	require.NoError(t, cp.Deserialize(proofBytes))
+	require.ErrorContains(t, cp.Deserialize(proofBytes, math.FP256BN_AMCL), "element curve must equal curve ID")
+	require.NoError(t, cp.Deserialize(proofBytes, pp.Curve))
+
+	// A RangeCorrectness on another curve next to a valid SameType is rejected at decode time.
+	foreignPP, err := v1.NewWith(v1.SetupParams{
+		DriverName:    v1.DLogNoGHDriverName,
+		DriverVersion: v1.ProtocolV1,
+		BitLength:     32,
+		CurveID:       math.BLS12_381_BBS_GURVY,
+		ProofType:     rp.CSPRangeProofType,
+	})
+	require.NoError(t, err)
+	foreignTokens, foreignTW, err := token.GetTokensWithWitness([]uint64{10}, "ABC", foreignPP.PedersenGenerators, math.Curves[foreignPP.Curve])
+	require.NoError(t, err)
+	foreignProver, err := issue.NewCSPBasedProver(foreignTW, foreignTokens, foreignPP)
+	require.NoError(t, err)
+	foreignBytes, err := foreignProver.Prove()
+	require.NoError(t, err)
+	foreignCP := &issue.CSPProof{}
+	require.NoError(t, foreignCP.Deserialize(foreignBytes, foreignPP.Curve))
+	mixed, err := asn1.Marshal[asn1.Serializer](cp.SameType, foreignCP.RangeCorrectness)
+	require.NoError(t, err)
+	err = (&issue.CSPProof{}).Deserialize(mixed, pp.Curve)
+	require.ErrorIs(t, err, issue.ErrInvalidIssueProof)
+	require.ErrorContains(t, err, "wrong curve ID")
 
 	// Truncate: take the first range proof's genuine wire encoding and drop
 	// everything past its first two elements (pComm, pokV.A), dropping pokV.Z,

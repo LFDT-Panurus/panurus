@@ -111,6 +111,9 @@ valid encodings are still correctly accepted.
 | `FuzzCSPVerifierNoPanic` | `token/core/zkatdlog/nogh/v1/transfer` | Raw CSP transfer-proof bytes through `CSPVerifier.Verify`. |
 | `FuzzTokenDeserializeNoPanic` | `token/core/zkatdlog/nogh/v1/token` | Raw ledger-stored output bytes through `Token.Deserialize`. |
 | `FuzzMetadataDeserializeNoPanic` | `token/core/zkatdlog/nogh/v1/token` | Raw ledger-stored metadata bytes through `Metadata.Deserialize`. |
+| `FuzzToClearNoPanic` | `token/core/zkatdlog/nogh/v1/token` | An output and its metadata decoded together and opened with `Token.ToClear`. |
+| `FuzzFromG1Proto` | `token/core/zkatdlog/nogh/protos-go/utils` | Raw G1 bytes through `FromG1Proto`; any accepted element must be on the expected curve and not the point at infinity. |
+| `FuzzFromZrProto` | `token/core/zkatdlog/nogh/protos-go/utils` | Raw Zr bytes through `FromZrProto`; any accepted element must be on the expected curve. |
 | `FuzzPublicParamsDeserializeNoPanic` | `token/core/zkatdlog/nogh/v1/setup` | Raw ledger-stored public parameters through `NewPublicParamsFromBytes`, exercised by every validator/prover/verifier on startup and params update. |
 | `FuzzProofDeserializeNoPanic` | `token/core/zkatdlog/nogh/v1/crypto/upgrade` | Raw untrusted token-upgrade request bytes through `Proof.Deserialize`. |
 | `FuzzRegisterRecipientIdentityStructuralGuard` | `token/services/identity/wallet` | A counterparty's identity and audit-info bytes through `Service.RegisterRecipientIdentity`, asserting the structural guard rejects exactly the out-of-bounds lengths and never panics. |

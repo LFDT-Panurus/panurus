@@ -442,7 +442,7 @@ func (s *Service) processFabtoken(tok token.LedgerToken) (*token.Token, error) {
 // passed public parameters, using the opening stored alongside the token.
 func (s *Service) processCommToken(tok token.LedgerToken, pp *setup.PublicParams) (*token.Token, error) {
 	output := &token2.Token{}
-	if err := output.Deserialize(tok.Token); err != nil {
+	if err := output.Deserialize(tok.Token, pp.Curve); err != nil {
 		return nil, errors.Wrapf(err, "failed to deserialize the commitment of token [%s]", tok.ID)
 	}
 	if err := output.Validate(true); err != nil {
@@ -452,7 +452,7 @@ func (s *Service) processCommToken(tok token.LedgerToken, pp *setup.PublicParams
 		return nil, errors.Wrapf(err, "invalid commitment in token [%s]", tok.ID)
 	}
 	metadata := &token2.Metadata{}
-	if err := metadata.Deserialize(tok.TokenMetadata); err != nil {
+	if err := metadata.Deserialize(tok.TokenMetadata, pp.Curve); err != nil {
 		return nil, errors.Wrapf(err, "failed to deserialize the opening of token [%s]", tok.ID)
 	}
 	// The opening comes from the counterparty, so it is checked before it reaches any

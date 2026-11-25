@@ -311,7 +311,8 @@ func (i *Action) Serialize() ([]byte, error) {
 }
 
 // Deserialize unmarshals the Action from its protobuf-encoded byte representation.
-func (i *Action) Deserialize(raw []byte) error {
+// It rejects elements that are not on curve.
+func (i *Action) Deserialize(raw []byte, curve math.CurveID) error {
 	issueAction := &actions.IssueAction{}
 	err := proto.Unmarshal(raw, issueAction)
 	if err != nil {
@@ -356,7 +357,7 @@ func (i *Action) Deserialize(raw []byte) error {
 		if output.Token == nil {
 			return errors.Errorf("invalid issue action: token of output at index [%d] is nil", j)
 		}
-		data, err := utils.FromG1Proto(output.Token.Data)
+		data, err := utils.FromG1Proto(output.Token.Data, curve)
 		if err != nil {
 			return errors.Join(ErrDeserializeOutputFailed, err)
 		}

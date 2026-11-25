@@ -69,7 +69,7 @@ func TestIssueValidateErrors(t *testing.T) {
 	require.NoError(t, err)
 
 	issueAction := &issue.Action{}
-	err = issueAction.Deserialize(env.TRWithIssue.GetIssues()[0])
+	err = issueAction.Deserialize(env.TRWithIssue.GetIssues()[0], testUseCaseExtra.CurveID)
 	require.NoError(t, err)
 
 	newCtx := func() *validator.Context {
@@ -136,7 +136,7 @@ func TestIssueValidateErrors(t *testing.T) {
 	err = validator.IssueValidate(context.Background(), newCtx())
 	require.Error(t, err)
 	// Reset to valid state
-	err = issueAction.Deserialize(env.TRWithIssue.GetIssues()[0])
+	err = issueAction.Deserialize(env.TRWithIssue.GetIssues()[0], testUseCaseExtra.CurveID)
 	require.NoError(t, err)
 
 	// Case 8: Success with issuers list
@@ -466,7 +466,7 @@ func TestTransferHTLCValidateErrors(t *testing.T) {
 }
 
 func TestDeserializeActionsErrors(t *testing.T) {
-	ad := &validator.ActionDeserializer{}
+	ad := &validator.ActionDeserializer{PublicParams: &v1.PublicParams{Curve: testUseCaseExtra.CurveID}}
 	tr := &driver.TokenRequest{
 		Actions: []*driver.TypedAction{
 			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("invalid")},
@@ -482,4 +482,19 @@ func TestDeserializeActionsErrors(t *testing.T) {
 	}
 	_, _, err = ad.DeserializeActions(tr)
 	require.Error(t, err)
+
+	// Outputs on a curve other than pp.Curve are rejected.
+	ad = &validator.ActionDeserializer{PublicParams: &v1.PublicParams{Curve: fuzzCurve.ID()}, Limits: driver.DefaultResourceLimits()}
+	foreignIssueRaw, foreignTransferRaw := foreignCurveRaws(t)
+	for _, a := range []*driver.TypedAction{
+		{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: foreignIssueRaw},
+		{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: foreignTransferRaw},
+	} {
+		_, _, err = ad.DeserializeActions(&driver.TokenRequest{Actions: []*driver.TypedAction{a}})
+		require.ErrorContains(t, err, "invalid G1: expected curve")
+	}
+
+	// A deserializer without public parameters fails closed.
+	_, _, err = (&validator.ActionDeserializer{}).DeserializeActions(&driver.TokenRequest{})
+	require.ErrorContains(t, err, "public parameters not set")
 }

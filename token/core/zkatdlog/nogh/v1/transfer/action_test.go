@@ -466,7 +466,7 @@ func TestSerialization(t *testing.T) {
 	require.NoError(t, err, "failed to serialize a new transfer action")
 	assert.NotNil(t, raw)
 
-	action2, err := transfer.NewActionFromProtos(raw)
+	action2, err := transfer.NewActionFromProtos(raw, TestCurve)
 	require.NoError(t, err, "failed to deserialize a new transfer action")
 	assert.NotNil(t, action2)
 	assert.Equal(t, action, action2, "deserialized action is not equal to the original one")
@@ -475,7 +475,7 @@ func TestSerialization(t *testing.T) {
 	require.NoError(t, err, "failed to serialize a new transfer action")
 	assert.NotNil(t, raw2)
 
-	action3, err := transfer.NewActionFromProtos(raw2)
+	action3, err := transfer.NewActionFromProtos(raw2, TestCurve)
 	require.NoError(t, err, "failed to deserialize a new transfer action")
 	assert.NotNil(t, action3)
 	assert.Equal(t, action2, action3, "deserialized action is not equal to the original one")
@@ -518,14 +518,14 @@ func TestNewActionFromProtos(t *testing.T) {
 
 	// deserialize it
 	action2 := &transfer.Action{}
-	err = action2.Deserialize(raw)
+	err = action2.Deserialize(raw, TestCurve)
 	require.NoError(t, err)
 
 	// check that the deserialized action is equal to the original one
 	assert.Equal(t, action, action2)
 
 	// create a new action from protos
-	action3, err := transfer.NewActionFromProtos(raw)
+	action3, err := transfer.NewActionFromProtos(raw, TestCurve)
 	require.NoError(t, err)
 	assert.NotNil(t, action3)
 	assert.Equal(t, action2, action3)
@@ -598,7 +598,7 @@ func TestAction_ToProtos(t *testing.T) {
 	assert.NotNil(t, p)
 
 	ai2 := &transfer.ActionInput{}
-	err = ai2.FromProtos(p)
+	err = ai2.FromProtos(p, TestCurve)
 	require.NoError(t, err)
 	assert.Equal(t, ai.ID, ai2.ID)
 	assert.Equal(t, ai.Token.Owner, ai2.Token.Owner)
@@ -617,7 +617,7 @@ func TestAction_ToProtos(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, p)
 
-	err = ai2.FromProtos(p)
+	err = ai2.FromProtos(p, TestCurve)
 	require.NoError(t, err)
 	assert.Equal(t, ai.UpgradeWitness.FabToken.Owner, ai2.UpgradeWitness.FabToken.Owner)
 	assert.Equal(t, ai.UpgradeWitness.FabToken.Type, ai2.UpgradeWitness.FabToken.Type)
@@ -679,7 +679,7 @@ func randomAction(curve *math.Curve, rand io.Reader, b require.TestingT) *transf
 func TestAction_Deserialize_ErrorPaths(t *testing.T) {
 	// 1. Invalid proto bytes
 	action := &transfer.Action{}
-	err := action.Deserialize([]byte("invalid"))
+	err := action.Deserialize([]byte("invalid"), TestCurve)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to deserialize transfer action")
 
@@ -689,7 +689,7 @@ func TestAction_Deserialize_ErrorPaths(t *testing.T) {
 	}
 	raw, err := proto.Marshal(protoAction)
 	require.NoError(t, err)
-	err = action.Deserialize(raw)
+	err = action.Deserialize(raw, TestCurve)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "expected [1], got [100]: invalid transfer version")
 
@@ -706,7 +706,7 @@ func TestAction_Deserialize_ErrorPaths(t *testing.T) {
 	}
 	raw, err = proto.Marshal(protoAction)
 	require.NoError(t, err)
-	err = action.Deserialize(raw)
+	err = action.Deserialize(raw, TestCurve)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed unmarshalling inputs")
 
@@ -723,7 +723,7 @@ func TestAction_Deserialize_ErrorPaths(t *testing.T) {
 	}
 	raw, err = proto.Marshal(protoAction)
 	require.NoError(t, err)
-	err = action.Deserialize(raw)
+	err = action.Deserialize(raw, TestCurve)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to deserialize output")
 }
@@ -742,7 +742,7 @@ func TestAction_Deserialize_ExtraBranches(t *testing.T) {
 	raw, err := proto.Marshal(protoNilOutput)
 	require.NoError(t, err)
 	action := &transfer.Action{}
-	err = action.Deserialize(raw)
+	err = action.Deserialize(raw, TestCurve)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "output at index [0] is nil")
 
@@ -756,7 +756,7 @@ func TestAction_Deserialize_ExtraBranches(t *testing.T) {
 	raw, err = proto.Marshal(protoNilToken)
 	require.NoError(t, err)
 	action = &transfer.Action{}
-	err = action.Deserialize(raw)
+	err = action.Deserialize(raw, TestCurve)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "token of output at index [0] is nil")
 }
@@ -836,4 +836,37 @@ func TestAction_GetSerializedInputs(t *testing.T) {
 	err = actionErr.Validate()
 	require.Error(t, err)
 	require.ErrorIs(t, err, transfer.ErrEmptyInputToken)
+}
+
+// TestActionDeserializeRejectsWrongCurve checks that elements on another curve are rejected at decode time.
+func TestActionDeserializeRejectsWrongCurve(t *testing.T) {
+	// BLS12_381_BBS_GURVY shares the backend types of TestCurve.
+	foreign := math.Curves[math.BLS12_381_BBS_GURVY]
+	cases := map[string]struct {
+		mutate func(a *transfer.Action)
+		errMsg string
+	}{
+		"output": {func(a *transfer.Action) { a.Outputs[0].Data = foreign.GenG1 }, "invalid G1: expected curve"},
+		"input":  {func(a *transfer.Action) { a.Inputs[0].Token.Data = foreign.GenG1 }, "invalid G1: expected curve"},
+		"upgrade witness": {func(a *transfer.Action) {
+			a.Inputs[0].UpgradeWitness = &token2.UpgradeWitness{
+				FabToken:       &fabtokenv1.Output{Owner: []byte("owner"), Type: "type", Quantity: "10"},
+				BlindingFactor: foreign.NewZrFromInt(1),
+			}
+		}, "invalid Zr: expected curve"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			action := randomAction(math.Curves[TestCurve], rand.Reader, t)
+			raw, err := action.Serialize()
+			require.NoError(t, err)
+			require.NoError(t, (&transfer.Action{}).Deserialize(raw, TestCurve))
+
+			tc.mutate(action)
+			raw, err = action.Serialize()
+			require.NoError(t, err)
+			err = (&transfer.Action{}).Deserialize(raw, TestCurve)
+			require.ErrorContains(t, err, tc.errMsg)
+		})
+	}
 }

@@ -14,6 +14,7 @@ import (
 	nghactions "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/v1/actions"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/issue"
+	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/transfer"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/validator"
@@ -84,6 +85,29 @@ func validTransferRaw(tb testing.TB, proofType rp.ProofType, redeem bool) []byte
 	return raw
 }
 
+// foreignCurveRaws returns an issue and a transfer action whose output commitment is on
+// a curve other than fuzzCurve. DeserializeActions must reject both.
+func foreignCurveRaws(tb testing.TB) ([]byte, []byte) {
+	tb.Helper()
+	foreign := math.Curves[math.BLS12_381_GURVY]
+	issueRaw, err := (&issue.Action{
+		Issuer:    []byte("issuer"),
+		Outputs:   []*token.Token{{Owner: []byte("owner-1"), Data: foreign.GenG1}},
+		ProofType: rp.RangeProofType,
+		Proof:     []byte("proof"),
+	}).Serialize()
+	require.NoError(tb, err)
+	transferRaw, err := (&transfer.Action{
+		Inputs:    []*transfer.ActionInput{{ID: &token2.ID{TxId: "tx0"}, Token: &token.Token{Owner: []byte("owner-1"), Data: fuzzCurve.GenG1}}},
+		Outputs:   []*token.Token{{Owner: []byte("owner-2"), Data: foreign.GenG1}},
+		ProofType: rp.RangeProofType,
+		Proof:     []byte("proof"),
+	}).Serialize()
+	require.NoError(tb, err)
+
+	return issueRaw, transferRaw
+}
+
 // issueRawWithNilOutputData returns the serialized bytes of an issue action whose sole
 // output commitment is nil. Action.Serialize encodes a nil Data as a G1 proto with an
 // empty Raw field (utils.ToProtoG1), which utils.FromG1Proto then decodes back to nil
@@ -124,7 +148,7 @@ func FuzzIssueActionValidateNoPanic(f *testing.F) {
 
 		require.NotPanics(t, func() {
 			action := &issue.Action{}
-			if err := action.Deserialize(raw); err != nil {
+			if err := action.Deserialize(raw, fuzzCurve.ID()); err != nil {
 				return
 			}
 			if err := action.Validate(); err != nil {
@@ -166,6 +190,10 @@ func FuzzActionDeserializerNoPanic(f *testing.F) {
 	// Truncated but non-empty protobuf: exercises partial-decode error paths.
 	f.Add(uint8(0), issueRaw[:len(issueRaw)/2])
 	f.Add(uint8(1), transferRaw[:len(transferRaw)/2])
+	// Well-formed actions with an output on another curve.
+	foreignIssueRaw, foreignTransferRaw := foreignCurveRaws(f)
+	f.Add(uint8(0), foreignIssueRaw)
+	f.Add(uint8(1), foreignTransferRaw)
 
 	limits := driver.DefaultResourceLimits()
 	f.Fuzz(func(t *testing.T, actionKind uint8, raw []byte) {
@@ -176,7 +204,7 @@ func FuzzActionDeserializerNoPanic(f *testing.F) {
 		tokenRequest := &driver.TokenRequest{Actions: []*driver.TypedAction{{Type: typeID, Raw: raw}}}
 
 		require.NotPanics(t, func() {
-			issues, transfers, err := (&validator.ActionDeserializer{Limits: limits}).DeserializeActions(tokenRequest)
+			issues, transfers, err := (&validator.ActionDeserializer{PublicParams: &v1.PublicParams{Curve: fuzzCurve.ID()}, Limits: limits}).DeserializeActions(tokenRequest)
 			if err != nil {
 				return
 			}
@@ -219,7 +247,7 @@ func FuzzActionDeserializerMultiActionNoPanic(f *testing.F) {
 		}}
 
 		require.NotPanics(t, func() {
-			issues, transfers, err := (&validator.ActionDeserializer{Limits: limits}).DeserializeActions(tokenRequest)
+			issues, transfers, err := (&validator.ActionDeserializer{PublicParams: &v1.PublicParams{Curve: fuzzCurve.ID()}, Limits: limits}).DeserializeActions(tokenRequest)
 			if err != nil {
 				return
 			}
@@ -325,9 +353,9 @@ func FuzzActionResourceLimits(f *testing.F) {
 		var err error
 		require.NotPanics(t, func() {
 			if isIssue {
-				err = (&issue.Action{}).Deserialize(raw)
+				err = (&issue.Action{}).Deserialize(raw, fuzzCurve.ID())
 			} else {
-				err = (&transfer.Action{}).Deserialize(raw)
+				err = (&transfer.Action{}).Deserialize(raw, fuzzCurve.ID())
 			}
 		})
 

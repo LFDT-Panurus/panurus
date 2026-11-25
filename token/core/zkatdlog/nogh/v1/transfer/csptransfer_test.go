@@ -83,7 +83,7 @@ func TestCSPVerifierRejectsTruncatedRangeCorrectnessProof(t *testing.T) {
 	require.NoError(t, err)
 
 	cp := &transfer.CSPProof{}
-	require.NoError(t, cp.Deserialize(proofBytes))
+	require.NoError(t, cp.Deserialize(proofBytes, pp.Curve))
 	require.NotEmpty(t, cp.RangeCorrectness.Proofs)
 
 	// Truncate the first range proof's genuine wire encoding to only its

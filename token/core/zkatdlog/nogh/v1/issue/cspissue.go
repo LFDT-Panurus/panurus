@@ -31,13 +31,19 @@ func (p *CSPProof) Serialize() ([]byte, error) {
 	return asn1.Marshal[asn1.Serializer](p.SameType, p.RangeCorrectness)
 }
 
-// Deserialize unmarshals the CSPProof from its byte representation.
-func (p *CSPProof) Deserialize(bytes []byte) error {
+// Deserialize unmarshals the CSPProof from its byte representation and validates it: every element must be non-nil and on curve.
+func (p *CSPProof) Deserialize(bytes []byte, curve math.CurveID) error {
 	p.SameType = &SameType{}
 	p.RangeCorrectness = &csp.RangeCorrectness{}
 
 	if err := asn1.Unmarshal[asn1.Serializer](bytes, p.SameType, p.RangeCorrectness); err != nil {
 		return errors.Join(ErrDeserializeProofFailed, err)
+	}
+	if err := p.SameType.Validate(curve); err != nil {
+		return errors.Join(ErrInvalidIssueProof, err)
+	}
+	if err := p.RangeCorrectness.Validate(curve); err != nil {
+		return errors.Join(ErrInvalidIssueProof, err)
 	}
 
 	return nil
@@ -160,21 +166,9 @@ func NewCSPVerifier(tokens []*math.G1, pp *v1.PublicParams) *CSPVerifier {
 func (v *CSPVerifier) Verify(proof []byte) error {
 	tp := &CSPProof{}
 	// Unmarshal the proof.
-	err := tp.Deserialize(proof)
+	err := tp.Deserialize(proof, v.curveID)
 	if err != nil {
 		return errors.Join(ErrDeserializeProofFailed, err)
-	}
-	// Validate the same-type proof structurally before it is used: a proof deserialized
-	// from truncated bytes can have nil fields, which would otherwise panic below
-	// (e.g. CommitmentToType.Copy()) or inside SameType.Verify's Mul/Sub calls.
-	if err := tp.SameType.Validate(v.curveID); err != nil {
-		return errors.Join(ErrInvalidIssueProof, err)
-	}
-	// Validate the range correctness proof structurally before it is used: this
-	// rejects nil/malformed elements from a truncated or corrupted proof before
-	// they reach RangeCorrectness.Verify (mirroring the BulletProof issue path).
-	if err := tp.RangeCorrectness.Validate(v.curveID); err != nil {
-		return errors.Join(ErrInvalidIssueProof, err)
 	}
 	// Verify the same-type proof.
 	err = v.SameType.Verify(tp.SameType)

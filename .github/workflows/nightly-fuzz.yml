@@ -117,6 +117,15 @@ jobs:
           - name: zkatdlog-metadata-deserialize
             pkg: ./token/core/zkatdlog/nogh/v1/token
             func: FuzzMetadataDeserializeNoPanic
+          - name: zkatdlog-token-toclear
+            pkg: ./token/core/zkatdlog/nogh/v1/token
+            func: FuzzToClearNoPanic
+          - name: zkatdlog-proto-g1-decode
+            pkg: ./token/core/zkatdlog/nogh/protos-go/utils
+            func: FuzzFromG1Proto
+          - name: zkatdlog-proto-zr-decode
+            pkg: ./token/core/zkatdlog/nogh/protos-go/utils
+            func: FuzzFromZrProto
           - name: zkatdlog-public-params-deserialize
             pkg: ./token/core/zkatdlog/nogh/v1/setup
             func: FuzzPublicParamsDeserializeNoPanic
