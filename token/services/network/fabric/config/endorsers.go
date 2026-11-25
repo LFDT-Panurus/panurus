@@ -9,6 +9,8 @@ package config
 import (
 	"strings"
 
+	"github.com/LFDT-Panurus/panurus/token/services/config"
+
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
@@ -133,6 +135,29 @@ func ResolveEndorserSelection(c EndorserSelectionConfiguration) (selection Endor
 	return selection, !c.IsSet(FSCEndorsementKey), nil
 }
 
+// EndorserSelectionProvider resolves the endorser selection configured for a TMS.
+type EndorserSelectionProvider interface {
+	EndorserSelectionFor(network, channel, namespace string) (EndorserSelection, error)
+}
+
+// SelectionFor resolves the selection p configures for the given coordinates. A nil
+// provider and an unconfigured TMS leave default discovery in charge.
+func SelectionFor(p EndorserSelectionProvider, network, channel, namespace string) (EndorserSelection, error) {
+	if p == nil {
+		return EndorserSelection{}, nil
+	}
+
+	selection, err := p.EndorserSelectionFor(network, channel, namespace)
+	switch {
+	case err == nil:
+		return selection, nil
+	case errors.Is(err, config.ErrConfigurationNotFound):
+		return EndorserSelection{}, nil
+	default:
+		return EndorserSelection{}, errors.WithMessagef(err, "failed resolving the endorser selection for [%s:%s:%s]", network, channel, namespace)
+	}
+}
+
 // EndorserSelectable is a chaincode invocation builder that accepts an endorser
 // restriction. Both the FSC endorse and query views satisfy it, each returning its own
 // type, which is why it is parameterised rather than a plain interface.
@@ -149,6 +174,20 @@ func ApplyEndorserSelection[T EndorserSelectable[T]](v T, s EndorserSelection) T
 	}
 
 	return v
+}
+
+// RestrictedQuery runs q restricted to s, naming s on failure. Every read-only query path
+// goes through it, so the restriction cannot be dropped at one site.
+func RestrictedQuery[T EndorserSelectable[T]](q T, s EndorserSelection, call func(T) ([]byte, error), subject, fallback string) ([]byte, error) {
+	res, err := call(ApplyEndorserSelection(q, s))
+	switch {
+	case err == nil:
+		return res, nil
+	case s.IsSet():
+		return nil, NoUsableEndorserError(err, subject, s.Explain())
+	default:
+		return nil, errors.WithMessage(err, fallback)
+	}
 }
 
 // restrictedFailure annotates err with the endorser restriction that was in force and the

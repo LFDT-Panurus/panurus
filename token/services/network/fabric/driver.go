@@ -60,6 +60,7 @@ type Driver struct {
 	auditStoreServiceManager        auditdb.StoreServiceManager
 	cleanupServiceManager           cleanup.ServiceManager
 	metricsProvider                 metrics.Provider
+	endorserSelectionProvider       config3.EndorserSelectionProvider
 }
 
 func NewGenericDriver(
@@ -80,6 +81,7 @@ func NewGenericDriver(
 	ppValidator fsc.PublicParamsValidator,
 ) driver.Driver {
 	keyTranslator := &keys.Translator{}
+	endorserSelectionProvider := NewConfigEndorserSelectionProvider(configProvider)
 
 	return NewDriver(
 		fnsProvider,
@@ -89,12 +91,12 @@ func NewGenericDriver(
 		tmsProvider,
 		tracerProvider,
 		identityProvider,
-		NewChaincodePublicParamsFetcher(viewManager, NewConfigEndorserSelectionProvider(configProvider)),
-		NewTokenExecutorProvider(fnsProvider),
-		NewSpentTokenExecutorProvider(fnsProvider, keyTranslator),
+		NewChaincodePublicParamsFetcher(viewManager, endorserSelectionProvider),
+		NewTokenExecutorProvider(fnsProvider, endorserSelectionProvider),
+		NewSpentTokenExecutorProvider(fnsProvider, keyTranslator, endorserSelectionProvider),
 		keyTranslator,
 		finality.NewListenerManagerProvider(fnsProvider, tracerProvider, keyTranslator, config3.NewListenerManagerConfig(configService)),
-		lookup.NewListenerManagerProvider(fnsProvider, tracerProvider, keyTranslator, config3.NewListenerManagerConfig(configService)),
+		lookup.NewListenerManagerProvider(fnsProvider, tracerProvider, keyTranslator, config3.NewListenerManagerConfig(configService), lookup.WithEndorserSelection(endorserSelectionProvider)),
 		endorsement.NewServiceProvider(
 			fnsProvider,
 			tmsProvider,
@@ -111,6 +113,7 @@ func NewGenericDriver(
 		auditStoreServiceManager,
 		cleanupServiceManager,
 		metricsProvider,
+		endorserSelectionProvider,
 		config2.GenericDriver,
 	)
 }
@@ -135,6 +138,7 @@ func NewDriver(
 	auditStoreServiceManager auditdb.StoreServiceManager,
 	cleanupServiceManager cleanup.ServiceManager,
 	metricsProvider metrics.Provider,
+	endorserSelectionProvider config3.EndorserSelectionProvider,
 	supportedDrivers ...string,
 ) *Driver {
 	return &Driver{
@@ -158,6 +162,7 @@ func NewDriver(
 		auditStoreServiceManager:        auditStoreServiceManager,
 		cleanupServiceManager:           cleanupServiceManager,
 		metricsProvider:                 metricsProvider,
+		endorserSelectionProvider:       endorserSelectionProvider,
 	}
 }
 
@@ -211,6 +216,6 @@ func (d *Driver) New(network, channel string) (driver.Network, error) {
 		d.auditStoreServiceManager,
 		d.cleanupServiceManager,
 		d.metricsProvider,
-		NewLedger(ch, fns.Name(), d.keyTranslator),
+		NewLedger(ch, fns.Name(), d.keyTranslator, d.endorserSelectionProvider),
 	), nil
 }

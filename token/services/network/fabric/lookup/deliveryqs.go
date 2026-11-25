@@ -12,6 +12,7 @@ import (
 	"slices"
 
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/blockscan"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/config"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/tcc"
 	slices2 "github.com/LFDT-Panurus/panurus/token/services/utils/slices"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
@@ -47,12 +48,30 @@ type blockScanner interface {
 
 // ChannelStateQuerier queries the token chaincode of a namespace over a Fabric channel.
 type ChannelStateQuerier struct {
-	Channel *fabric.Channel
+	channel *fabric.Channel
+	// network is what the selection is keyed by and the channel does not carry.
+	network           string
+	selectionProvider config.EndorserSelectionProvider
+}
+
+// NewChannelStateQuerier returns a querier for the token chaincode on channel. Its fields
+// are unexported so network cannot be omitted, which would disable the selection.
+func NewChannelStateQuerier(network string, channel *fabric.Channel, selectionProvider config.EndorserSelectionProvider) *ChannelStateQuerier {
+	return &ChannelStateQuerier{channel: channel, network: network, selectionProvider: selectionProvider}
 }
 
 // QueryStates invokes QueryStates on the token chaincode deployed under ns.
 func (c *ChannelStateQuerier) QueryStates(ns driver.Namespace, arg []byte) ([]byte, error) {
-	return c.Channel.Chaincode(ns).Query(QueryStates, arg).Query()
+	selection, err := config.SelectionFor(c.selectionProvider, c.network, c.channel.Name(), ns)
+	if err != nil {
+		return nil, err
+	}
+
+	return config.RestrictedQuery(
+		c.channel.Chaincode(ns).Query(QueryStates, arg), selection,
+		(*fabric.ChaincodeQuery).Query,
+		"query states in ["+c.network+":"+c.channel.Name()+":"+ns+"]",
+		"failed to query states of ["+ns+"]")
 }
 
 type DeliveryScanQueryByID struct {

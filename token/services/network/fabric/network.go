@@ -8,6 +8,7 @@ package fabric
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	ncommon "github.com/LFDT-Panurus/panurus/token/services/network/common"
 	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
+	config3 "github.com/LFDT-Panurus/panurus/token/services/network/fabric/config"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/finality"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/lookup"
@@ -72,14 +74,16 @@ func (n *lm) AnonymousIdentity() (view.Identity, error) {
 
 // ledger provides access to the Fabric ledger via the FSC fabric layer.
 type ledger struct {
-	l             *fabric.Ledger
-	ch            *fabric.Channel
-	network       string
-	keyTranslator translator.KeyTranslator
+	l                 *fabric.Ledger
+	ch                *fabric.Channel
+	network           string
+	keyTranslator     translator.KeyTranslator
+	selectionProvider config3.EndorserSelectionProvider
 }
 
-func NewLedger(ch *fabric.Channel, network string, keyTranslator translator.KeyTranslator) *ledger {
-	return &ledger{ch: ch, l: ch.Ledger(), network: network, keyTranslator: keyTranslator}
+// NewLedger returns a ledger reading through the given channel.
+func NewLedger(ch *fabric.Channel, network string, keyTranslator translator.KeyTranslator, selectionProvider config3.EndorserSelectionProvider) *ledger {
+	return &ledger{ch: ch, l: ch.Ledger(), network: network, keyTranslator: keyTranslator, selectionProvider: selectionProvider}
 }
 
 // Status retrieves the validation status of a transaction from the Fabric ledger.
@@ -154,11 +158,19 @@ func (l *ledger) GetStates(ctx context.Context, namespace string, keys ...string
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed marshalling args for query by ids [%v]", keys)
 	}
-	logger.DebugfContext(ctx, "querying chaincode [%s] for the states of ids [%v]", namespace, keys)
-	chaincode := l.ch.Chaincode(namespace)
-	res, err := chaincode.Query(lookup.QueryStates, arg).Query()
+	selection, err := config3.SelectionFor(l.selectionProvider, l.network, l.ch.Name(), namespace)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to query for states of ids [%v]", keys)
+		return nil, err
+	}
+
+	logger.DebugfContext(ctx, "querying chaincode [%s] for the states of ids [%v]", namespace, keys)
+	res, err := config3.RestrictedQuery(
+		l.ch.Chaincode(namespace).Query(lookup.QueryStates, arg), selection,
+		(*fabric.ChaincodeQuery).Query,
+		"query states in ["+l.network+":"+l.ch.Name()+":"+namespace+"]",
+		"failed to query for states of ids ["+strings.Join(keys, " ")+"]")
+	if err != nil {
+		return nil, err
 	}
 	var values [][]byte
 	err = json.Unmarshal(res, &values)

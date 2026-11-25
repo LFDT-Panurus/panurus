@@ -29,15 +29,15 @@ type ListenerManager interface {
 	RemoveLookupListener(id string, listener Listener) error
 }
 
-func NewListenerManagerProvider(fnsp *fabric.NetworkServiceProvider, tracerProvider trace.TracerProvider, keyTranslator translator.KeyTranslator, lmConfig config.ListenerManagerConfig) ListenerManagerProvider {
+func NewListenerManagerProvider(fnsp *fabric.NetworkServiceProvider, tracerProvider trace.TracerProvider, keyTranslator translator.KeyTranslator, lmConfig config.ListenerManagerConfig, opts ...LLMProviderOption) ListenerManagerProvider {
 	return newEndorserDeliveryBasedLLMProvider(fnsp, tracerProvider, keyTranslator, events.DeliveryListenerManagerConfig{
 		MapperParallelism:       lmConfig.DeliveryMapperParallelism(),
 		BlockProcessParallelism: lmConfig.DeliveryBlockProcessParallelism(),
 		ListenerTimeout:         lmConfig.DeliveryListenerTimeout(),
 		LRUSize:                 lmConfig.DeliveryLRUSize(),
 		LRUBuffer:               lmConfig.DeliveryLRUBuffer(),
-	}, WithLedgerInfoRetry(finality2.LedgerInfoRetry{
+	}, append([]LLMProviderOption{WithLedgerInfoRetry(finality2.LedgerInfoRetry{
 		Attempts: lmConfig.DeliveryLedgerInfoAttempts(),
 		Delay:    lmConfig.DeliveryLedgerInfoRetryDelay(),
-	}))
+	})}, opts...)...)
 }

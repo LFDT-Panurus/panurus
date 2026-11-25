@@ -232,8 +232,8 @@ token:
             # endorsers are FSC nodes selected by its policy type and the selection is not
             # applied (contradictory values are still rejected, and a selection set in that
             # mode is logged as a warning).
-            # It does not constrain the read-only token and state queries, only
-            # endorsement and the public-parameters query.
+            # It also constrains every query to the token chaincode. Read once per TMS,
+            # so changing it needs a restart.
             endorsement:
               # Restrict endorsement to peers belonging to these MSP IDs. To keep
               # endorsement inside this node's own organization, list its own MSP ID.
