@@ -1,6 +1,6 @@
 # Network Service - Chaguar Implementation
 
-The Chaguar network implementation ([`fabricx.Network`](../../token/services/network/chaguar/network.go)) is an optimized variant of Hyperledger Fabric where **FSC (Fabric Smart Client) nodes act as endorsers**, eliminating the need for traditional chaincode deployment on peers. This architecture provides higher performance and more flexible endorsement policies.
+The Chaguar network implementation ([`chaguar.NewNetwork`](../../token/services/network/chaguar/network.go)) is an optimized variant of Hyperledger Fabric where **FSC (Fabric Smart Client) nodes act as endorsers**, eliminating the need for traditional chaincode deployment on peers. This architecture provides higher performance and more flexible endorsement policies.
 
 ## Architecture Overview
 
@@ -90,8 +90,8 @@ FSC nodes must be configured to act as endorsers:
 # Endorser node configuration
 token:
   tms:
-    my-fabricx-tms:
-      network: fabricx-network
+    my-chaguar-tms:
+      network: chaguar-network
       channel: my-channel
       namespace: my-namespace
       
@@ -447,7 +447,7 @@ the setup key:
 
 ```yaml
 token:
-  fabricx:
+  chaguar:
     lookup:
       permanent:
         interval: 1m      # Periodic check interval
@@ -523,7 +523,7 @@ Chaguar ledger implementation provides:
 # FSC Network Configuration
 fsc:
   networks:
-    fabricx-network:
+    chaguar-network:
       default: true
       driver: fabricx
       # Fabric network connection details
@@ -539,7 +539,7 @@ token:
         queueSize: 1000
 
    # Chaguar-specific Configuration
-  fabricx:
+  chaguar:
      lookup:
         permanent:
            interval: 1m
@@ -549,8 +549,8 @@ token:
 
   # Token Management System
   tms:
-    my-fabricx-tms:
-      network: fabricx-network
+    my-chaguar-tms:
+      network: chaguar-network
       channel: my-channel
       namespace: my-namespace      
       # FSC Endorsement Configuration, per TMS

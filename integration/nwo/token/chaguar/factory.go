@@ -46,7 +46,7 @@ type ClientProvider interface {
 	Client(string) api.RemoteViewClient
 }
 
-// Backend installs and updates the token public parameters of a fabricx network by
+// Backend installs and updates the token public parameters of a Chaguar network by
 // invoking the SetupPublicParams view on the issuer FSC node.
 //
 // InstallPendingPublicParams and UpdatePublicParams wait for the issuer client to become ready

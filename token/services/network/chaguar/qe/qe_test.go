@@ -259,7 +259,7 @@ func TestQueryState_KeyPresent(t *testing.T) {
 
 // TestQueryState_KeyMissing_NoError is a regression guard: before the fix, a
 // missing key made QueryStates return an error, which meant a transaction
-// with no token-request-hash state (see fabricx/ledger.go GetTransactionStatus)
+// with no token-request-hash state (see chaguar/ledger.go GetTransactionStatus)
 // would incorrectly fail. Now it must return (nil, nil).
 func TestQueryState_KeyMissing_NoError(t *testing.T) {
 	qsp := &mock.QueryServiceProvider{}

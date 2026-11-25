@@ -1016,8 +1016,8 @@ func (m *Manager) finishRecovery(ctx context.Context, txID string, storedAt time
 //   - "code = NotFound"        — raw gRPC status text
 //   - "not found in index"     — committer's gRPC status desc
 //   - "tx not found"           — FSC finality.TxNotFound sentinel
-//   - "no such transaction ID" — fabric blkstorage, returned by fabric-x
-//     ledger.GetTransactionByID; wrapped at the FSC layer, so it is stable
+//   - "no such transaction ID" — fabric blkstorage, returned by the Chaguar
+//     ledger's GetTransactionByID; wrapped at the FSC layer, so it is stable
 //     across committer error format changes
 func isNotFoundError(err error) bool {
 	if err == nil {

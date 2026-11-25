@@ -148,8 +148,8 @@ token:
       # It should exceed the longest caller finality timeout. Defaults to 10m.
       pendingTTL: 10m
   
-  # fabricx configuration for Chaguar-specific settings
-  fabricx:
+  # chaguar configures Chaguar-specific settings
+  chaguar:
     # lookup configuration for the lookup service
     lookup:
       # permanent lookup configuration
@@ -765,7 +765,7 @@ If not specified, the default configuration is:
 
 ```yaml
 token:
-  fabricx:
+  chaguar:
     lookup:
       permanent:
         interval: 1m
