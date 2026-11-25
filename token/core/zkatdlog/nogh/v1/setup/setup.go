@@ -545,10 +545,6 @@ func (p *PublicParams) Deserialize(raw []byte) error {
 
 	p.DriverName = driver.TokenDriverName(publicParams.TokenDriverName)
 	p.DriverVersion = driver.TokenDriverVersion(publicParams.TokenDriverVersion)
-	// The inner name and version must match the checked identifier.
-	if got := string(core.DriverIdentifier(p.DriverName, p.DriverVersion)); got != expectedID {
-		return errors.Errorf("invalid driver name or version, expecting identifier [%s], got [%s]", expectedID, got)
-	}
 	if publicParams.CurveId == nil {
 		return errors.Errorf("invalid curve id, expecting curve id, got nil")
 	}

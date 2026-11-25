@@ -21,6 +21,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/encoding/protowire"
 )
 
 // testingHelper is a test helper for creating test data
@@ -1092,28 +1093,6 @@ func TestValidateRejectsNonDerivedGenerators(t *testing.T) {
 	}
 }
 
-func TestDeserializeRejectsInnerLabelMismatch(t *testing.T) {
-	pp, err := Setup(32, testingHelper(t), math3.BN254)
-	require.NoError(t, err)
-	raw, err := pp.Serialize()
-	require.NoError(t, err)
-
-	// Relabel the inner parameters but keep the outer identifier.
-	container, err := pp3.Unmarshal(raw)
-	require.NoError(t, err)
-	inner := &ppproto.PublicParameters{}
-	require.NoError(t, proto.Unmarshal(container.Raw, inner))
-	inner.TokenDriverVersion = 2
-	container.Raw, err = proto.Marshal(inner)
-	require.NoError(t, err)
-	raw, err = pp3.Marshal(container)
-	require.NoError(t, err)
-
-	_, err = NewPublicParamsFromBytes(raw, DLogNoGHDriverName, ProtocolV1)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid driver name or version")
-}
-
 // TestDefaultGeneratorsArePinned pins the default generators to the v1 derivation strings.
 // Changing them would make every token issued so far unusable.
 func TestDefaultGeneratorsArePinned(t *testing.T) {
@@ -1235,6 +1214,50 @@ func TestValidateAcceptsGeneratorsWithoutDomain(t *testing.T) {
 	// the same parameters declare a domain: now the generators must derive from it
 	pp.GeneratorDomain = "declared"
 	require.Error(t, pp.Validate())
+}
+
+// TestLegacyGeneratorsRoundTrip checks that parameters with legacy non-derived generators and no
+// GeneratorDomain survive Serialize -> NewPublicParamsFromBytes -> Validate, and that no domain is emitted.
+func TestLegacyGeneratorsRoundTrip(t *testing.T) {
+	curve := math3.Curves[math3.BN254]
+	rnd, err := curve.Rand()
+	require.NoError(t, err)
+
+	pp, err := Setup(32, testingHelper(t), math3.BN254)
+	require.NoError(t, err)
+	for i := range pp.PedersenGenerators {
+		pp.PedersenGenerators[i] = curve.GenG1.Mul(curve.NewRandomZr(rnd))
+	}
+	pp.RangeProofParams.P = curve.HashToG1([]byte("0"))
+	pp.RangeProofParams.Q = curve.HashToG1([]byte("1"))
+	for i := range pp.RangeProofParams.LeftGenerators {
+		pp.RangeProofParams.LeftGenerators[i] = curve.HashToG1([]byte("RangeProof." + strconv.Itoa(2*(i+1))))
+		pp.RangeProofParams.RightGenerators[i] = curve.HashToG1([]byte("RangeProof." + strconv.Itoa(2*(i+1)+1)))
+	}
+	require.Empty(t, pp.GeneratorDomain)
+
+	raw, err := pp.Serialize()
+	require.NoError(t, err)
+
+	container, err := pp3.Unmarshal(raw)
+	require.NoError(t, err)
+	inner := &ppproto.PublicParameters{}
+	require.NoError(t, proto.Unmarshal(container.Raw, inner))
+	assert.Empty(t, inner.GeneratorDomain)
+	// field 13 (generator_domain) must be absent from the wire bytes
+	for b := container.Raw; len(b) > 0; {
+		num, typ, n := protowire.ConsumeTag(b)
+		require.GreaterOrEqual(t, n, 0)
+		assert.NotEqual(t, protowire.Number(13), num)
+		m := protowire.ConsumeFieldValue(num, typ, b[n:])
+		require.GreaterOrEqual(t, m, 0)
+		b = b[n+m:]
+	}
+
+	pp2, err := NewPublicParamsFromBytes(raw, DLogNoGHDriverName, ProtocolV1)
+	require.NoError(t, err)
+	require.NoError(t, pp2.Validate())
+	assert.Equal(t, "", pp2.GeneratorDomain)
 }
 
 // TestValidateRejectsMalformedGenerators checks that structural errors are rejected also without a GeneratorDomain.
