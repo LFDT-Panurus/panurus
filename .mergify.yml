@@ -19,7 +19,9 @@ shared:
   # app, and the CodeQL workflow (.github/workflows/codeql-analysis.yml) job
   # `Analyze`. `publish-coverage` needs every `utest` and `itest` matrix job,
   # so it succeeds only once all of them have passed; that avoids listing ~90
-  # matrix entries here. Keep this list in sync with the workflows.
+  # matrix entries here. `unit-tests` passes only if every `utest` job passed, so
+  # the unit-test gate does not depend on the coverage job. Keep this list in sync
+  # with the workflows.
   conditions: &conditions
     - base=main
     - -draft
@@ -33,6 +35,7 @@ shared:
     - check-success=bench-check
     - check-success=cgo-check
     - check-success=publish-coverage
+    - check-success=unit-tests
     - check-success=Analyze
 
 merge_queue:

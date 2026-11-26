@@ -1,0 +1,100 @@
+name: Nightly Race Unit Tests
+
+# Runs every unit-test target of tests.yml with the race detector (RACE=1) on main.
+# A scheduled failure opens an issue, or comments on the open one.
+
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+
+env:
+  GOFLAGS: -mod=mod
+
+permissions:
+  contents: read
+
+jobs:
+
+  utest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Same targets as the utest job of tests.yml; `make unit-tests-check` keeps them in sync.
+        include:
+          - tests: unit-tests-main
+            docker: true
+          - tests: unit-tests-hashicorp
+            docker: true
+          - tests: unit-tests-evm
+            foundry: true
+          - tests: unit-tests-integration
+          - tests: unit-tests-cmd
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The evm module's anvil e2e suite deploys contracts that import the forge-std submodule.
+          submodules: recursive
+
+      - name: Set up Go
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: "go.mod"
+          cache-dependency-path: "**/*.sum"
+
+      - name: Set up tools
+        run: make install-tools
+
+      - name: Set up foundry
+        # Without forge and anvil the evm anvil e2e suite would be skipped instead of run.
+        if: matrix.foundry
+        uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1.9.2
+        with:
+          # Same pin as tests.yml.
+          version: v1.7.1
+
+      - name: Install Testing Docker Images
+        if: matrix.docker
+        run: make testing-docker-images
+
+      - name: Run ${{ matrix.tests }} with race detection
+        run: make ${{ matrix.tests }} RACE=1
+
+  report-failure:
+    needs: utest
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the failure issue
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            const title = 'Nightly race unit tests failed'
+
+            const existing = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${context.repo.owner}/${context.repo.repo} is:issue is:open in:title "${title}"`,
+            })
+            const issue = existing.data.items.find(i => i.title === title)
+
+            if (issue) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `Failed again: ${runUrl}`,
+              })
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body: `The nightly race unit tests failed on \`main\`: ${runUrl}`,
+                labels: ['race', 'unit-tests'],
+              })
+            }

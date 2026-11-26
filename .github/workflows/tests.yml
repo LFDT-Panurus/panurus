@@ -123,22 +123,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # unit-tests-race is split into shards (see the unit-tests-race-* targets in the Makefile)
-        # that run as parallel jobs. Each race shard also writes the coverage profile, so the suite
-        # is no longer run a second time without -race just for coverage.
+        # One job per target in UNIT_TEST_TARGETS (unit-tests.mk), without the race detector.
+        # nightly-race-unit-tests.yml runs the same targets with RACE=1. `make unit-tests-check`
+        # fails if this list, that workflow's list and the Go modules drift apart.
         include:
-          - tests: unit-tests-race-db
+          - tests: unit-tests-main
             coverage: true
             # The selector and storage tests start Postgres and Vault containers.
             docker: true
-          - tests: unit-tests-race-core
+          - tests: unit-tests-hashicorp
+            # The Vault tests start a Vault container.
+            docker: true
+          - tests: unit-tests-evm
             coverage: true
-          - tests: unit-tests-race-rest
-            coverage: true
-            # This shard runs the evm module's anvil e2e suite and the Solidity contract tests.
+            # This module runs the anvil e2e suite and the Solidity contract tests.
             foundry: true
-          # The regression package reports no statements, so it uploads no coverage.
-          - tests: unit-tests-regression
+          - tests: unit-tests-integration
+          - tests: unit-tests-cmd
 
     steps:
       - name: Checkout code
@@ -159,7 +160,7 @@ jobs:
         run: make install-tools
 
       - name: Set up foundry
-        # Only the shard that runs the evm module needs forge and anvil. Without them its anvil e2e
+        # Only the evm module needs forge and anvil. Without them its anvil e2e
         # suite would be skipped instead of run.
         if: matrix.foundry
         uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1.9.2
@@ -196,6 +197,15 @@ jobs:
       - name: Solidity contract tests
         if: matrix.foundry
         run: make test-evm-contracts EVM_CONTRACTS_REQUIRED=1
+
+  # Single status check for all unit-test jobs; the Mergify queue (.mergify.yml) requires it.
+  unit-tests:
+    needs: utest
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check that every utest job passed
+        run: test "${{ needs.utest.result }}" = success
 
   itest:
     needs: checks

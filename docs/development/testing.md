@@ -63,7 +63,7 @@ Panurus uses a system called `NWO` from Fabric Smart Client for its integration 
 
 You can run unit tests using the following make targets:
 
--   **Standard Unit Tests**:
+-   **Standard Unit Tests** (every Go module):
     ```bash
     make unit-tests
     ```
@@ -71,14 +71,23 @@ You can run unit tests using the following make targets:
     ```bash
     make unit-tests-race
     ```
-    CI runs this suite as three parallel shards, which you can also run on their own:
-    `make unit-tests-race-db` (selector and storage packages; needs `make testing-docker-images`),
-    `make unit-tests-race-core` (`token/core`), and `make unit-tests-race-rest` (everything else).
--   **Regression Unit Tests**:
-    These tests ensure that recent changes have not reintroduced previously fixed bugs or broken existing functionality.
-    ```bash
-    make unit-tests-regression
-    ```
+-   **One module**: every target in [unit-tests.mk](../../unit-tests.mk) runs on its own, for example
+    `make unit-tests-main` or `make unit-tests-evm RACE=1`. See the [Makefile reference](makefile.md#unit-tests).
+-   **Regression Unit Tests**: these tests ensure that recent changes have not reintroduced previously fixed bugs
+    or broken existing functionality. `make unit-tests-main` runs them, without the test timeout.
+
+### Unit Tests in CI
+
+-   **Pull requests and pushes** ([tests.yml](../../.github/workflows/tests.yml)): the `utest` job runs every
+    target of `unit-tests.mk` as a parallel job, without the race detector. The `unit-tests` job passes only
+    when every `utest` job passes.
+-   **Nightly** ([nightly-race-unit-tests.yml](../../.github/workflows/nightly-race-unit-tests.yml)): runs the
+    same targets on `main` with `RACE=1`. A scheduled run that fails opens an issue titled
+    "Nightly race unit tests failed", or comments on the open one.
+-   `make unit-tests-check` (part of `make checks-fast`) fails if a new Go module has no target, or if the two
+    workflows do not run exactly the targets of `unit-tests.mk`. A new module needs a target in
+    `UNIT_TEST_TARGETS` whose recipe runs `cd <module> && ...`, and a matrix entry in both workflows.
+    A new `cmd/*` module is picked up by `unit-tests-cmd` automatically.
 
 ## Fuzz Testing
 

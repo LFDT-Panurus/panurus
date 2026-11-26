@@ -109,7 +109,7 @@ body:
       label: ✅ Acceptance Criteria
       value: |
         - [ ] The issue is solved as described.
-        - [ ] Unit tests pass (`make unit-tests`, `make unit-tests-race`, and `make unit-tests-regression`).
+        - [ ] Unit tests pass (`make unit-tests` and `make unit-tests-race`).
         - [ ] Linting passes (`make lint` and `make checks`).
         - [ ] Commits are signed off (`-s`).
     validations:
