@@ -117,7 +117,7 @@ func TestFetchIdentityFromCacheTimeout(t *testing.T) {
 			Identity:  []byte("timeout identity"),
 			AuditInfo: []byte("timeout audit"),
 		}, nil
-	}, 0, nil, NewMetrics(&disabled.Provider{})) // cache size 0 to force timeout
+	}, 0, nil, NewMetrics(&disabled.Provider{})) // cache size 0 disables the cache
 	t.Cleanup(c.Close)
 
 	// Set short timeout to trigger timeout path
@@ -344,3 +344,31 @@ func (g *noopGauge) With(...string) metrics.Gauge { return g }
 func (g *noopGauge) Add(float64) {}
 
 func (g *noopGauge) Set(float64) {}
+
+// TestIdentityCacheDisabledDoesNotWait checks size 0 does not pay cacheTimeout:
+// these 200 calls took over a second before the fix.
+func TestIdentityCacheDisabledDoesNotWait(t *testing.T) {
+	c := NewIdentityCache(func(context.Context, []byte) (*idriver.IdentityDescriptor, error) {
+		return &idriver.IdentityDescriptor{Identity: []byte("disabled")}, nil
+	}, 0, nil, NewMetrics(&disabled.Provider{}))
+	t.Cleanup(c.Close)
+
+	start := time.Now()
+	for range 200 {
+		_, err := c.Identity(t.Context(), nil)
+		require.NoError(t, err)
+	}
+	assert.Less(t, time.Since(start), 500*time.Millisecond)
+}
+
+// TestIdentityCacheNegativeSize checks a negative size behaves like 0 instead of panicking.
+func TestIdentityCacheNegativeSize(t *testing.T) {
+	c := NewIdentityCache(func(context.Context, []byte) (*idriver.IdentityDescriptor, error) {
+		return &idriver.IdentityDescriptor{Identity: []byte("disabled")}, nil
+	}, -1, nil, NewMetrics(&disabled.Provider{}))
+	t.Cleanup(c.Close)
+
+	id, err := c.Identity(t.Context(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, driver.Identity([]byte("disabled")), id.Identity)
+}

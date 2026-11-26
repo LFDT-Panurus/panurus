@@ -302,13 +302,18 @@ pre-provisioned buffer of recipient data. Two caches implement that buffer:
 | Cache | Buffers | Sized by |
 |:------|:--------|:---------|
 | `role.RecipientDataCache` (`token/services/identity/role/cache.go`) | `driver.RecipientData` (pseudonym + audit info) for one wallet | `wallets.owners[].cacheSize`, falling back to `wallets.defaultCacheSize` (see [configuration](../configuration.md)) |
-| `idemix/cache.IdentityCache` (`token/services/identity/idemix/cache/cache.go`) | `idriver.IdentityDescriptor` for one Idemix key manager | same lookup, via `KeyManagerProvider.cacheSizeForID` |
+| `idemix/cache.IdentityCache` (`token/services/identity/idemix/cache/cache.go`) | `idriver.IdentityDescriptor` for one Idemix key manager | same lookup, via `Config.CacheSizeForOwnerID` |
+
+`wallets.owners[].cacheSize` is a `*int`: `0` means *no cache*, an absent field falls back to
+`wallets.defaultCacheSize`, and a negative size is treated as `0`. There is no built-in
+default size: with both keys absent the caches are off.
 
 Both follow the same contract:
 
 *   **Provisioning is lazy.** The background goroutine is started by the first request, and
     only when the configured size is greater than zero. With a size of zero the cache is
-    disabled and every request goes straight to the backend.
+    disabled: every request goes straight to the backend, without paying the 5 ms timeout
+    described below.
 *   **Requests never wait on the cache.** A request that does not find a buffered entry
     within a short timeout (5 ms) generates the data on the spot instead of blocking, so a
     slow backend degrades latency rather than stalling the caller. A cancelled caller

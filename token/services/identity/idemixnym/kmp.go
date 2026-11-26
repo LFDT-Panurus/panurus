@@ -23,7 +23,6 @@ func NewKeyManagerProvider(
 	curveID math.CurveID,
 	keyStore bccsp.KeyStore,
 	config idriver.Config,
-	cacheSize int,
 	ignoreVerifyOnlyWallet bool,
 	metricsProvider metrics.Provider,
 	identityStoreService IdentityStoreService,
@@ -33,7 +32,6 @@ func NewKeyManagerProvider(
 		curveID,
 		keyStore,
 		config,
-		cacheSize,
 		ignoreVerifyOnlyWallet,
 		metricsProvider,
 		func(conf *crypto.Config, _ bccsp.SignatureType, csp bccsp.BCCSP) (membership.KeyManager, error) {

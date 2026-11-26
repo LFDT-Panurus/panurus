@@ -499,6 +499,8 @@ token:
       # sections dedicated to the definition of the wallets
       wallets:
         # Default cache size reference that can be used by any wallet that supports caching.
+        # 0 disables caching for every wallet that does not override it; so does omitting
+        # this key, as there is no built-in default size.
         defaultCacheSize: 3
         # Number of entries of the identity provider's signer cache. Each typed identity takes 2 entries.
         # 0 or unset: 50. See docs/services/identity.md#signer-cache-size.
@@ -511,6 +513,7 @@ token:
           # The content of the folder is driver dependent.
           path:  /path/to/alice-wallet
           # Cache size, in case the wallet supports caching (e.g., idemix-based wallet).
+          # 0 disables caching for this wallet; omit the field to use defaultCacheSize.
           cacheSize: 3
         - id: alice.id1
           path: /path/to/alice.id1-wallet

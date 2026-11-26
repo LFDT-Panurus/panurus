@@ -46,6 +46,9 @@ type IdentityCache struct {
 
 // NewIdentityCache creates a new identity cache with specified size and backend.
 func NewIdentityCache(backed IdentityCacheBackendFunc, size int, auditInfo []byte, metrics *Metrics) *IdentityCache {
+	if size < 0 {
+		size = 0
+	}
 	logger.Debugf("new identity cache with size [%d]", size)
 	// The provisioning goroutine must not inherit any caller's request context, but it
 	// must still be cancellable, hence a cancellable child of context.Background.
@@ -73,6 +76,11 @@ func (c *IdentityCache) Close() {
 func (c *IdentityCache) Identity(ctx context.Context, auditInfo []byte) (*idriver.IdentityDescriptor, error) {
 	// Is the auditInfo equal to that used to fill the cache? If yes, use the cache
 	if !bytes.Equal(auditInfo, c.auditInfo) {
+		return c.fetchIdentityFromBackend(ctx, auditInfo)
+	}
+
+	// Size 0 disables the cache: no channel will ever be written to, so do not wait on it.
+	if cap(c.cache) == 0 {
 		return c.fetchIdentityFromBackend(ctx, auditInfo)
 	}
 

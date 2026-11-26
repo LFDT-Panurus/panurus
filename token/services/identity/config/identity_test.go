@@ -105,3 +105,22 @@ func TestIdentitiesForRole(t *testing.T) {
 	require.Error(t, err, "should throw identity for invalid role (1234)")
 	assert.Equal(t, "unknown role [1234]", err.Error(), "should throw identity for invalid role (1234)")
 }
+
+// TestCacheSizeForOwnerIDZeroDisables checks a per-owner 0 is not replaced by the default.
+func TestCacheSizeForOwnerIDZeroDisables(t *testing.T) {
+	off := 0
+	five := 5
+	identityConfig := &config.IdentityConfig{Wallets: &config.Wallets{
+		DefaultCacheSize: 3,
+		Owners: []idriver.ConfiguredIdentity{
+			{ID: "off", CacheSize: &off},
+			{ID: "five", CacheSize: &five},
+			{ID: "unset"},
+		},
+	}}
+
+	assert.Equal(t, 0, identityConfig.CacheSizeForOwnerID("off"))
+	assert.Equal(t, 5, identityConfig.CacheSizeForOwnerID("five"))
+	assert.Equal(t, 3, identityConfig.CacheSizeForOwnerID("unset"))
+	assert.Equal(t, 3, identityConfig.CacheSizeForOwnerID("missing"))
+}
