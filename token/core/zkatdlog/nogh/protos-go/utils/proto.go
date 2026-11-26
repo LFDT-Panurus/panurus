@@ -31,13 +31,16 @@ func ToProtoG1(s *mathlib.G1) (*math.G1, error) {
 	return &math.G1{Raw: raw}, nil
 }
 
-func FromG1ProtoSlice(generators []*math.G1) ([]*mathlib.G1, error) {
+// FromG1ProtoSlice decodes generators with FromG1Proto, rejecting elements not on curve.
+func FromG1ProtoSlice(generators []*math.G1, curve mathlib.CurveID) ([]*mathlib.G1, error) {
 	return protos.FromProtosSliceFunc(generators, func(s *math.G1) (*mathlib.G1, error) {
-		return FromG1Proto(s)
+		return FromG1Proto(s, curve)
 	})
 }
 
-func FromG1Proto(p *math.G1) (result *mathlib.G1, err error) {
+// FromG1Proto decodes p into a G1 element and rejects it if it is not on curve or is the point at infinity.
+// A nil p or an empty Raw returns nil, nil.
+func FromG1Proto(p *math.G1, curve mathlib.CurveID) (result *mathlib.G1, err error) {
 	if p == nil || len(p.Raw) == 0 {
 		return nil, nil
 	}
@@ -56,6 +59,12 @@ func FromG1Proto(p *math.G1) (result *mathlib.G1, err error) {
 	if err := g1.UnmarshalJSON(p.Raw); err != nil {
 		return nil, errors.Wrap(err, "failed to unmarshal G1")
 	}
+	if g1.CurveID() != curve {
+		return nil, errors.Errorf("invalid G1: expected curve [%d], got [%d]", curve, g1.CurveID())
+	}
+	if g1.IsInfinity() {
+		return nil, errors.New("invalid G1: point at infinity")
+	}
 
 	return g1, nil
 }
@@ -72,7 +81,9 @@ func ToProtoZr(s *mathlib.Zr) (*math.Zr, error) {
 	return &math.Zr{Raw: raw}, nil
 }
 
-func FromZrProto(p *math.Zr) (result *mathlib.Zr, err error) {
+// FromZrProto decodes p into a Zr element and rejects it if it is not on curve.
+// A nil p returns nil, nil.
+func FromZrProto(p *math.Zr, curve mathlib.CurveID) (result *mathlib.Zr, err error) {
 	if p == nil {
 		return nil, nil
 	}
@@ -88,6 +99,9 @@ func FromZrProto(p *math.Zr) (result *mathlib.Zr, err error) {
 	zr := &mathlib.Zr{}
 	if err := zr.UnmarshalJSON(p.Raw); err != nil {
 		return nil, errors.Wrap(err, "failed to unmarshal Zr")
+	}
+	if zr.CurveID() != curve {
+		return nil, errors.Errorf("invalid Zr: expected curve [%d], got [%d]", curve, zr.CurveID())
 	}
 
 	return zr, nil

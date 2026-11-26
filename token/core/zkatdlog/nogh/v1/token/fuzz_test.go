@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	math "github.com/IBM/mathlib"
+	noghv1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,8 +18,7 @@ const maxFuzzTokenBytes = 256 << 10
 
 // FuzzTokenDeserializeNoPanic fuzzes Token.Deserialize with arbitrary bytes.
 // This is reached directly from ledger-stored, attacker-influenced output
-// bytes via driver.TokenDeserializer.DeserializeToken (deserializer.go) and
-// TokensService.getOutput (service.go), so any panic here is an
+// bytes via TokensService.getOutput (service.go), so any panic here is an
 // unauthenticated DoS against every caller that reads token outputs.
 func FuzzTokenDeserializeNoPanic(f *testing.F) {
 	curve := math.Curves[math.BN254]
@@ -36,20 +36,23 @@ func FuzzTokenDeserializeNoPanic(f *testing.F) {
 	f.Add([]byte{})
 	f.Add([]byte("malformed"))
 	f.Add(raw[:len(raw)/2])
+	// Well-formed tokens on other curves must be rejected.
+	foreignRaw, err := (&Token{Owner: []byte("owner1"), Data: math.Curves[math.BLS12_381_BBS].GenG1}).Serialize()
+	require.NoError(f, err)
+	f.Add(foreignRaw)
 
 	f.Fuzz(func(t *testing.T, raw []byte) {
 		if len(raw) > maxFuzzTokenBytes {
 			t.Skip()
 		}
 		require.NotPanics(t, func() {
-			_ = (&Token{}).Deserialize(raw)
+			_ = (&Token{}).Deserialize(raw, math.BN254)
 		})
 	})
 }
 
 // FuzzMetadataDeserializeNoPanic fuzzes Metadata.Deserialize with arbitrary
 // bytes. This is reached directly from ledger-stored metadata bytes via
-// driver.TokenDeserializer.DeserializeMetadata (deserializer.go) and
 // TokensService.Deobfuscate/getOutput (service.go), so any panic here is an
 // unauthenticated DoS against every caller that reads token metadata.
 func FuzzMetadataDeserializeNoPanic(f *testing.F) {
@@ -67,13 +70,72 @@ func FuzzMetadataDeserializeNoPanic(f *testing.F) {
 	f.Add([]byte{})
 	f.Add([]byte("malformed"))
 	f.Add(raw[:len(raw)/2])
+	// Well-formed metadata on other curves must be rejected.
+	fc := math.Curves[math.BLS12_381_BBS]
+	foreignRaw, err := (&Metadata{Type: "COIN", Value: fc.NewZrFromInt(10), BlindingFactor: fc.NewZrFromInt(1)}).Serialize()
+	require.NoError(f, err)
+	f.Add(foreignRaw)
 
 	f.Fuzz(func(t *testing.T, raw []byte) {
 		if len(raw) > maxFuzzTokenBytes {
 			t.Skip()
 		}
 		require.NotPanics(t, func() {
-			_ = (&Metadata{}).Deserialize(raw)
+			_ = (&Metadata{}).Deserialize(raw, math.BN254)
+		})
+	})
+}
+
+// FuzzToClearNoPanic fuzzes an output and its metadata together, where the two meet in curve arithmetic.
+func FuzzToClearNoPanic(f *testing.F) {
+	curve := math.BN254
+	c := math.Curves[curve]
+	foreign := math.Curves[math.BLS12_381]
+	rand, err := c.Rand()
+	require.NoError(f, err)
+	pp := &noghv1.PublicParams{
+		Curve: curve,
+		PedersenGenerators: []*math.G1{
+			c.GenG1.Mul(c.NewRandomZr(rand)),
+			c.GenG1.Mul(c.NewRandomZr(rand)),
+			c.GenG1.Mul(c.NewRandomZr(rand)),
+		},
+	}
+
+	meta := &Metadata{Type: "COIN", Value: c.NewZrFromUint64(100), BlindingFactor: c.NewZrFromUint64(7)}
+	data, err := commit([]*math.Zr{c.HashToZr([]byte(meta.Type)), meta.Value, meta.BlindingFactor}, pp.PedersenGenerators, c)
+	require.NoError(f, err)
+	tokRaw, err := (&Token{Owner: []byte("owner"), Data: data}).Serialize()
+	require.NoError(f, err)
+	metaRaw, err := meta.Serialize()
+	require.NoError(f, err)
+	foreignTokRaw, err := (&Token{Owner: []byte("owner"), Data: foreign.GenG1.Copy()}).Serialize()
+	require.NoError(f, err)
+	foreignMetaRaw, err := (&Metadata{Type: "COIN", Value: foreign.NewZrFromUint64(100), BlindingFactor: foreign.NewZrFromUint64(7)}).Serialize()
+	require.NoError(f, err)
+
+	f.Add(tokRaw, metaRaw)
+	f.Add(foreignTokRaw, metaRaw)
+	f.Add(tokRaw, foreignMetaRaw)
+	f.Add([]byte{}, metaRaw)
+	f.Add(tokRaw, []byte{})
+	f.Add([]byte("malformed"), []byte("malformed"))
+	f.Add(tokRaw[:len(tokRaw)/2], metaRaw[:len(metaRaw)/2])
+
+	f.Fuzz(func(t *testing.T, tokenRaw, metadataRaw []byte) {
+		if len(tokenRaw) > maxFuzzTokenBytes || len(metadataRaw) > maxFuzzTokenBytes {
+			t.Skip()
+		}
+		require.NotPanics(t, func() {
+			tok := &Token{}
+			if err := tok.Deserialize(tokenRaw, curve); err != nil {
+				return
+			}
+			md := &Metadata{}
+			if err := md.Deserialize(metadataRaw, curve); err != nil {
+				return
+			}
+			_, _ = tok.ToClear(md, pp)
 		})
 	})
 }

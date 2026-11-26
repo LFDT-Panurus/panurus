@@ -334,3 +334,19 @@ func TestParallelBenchmarkIssueServiceIssue(t *testing.T) {
 		},
 	)
 }
+
+// TestIssueService_DeserializeIssueActionRejectsWrongCurve checks that an output on a curve other than pp.Curve is rejected.
+func TestIssueService_DeserializeIssueActionRejectsWrongCurve(t *testing.T) {
+	ts := setupTest(t)
+	action, _ := ts.createValidAction(t, []byte("an_issuer"))
+	raw, err := action.Serialize()
+	require.NoError(t, err)
+	_, err = ts.service.DeserializeIssueAction(raw)
+	require.NoError(t, err)
+
+	action.(*issue.Action).Outputs[0].Data = math.Curves[math.BLS12_381_BBS].GenG1
+	raw, err = action.Serialize()
+	require.NoError(t, err)
+	_, err = ts.service.DeserializeIssueAction(raw)
+	require.ErrorContains(t, err, "invalid G1: expected curve")
+}

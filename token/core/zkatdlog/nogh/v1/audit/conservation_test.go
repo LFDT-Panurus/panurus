@@ -63,7 +63,7 @@ func TestValidateTransferValueConservation(t *testing.T) {
 				{OutputMetadata: outputMeta(t, 20)},
 			},
 		}
-		require.NoError(t, validateTransferValueConservation(metadata, auditTokens, conservationTestPrecision))
+		require.NoError(t, validateTransferValueConservation(metadata, auditTokens, conservationTestPrecision, conservationCurve().ID()))
 	})
 
 	t.Run("inflation is rejected", func(t *testing.T) {
@@ -75,7 +75,7 @@ func TestValidateTransferValueConservation(t *testing.T) {
 				{OutputMetadata: outputMeta(t, 21)}, // sum 61 > 60
 			},
 		}
-		err := validateTransferValueConservation(metadata, auditTokens, conservationTestPrecision)
+		err := validateTransferValueConservation(metadata, auditTokens, conservationTestPrecision, conservationCurve().ID())
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "value conservation violated")
 	})
@@ -89,7 +89,7 @@ func TestValidateTransferValueConservation(t *testing.T) {
 				{OutputMetadata: outputMeta(t, 19)}, // sum 59 < 60
 			},
 		}
-		err := validateTransferValueConservation(metadata, auditTokens, conservationTestPrecision)
+		err := validateTransferValueConservation(metadata, auditTokens, conservationTestPrecision, conservationCurve().ID())
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "value conservation violated")
 	})
@@ -101,13 +101,13 @@ func TestValidateTransferValueConservation(t *testing.T) {
 			Inputs:  inputs,
 			Outputs: []*driver.TransferOutputMetadata{{OutputMetadata: outputMeta(t, 60)}},
 		}
-		require.NoError(t, validateTransferValueConservation(balanced, auditTokens, conservationTestPrecision))
+		require.NoError(t, validateTransferValueConservation(balanced, auditTokens, conservationTestPrecision, conservationCurve().ID()))
 
 		unbalanced := &driver.TransferMetadata{
 			Inputs:  inputs,
 			Outputs: []*driver.TransferOutputMetadata{{OutputMetadata: outputMeta(t, 59)}},
 		}
-		require.Error(t, validateTransferValueConservation(unbalanced, auditTokens, conservationTestPrecision))
+		require.Error(t, validateTransferValueConservation(unbalanced, auditTokens, conservationTestPrecision, conservationCurve().ID()))
 	})
 
 	t.Run("missing audit token is rejected", func(t *testing.T) {
@@ -116,7 +116,7 @@ func TestValidateTransferValueConservation(t *testing.T) {
 			Inputs:  inputs,
 			Outputs: []*driver.TransferOutputMetadata{{OutputMetadata: outputMeta(t, 60)}},
 		}
-		err := validateTransferValueConservation(metadata, map[string]*token2.Token{}, conservationTestPrecision)
+		err := validateTransferValueConservation(metadata, map[string]*token2.Token{}, conservationTestPrecision, conservationCurve().ID())
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "not found")
 	})
@@ -130,6 +130,6 @@ func TestValidateTransferValueConservation(t *testing.T) {
 				{OutputMetadata: outputMeta(t, 20)},
 			},
 		}
-		require.NoError(t, validateTransferValueConservation(metadata, auditTokens, 32))
+		require.NoError(t, validateTransferValueConservation(metadata, auditTokens, 32, conservationCurve().ID()))
 	})
 }

@@ -180,28 +180,28 @@ func marshalIssueAction(t *testing.T, inputs, outputs, proofLen int) []byte {
 func TestAction_Deserialize_TooManyInputs(t *testing.T) {
 	limits := driver.DefaultResourceLimits()
 	a := &Action{}
-	require.NoError(t, a.Deserialize(marshalIssueAction(t, limits.MaxInputs, 1, 1)))
-	require.ErrorIs(t, a.Deserialize(marshalIssueAction(t, limits.MaxInputs+1, 1, 1)), ErrTooManyInputs)
+	require.NoError(t, a.Deserialize(marshalIssueAction(t, limits.MaxInputs, 1, 1), math.BN254))
+	require.ErrorIs(t, a.Deserialize(marshalIssueAction(t, limits.MaxInputs+1, 1, 1), math.BN254), ErrTooManyInputs)
 }
 
 func TestAction_Deserialize_TooManyOutputs(t *testing.T) {
 	limits := driver.DefaultResourceLimits()
 	a := &Action{}
-	require.NoError(t, a.Deserialize(marshalIssueAction(t, 1, limits.MaxOutputs, 1)))
-	require.ErrorIs(t, a.Deserialize(marshalIssueAction(t, 1, limits.MaxOutputs+1, 1)), ErrTooManyOutputs)
+	require.NoError(t, a.Deserialize(marshalIssueAction(t, 1, limits.MaxOutputs, 1), math.BN254))
+	require.ErrorIs(t, a.Deserialize(marshalIssueAction(t, 1, limits.MaxOutputs+1, 1), math.BN254), ErrTooManyOutputs)
 }
 
 func TestAction_Deserialize_ProofTooLarge(t *testing.T) {
 	limits := driver.DefaultResourceLimits()
 	a := &Action{}
-	require.ErrorIs(t, a.Deserialize(marshalIssueAction(t, 1, 1, limits.MaxProofBytes+1)), ErrProofTooLarge)
+	require.ErrorIs(t, a.Deserialize(marshalIssueAction(t, 1, 1, limits.MaxProofBytes+1), math.BN254), ErrProofTooLarge)
 }
 
 func TestAction_Deserialize_ManyTinyInputs(t *testing.T) {
 	// Many minimal-size inputs should be rejected purely on count, not size.
 	limits := driver.DefaultResourceLimits()
 	a := &Action{}
-	require.ErrorIs(t, a.Deserialize(marshalIssueAction(t, limits.MaxInputs+1, 1, 1)), ErrTooManyInputs)
+	require.ErrorIs(t, a.Deserialize(marshalIssueAction(t, limits.MaxInputs+1, 1, 1), math.BN254), ErrTooManyInputs)
 }
 
 func TestAction_Deserialize_TooManyInputs_CustomLimit(t *testing.T) {
@@ -209,8 +209,8 @@ func TestAction_Deserialize_TooManyInputs_CustomLimit(t *testing.T) {
 	custom.MaxInputs = 2
 	a := &Action{}
 	a.SetLimits(custom)
-	require.NoError(t, a.Deserialize(marshalIssueAction(t, 2, 1, 1)))
-	require.ErrorIs(t, a.Deserialize(marshalIssueAction(t, 3, 1, 1)), ErrTooManyInputs)
+	require.NoError(t, a.Deserialize(marshalIssueAction(t, 2, 1, 1), math.BN254))
+	require.ErrorIs(t, a.Deserialize(marshalIssueAction(t, 3, 1, 1), math.BN254), ErrTooManyInputs)
 }
 
 // TestAction_Deserialize_RejectsBeforeCryptographicWork proves that an oversized proof is
@@ -222,7 +222,7 @@ func TestAction_Deserialize_RejectsBeforeCryptographicWork(t *testing.T) {
 
 	start := time.Now()
 	a := &Action{}
-	err := a.Deserialize(raw)
+	err := a.Deserialize(raw, math.BN254)
 	elapsed := time.Since(start)
 
 	require.ErrorIs(t, err, ErrProofTooLarge)

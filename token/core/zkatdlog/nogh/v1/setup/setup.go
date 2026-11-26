@@ -105,17 +105,18 @@ func (rpp *CSPRangeProofParams) ToProtos() (*pp.CSPRangeProofParams, error) {
 	return rangeProofParams, nil
 }
 
-func (rpp *CSPRangeProofParams) FromProto(params *pp.CSPRangeProofParams) error {
+// FromProto populates rpp from params, rejecting generators not on curve.
+func (rpp *CSPRangeProofParams) FromProto(params *pp.CSPRangeProofParams, curve mathlib.CurveID) error {
 	if params == nil {
 		return nil
 	}
 	rpp.BitLength = params.BitLength
 	var err error
-	rpp.LeftGenerators, err = utils2.FromG1ProtoSlice(params.LeftGenerators)
+	rpp.LeftGenerators, err = utils2.FromG1ProtoSlice(params.LeftGenerators, curve)
 	if err != nil {
 		return errors.Wrapf(err, "failed to convert left generators to protos")
 	}
-	rpp.RightGenerators, err = utils2.FromG1ProtoSlice(params.RightGenerators)
+	rpp.RightGenerators, err = utils2.FromG1ProtoSlice(params.RightGenerators, curve)
 	if err != nil {
 		return errors.Wrapf(err, "failed to convert right generators to protos")
 	}
@@ -194,23 +195,24 @@ func (rpp *RangeProofParams) ToProtos() (*pp.RangeProofParams, error) {
 	return rangeProofParams, nil
 }
 
-func (rpp *RangeProofParams) FromProto(params *pp.RangeProofParams) error {
+// FromProto populates rpp from params, rejecting generators not on curve.
+func (rpp *RangeProofParams) FromProto(params *pp.RangeProofParams, curve mathlib.CurveID) error {
 	rpp.NumberOfRounds = params.NumberOfRounds
 	rpp.BitLength = params.BitLength
 	var err error
-	rpp.LeftGenerators, err = utils2.FromG1ProtoSlice(params.LeftGenerators)
+	rpp.LeftGenerators, err = utils2.FromG1ProtoSlice(params.LeftGenerators, curve)
 	if err != nil {
 		return errors.Wrapf(err, "failed to convert left generators to protos")
 	}
-	rpp.RightGenerators, err = utils2.FromG1ProtoSlice(params.RightGenerators)
+	rpp.RightGenerators, err = utils2.FromG1ProtoSlice(params.RightGenerators, curve)
 	if err != nil {
 		return errors.Wrapf(err, "failed to convert right generators to protos")
 	}
-	rpp.P, err = utils2.FromG1Proto(params.P)
+	rpp.P, err = utils2.FromG1Proto(params.P, curve)
 	if err != nil {
 		return errors.Wrapf(err, "failed to convert p to proto")
 	}
-	rpp.Q, err = utils2.FromG1Proto(params.Q)
+	rpp.Q, err = utils2.FromG1Proto(params.Q, curve)
 	if err != nil {
 		return errors.Wrapf(err, "failed to convert q to proto")
 	}
@@ -509,14 +511,14 @@ func deserializeIdentities(raw []*protosv1.Identity) ([]driver.Identity, error) 
 func (p *PublicParams) deserializeRangeProofParams(publicParams *pp.PublicParameters) error {
 	if publicParams.GetRangeProofParams() != nil {
 		p.RangeProofParams = &RangeProofParams{}
-		if err := p.RangeProofParams.FromProto(publicParams.GetRangeProofParams()); err != nil {
+		if err := p.RangeProofParams.FromProto(publicParams.GetRangeProofParams(), p.Curve); err != nil {
 			return errors.Wrapf(err, "failed to deserialize range proof parameters")
 		}
 	}
 
 	if publicParams.GetCspRangeProofParams() != nil {
 		p.CSPRangeProofParams = &CSPRangeProofParams{}
-		if err := p.CSPRangeProofParams.FromProto(publicParams.GetCspRangeProofParams()); err != nil {
+		if err := p.CSPRangeProofParams.FromProto(publicParams.GetCspRangeProofParams(), p.Curve); err != nil {
 			return errors.Wrapf(err, "failed to deserialize csp range proof parameters")
 		}
 	}
@@ -554,7 +556,7 @@ func (p *PublicParams) Deserialize(raw []byte) error {
 	p.Curve = mathlib.CurveID(publicParams.CurveId.Id) // #nosec G115
 	p.MaxToken = publicParams.MaxToken
 	p.QuantityPrecision = publicParams.QuantityPrecision
-	pg, err := utils2.FromG1ProtoSlice(publicParams.PedersenGenerators)
+	pg, err := utils2.FromG1ProtoSlice(publicParams.PedersenGenerators, p.Curve)
 	if err != nil {
 		return errors.Wrapf(err, "failed to deserialize public parameters")
 	}

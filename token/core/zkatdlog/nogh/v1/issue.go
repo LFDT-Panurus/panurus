@@ -227,7 +227,7 @@ func (s *IssueService) verifyIssueOutput(ctx context.Context, action *issue.Acti
 	}
 	// token information in cleartext
 	metadata := &token2.Metadata{}
-	if err := metadata.Deserialize(om.OutputMetadata); err != nil {
+	if err := metadata.Deserialize(om.OutputMetadata, pp.Curve); err != nil {
 		return nil, errors.Wrap(err, "failed unmarshalling metadata")
 	}
 	if err := metadata.Validate(true); err != nil {
@@ -288,7 +288,7 @@ func (s *IssueService) VerifyIssue(ctx context.Context, ia driver.IssueAction, o
 // DeserializeIssueAction un-marshals raw bytes into a zkatdlog IssueAction
 func (s *IssueService) DeserializeIssueAction(raw []byte) (driver.IssueAction, error) {
 	issue := &issue.Action{}
-	err := issue.Deserialize(raw)
+	err := issue.Deserialize(raw, s.PublicParametersManager.PublicParams().Curve)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to deserialize issue action")
 	}

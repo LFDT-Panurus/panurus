@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	math3 "github.com/IBM/mathlib"
+	ppproto "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/v1/pp"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
 	"github.com/stretchr/testify/require"
 )
@@ -45,6 +46,8 @@ func FuzzPublicParamsDeserializeNoPanic(f *testing.F) {
 	rawWithDomain, err := withDomain.Serialize()
 	require.NoError(f, err)
 	f.Add(rawWithDomain)
+	// Declared curve does not match the curve of the generators.
+	f.Add(reencodePP(f, raw, func(p *ppproto.PublicParameters) { p.CurveId.Id = uint64(math3.FP256BN_AMCL) }))
 
 	f.Fuzz(func(t *testing.T, raw []byte) {
 		if len(raw) > maxFuzzPublicParamsBytes {

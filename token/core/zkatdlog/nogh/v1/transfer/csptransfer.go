@@ -33,12 +33,16 @@ func (p *CSPProof) Serialize() ([]byte, error) {
 	return asn1.Marshal[asn1.Serializer](p.TypeAndSum, p.RangeCorrectness)
 }
 
-// Deserialize unmarshals the CSPProof from bytes.
-func (p *CSPProof) Deserialize(bytes []byte) error {
+// Deserialize unmarshals the CSPProof from bytes and validates it: every element must be non-nil and on curve.
+func (p *CSPProof) Deserialize(bytes []byte, curve math.CurveID) error {
 	p.TypeAndSum = &TypeAndSumProof{}
 	p.RangeCorrectness = &csp.RangeCorrectness{}
 
-	return asn1.Unmarshal[asn1.Serializer](bytes, p.TypeAndSum, p.RangeCorrectness)
+	if err := asn1.Unmarshal[asn1.Serializer](bytes, p.TypeAndSum, p.RangeCorrectness); err != nil {
+		return err
+	}
+
+	return p.Validate(curve)
 }
 
 // Validate ensures the cSPProof components are present and well-formed.
@@ -197,11 +201,8 @@ func NewCSPVerifier(inputs, outputs []*math.G1, pp *v1.PublicParams) *CSPVerifie
 // Verify checks the validity of a serialized Proof.
 func (v *CSPVerifier) Verify(proofRaw []byte) error {
 	proof := CSPProof{}
-	err := proof.Deserialize(proofRaw)
+	err := proof.Deserialize(proofRaw, v.PP.Curve)
 	if err != nil {
-		return errors.Wrap(err, "invalid transfer proof")
-	}
-	if err := proof.Validate(v.PP.Curve); err != nil {
 		return errors.Wrap(err, "invalid transfer proof")
 	}
 

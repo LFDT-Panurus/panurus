@@ -517,7 +517,9 @@ func TestCommTokenUpgrade_OpeningWithAnInvalidElement(t *testing.T) {
 			BlindingFactor: local.NewZrFromInt(1),
 		})
 		_, err := issuer.CheckUpgradeProof(t.Context(), ch, raw, tokens)
-		require.ErrorContains(t, err, "invalid value in the opening of token")
+		// rejected at decode time, before the opening checks
+		require.ErrorContains(t, err, "failed to deserialize the opening of token")
+		require.ErrorContains(t, err, "invalid Zr: expected curve")
 	})
 
 	t.Run("blinding factor from another curve", func(t *testing.T) {
@@ -527,7 +529,9 @@ func TestCommTokenUpgrade_OpeningWithAnInvalidElement(t *testing.T) {
 			BlindingFactor: foreign.NewZrFromInt(1),
 		})
 		_, err := issuer.CheckUpgradeProof(t.Context(), ch, raw, tokens)
-		require.ErrorContains(t, err, "invalid blinding factor in the opening of token")
+		// rejected at decode time, before the opening checks
+		require.ErrorContains(t, err, "failed to deserialize the opening of token")
+		require.ErrorContains(t, err, "invalid Zr: expected curve")
 	})
 
 	// an opening without a type would otherwise be carried into the re-issued token

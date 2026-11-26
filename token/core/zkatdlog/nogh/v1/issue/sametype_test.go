@@ -194,7 +194,7 @@ func TestBulletProofVerifierRejectsTruncatedSameTypeProof(t *testing.T) {
 	require.NoError(t, err)
 
 	bp := &issue.BulletProof{}
-	require.NoError(t, bp.Deserialize(proofBytes))
+	require.NoError(t, bp.Deserialize(proofBytes, math.BN254))
 
 	// Truncate the SameType sub-proof to only its first 2 of 4 elements.
 	truncatedSameType, err := asn1.MarshalMath(bp.SameType.Type, bp.SameType.BlindingFactor)

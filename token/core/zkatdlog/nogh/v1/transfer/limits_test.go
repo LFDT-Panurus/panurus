@@ -189,27 +189,27 @@ func marshalTransferAction(t *testing.T, inputs, outputs, proofLen int) []byte {
 func TestTransferAction_Deserialize_TooManyInputs(t *testing.T) {
 	limits := driver.DefaultResourceLimits()
 	a := &transfer.Action{}
-	require.NoError(t, a.Deserialize(marshalTransferAction(t, limits.MaxInputs, 1, 1)))
-	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, limits.MaxInputs+1, 1, 1)), transfer.ErrTooManyInputs)
+	require.NoError(t, a.Deserialize(marshalTransferAction(t, limits.MaxInputs, 1, 1), math.BN254))
+	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, limits.MaxInputs+1, 1, 1), math.BN254), transfer.ErrTooManyInputs)
 }
 
 func TestTransferAction_Deserialize_TooManyOutputs(t *testing.T) {
 	limits := driver.DefaultResourceLimits()
 	a := &transfer.Action{}
-	require.NoError(t, a.Deserialize(marshalTransferAction(t, 1, limits.MaxOutputs, 1)))
-	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, 1, limits.MaxOutputs+1, 1)), transfer.ErrTooManyOutputs)
+	require.NoError(t, a.Deserialize(marshalTransferAction(t, 1, limits.MaxOutputs, 1), math.BN254))
+	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, 1, limits.MaxOutputs+1, 1), math.BN254), transfer.ErrTooManyOutputs)
 }
 
 func TestTransferAction_Deserialize_ProofTooLarge(t *testing.T) {
 	limits := driver.DefaultResourceLimits()
 	a := &transfer.Action{}
-	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, 1, 1, limits.MaxProofBytes+1)), transfer.ErrProofTooLarge)
+	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, 1, 1, limits.MaxProofBytes+1), math.BN254), transfer.ErrProofTooLarge)
 }
 
 func TestTransferAction_Deserialize_ManyTinyInputs(t *testing.T) {
 	limits := driver.DefaultResourceLimits()
 	a := &transfer.Action{}
-	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, limits.MaxInputs+1, 1, 1)), transfer.ErrTooManyInputs)
+	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, limits.MaxInputs+1, 1, 1), math.BN254), transfer.ErrTooManyInputs)
 }
 
 func TestTransferAction_Deserialize_TooManyInputs_CustomLimit(t *testing.T) {
@@ -217,8 +217,8 @@ func TestTransferAction_Deserialize_TooManyInputs_CustomLimit(t *testing.T) {
 	custom.MaxInputs = 2
 	a := &transfer.Action{}
 	a.SetLimits(custom)
-	require.NoError(t, a.Deserialize(marshalTransferAction(t, 2, 1, 1)))
-	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, 3, 1, 1)), transfer.ErrTooManyInputs)
+	require.NoError(t, a.Deserialize(marshalTransferAction(t, 2, 1, 1), math.BN254))
+	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, 3, 1, 1), math.BN254), transfer.ErrTooManyInputs)
 }
 
 // TestTransferAction_Deserialize_RejectsBeforeCryptographicWork proves that an oversized
@@ -230,7 +230,7 @@ func TestTransferAction_Deserialize_RejectsBeforeCryptographicWork(t *testing.T)
 
 	start := time.Now()
 	a := &transfer.Action{}
-	err := a.Deserialize(raw)
+	err := a.Deserialize(raw, math.BN254)
 	elapsed := time.Since(start)
 
 	require.ErrorIs(t, err, transfer.ErrProofTooLarge)

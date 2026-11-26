@@ -211,7 +211,7 @@ func TestSecurityPanicAuditingContextMetadataCounter(t *testing.T) {
 func TestSecurityFalseAcceptanceTransferDeserializeNilOutput(t *testing.T) {
 	action := &transfer.Action{}
 	// Garbage bytes that can't be a valid protobuf-encoded TransferAction.
-	err := action.Deserialize([]byte("not-a-valid-proto-payload"))
+	err := action.Deserialize([]byte("not-a-valid-proto-payload"), testUseCaseExtra.CurveID)
 	require.Error(t, err, "deserializing garbage bytes must fail")
 }
 
@@ -1323,7 +1323,7 @@ func tamperIssueAction(t *testing.T, env *testing2.Env, mutate func(*issue.Actio
 
 	require.Len(t, env.TRWithIssue.Actions, 1)
 	action := &issue.Action{}
-	require.NoError(t, action.Deserialize(env.TRWithIssue.Actions[0].Raw))
+	require.NoError(t, action.Deserialize(env.TRWithIssue.Actions[0].Raw, testUseCaseExtra.CurveID))
 
 	mutate(action)
 
@@ -1370,7 +1370,7 @@ func TestSecurityValidatorRejectsTruncatedSameTypeProofInIssueRequest(t *testing
 		require.Equal(t, rp.RangeProofType, action.ProofType)
 
 		bp := &issue.BulletProof{}
-		require.NoError(t, bp.Deserialize(action.Proof))
+		require.NoError(t, bp.Deserialize(action.Proof, testUseCaseExtra.CurveID))
 
 		truncatedSameType, err := asn1.MarshalMath(bp.SameType.Type, bp.SameType.BlindingFactor)
 		require.NoError(t, err)

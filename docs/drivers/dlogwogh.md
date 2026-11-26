@@ -1077,52 +1077,53 @@ The protocol uses a two-layer encoding strategy:
 
 #### 10.2.1 Scalar Field Element ($\mathbb{Z}_r$)
 
-- **Format**: Big-endian fixed-length byte array
-- **Size**: 32 bytes for BLS12-381, 32 bytes for BN254
-- **Encoding**: Direct byte representation of the integer
+- **Format**: `math.Zr.Raw` holds the mathlib JSON encoding `{"curve": <CurveID>, "element": <bytes>}`.
+- **Decoding**: the curve ID on the wire must equal the expected curve (`pp.Curve`).
 
 ```go
-// From protos-go/utils/utils.go
-func ToProtoZr(zr *math.Zr) (*math2.Zr, error) {
-    if zr == nil {
-        return nil, errors.New("cannot convert nil Zr to proto")
+// From protos-go/utils/proto.go
+func FromZrProto(p *math.Zr, curve mathlib.CurveID) (*mathlib.Zr, error) {
+    if p == nil {
+        return nil, nil
     }
-    return &math2.Zr{
-        Value: zr.Bytes(),
-    }, nil
-}
-
-func FromZrProto(zr *math2.Zr) (*math.Zr, error) {
-    if zr == nil {
-        return nil, errors.New("cannot convert nil proto to Zr")
+    zr := &mathlib.Zr{}
+    if err := zr.UnmarshalJSON(p.Raw); err != nil {
+        return nil, errors.Wrap(err, "failed to unmarshal Zr")
     }
-    return math.Curves[curveID].NewZrFromBytes(zr.Value), nil
+    if zr.CurveID() != curve {
+        return nil, errors.Errorf("invalid Zr: expected curve [%d], got [%d]", curve, zr.CurveID())
+    }
+    return zr, nil
 }
 ```
 
 #### 10.2.2 Group Element ($G_1$)
 
-- **Format**: Compressed elliptic curve point
-- **Size**: 48 bytes for BLS12-381, 32 bytes for BN254
-- **Encoding**: Compressed point representation (x-coordinate + sign bit)
+- **Format**: `math.G1.Raw` holds the mathlib JSON encoding `{"curve": <CurveID>, "element": <bytes>}`.
+- **Decoding**: same curve check as for $\mathbb{Z}_r$; the point at infinity is also rejected. An empty `Raw` decodes to `nil`.
 
 ```go
-func ToProtoG1(g1 *math.G1) (*math2.G1, error) {
-    if g1 == nil {
-        return nil, errors.New("cannot convert nil G1 to proto")
+// From protos-go/utils/proto.go
+func FromG1Proto(p *math.G1, curve mathlib.CurveID) (*mathlib.G1, error) {
+    if p == nil || len(p.Raw) == 0 {
+        return nil, nil
     }
-    return &math2.G1{
-        Value: g1.Bytes(),
-    }, nil
-}
-
-func FromG1Proto(g1 *math2.G1) (*math.G1, error) {
-    if g1 == nil {
-        return nil, errors.New("cannot convert nil proto to G1")
+    g1 := &mathlib.G1{}
+    if err := g1.UnmarshalJSON(p.Raw); err != nil {
+        return nil, errors.Wrap(err, "failed to unmarshal G1")
     }
-    return math.Curves[curveID].NewG1FromBytes(g1.Value), nil
+    if g1.CurveID() != curve {
+        return nil, errors.Errorf("invalid G1: expected curve [%d], got [%d]", curve, g1.CurveID())
+    }
+    if g1.IsInfinity() {
+        return nil, errors.New("invalid G1: point at infinity")
+    }
+    return g1, nil
 }
 ```
+
+Tokens, metadata, actions and public parameters decode every element with these functions, so an element on another curve is rejected at decode time.
+The composite proofs (`transfer.Proof`, `transfer.CSPProof`, `issue.BulletProof`, `issue.CSPProof`) take the expected curve in `Deserialize` and validate every element before returning. The sub-proof `Deserialize` methods do not check the curve.
 
 ### 10.3 Token Serialization
 
@@ -1618,6 +1619,11 @@ The security of ZKAT-DLOG (NOGH) relies on:
 - Timing attacks (constant-time operations)
 - Cache attacks (memory access patterns)
 - Power analysis (where applicable)
+
+**Curve Confusion Resistance**: mathlib decoders take the curve ID from the wire, and mixing curves either panics or gives a wrong result.
+- Every element decoded from the wire (tokens, metadata, actions, public parameters) is rejected unless it is on `pp.Curve` (see [10.2](#102-mathematical-elements-encoding)). G1 points at infinity are also rejected.
+- Composite proof `Deserialize` methods validate every element against `pp.Curve` before returning.
+- Elements built in memory are not checked at decode time. Code that builds them from untrusted data must decode them with the functions above.
 
 ## 13. Implementation Details
 

@@ -15,9 +15,11 @@ import (
 
 	math3 "github.com/IBM/mathlib"
 	pp3 "github.com/LFDT-Panurus/panurus/token/core/common/encoding/pp"
+	utils2 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/utils"
 	ppproto "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/v1/pp"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
 	"github.com/LFDT-Panurus/panurus/token/driver"
+	driverpp "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/pp"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -545,7 +547,7 @@ func TestRangeProofParamsConversion(t *testing.T) {
 	require.NoError(t, err)
 
 	recovered := &RangeProofParams{}
-	err = recovered.FromProto(proto)
+	err = recovered.FromProto(proto, curve)
 	require.NoError(t, err)
 
 	assert.Equal(t, original.BitLength, recovered.BitLength)
@@ -1285,4 +1287,58 @@ func TestValidateRejectsMalformedGenerators(t *testing.T) {
 		pp.CSPRangeProofParams.LeftGenerators[3] = nil
 		require.NotPanics(t, func() { require.Error(t, pp.Validate()) })
 	})
+}
+
+// reencodePP decodes serialized public parameters, applies mutate to the proto, and re-encodes them.
+func reencodePP(tb testing.TB, raw []byte, mutate func(p *ppproto.PublicParameters)) []byte {
+	tb.Helper()
+	container, err := pp3.Unmarshal(raw)
+	require.NoError(tb, err)
+	p := &ppproto.PublicParameters{}
+	require.NoError(tb, proto.Unmarshal(container.Raw, p))
+	mutate(p)
+	inner, err := proto.Marshal(p)
+	require.NoError(tb, err)
+	out, err := pp3.Marshal(&driverpp.PublicParameters{Identifier: container.Identifier, Raw: inner})
+	require.NoError(tb, err)
+
+	return out
+}
+
+// TestPublicParamsDeserializeRejectsGeneratorsOnOtherCurve checks that generators on a curve other
+// than the declared one are rejected at decode time.
+func TestPublicParamsDeserializeRejectsGeneratorsOnOtherCurve(t *testing.T) {
+	foreign, err := utils2.ToProtoG1(math3.Curves[math3.BLS12_381_BBS].GenG1)
+	require.NoError(t, err)
+	cases := map[string]struct {
+		proofType rp.ProofType
+		mutate    func(p *ppproto.PublicParameters)
+	}{
+		"pedersen generator":     {rp.RangeProofType, func(p *ppproto.PublicParameters) { p.PedersenGenerators[0] = foreign }},
+		"range proof P":          {rp.RangeProofType, func(p *ppproto.PublicParameters) { p.RangeProofParams.P = foreign }},
+		"range proof Q":          {rp.RangeProofType, func(p *ppproto.PublicParameters) { p.RangeProofParams.Q = foreign }},
+		"range proof left":       {rp.RangeProofType, func(p *ppproto.PublicParameters) { p.RangeProofParams.LeftGenerators[0] = foreign }},
+		"range proof right":      {rp.RangeProofType, func(p *ppproto.PublicParameters) { p.RangeProofParams.RightGenerators[0] = foreign }},
+		"csp left generator":     {rp.CSPRangeProofType, func(p *ppproto.PublicParameters) { p.CspRangeProofParams.LeftGenerators[0] = foreign }},
+		"csp right generator":    {rp.CSPRangeProofType, func(p *ppproto.PublicParameters) { p.CspRangeProofParams.RightGenerators[0] = foreign }},
+		"declared curve swapped": {rp.RangeProofType, func(p *ppproto.PublicParameters) { p.CurveId.Id = uint64(math3.FP256BN_AMCL) }},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			params, err := NewWith(SetupParams{
+				DriverName:     DLogNoGHDriverName,
+				DriverVersion:  ProtocolV1,
+				BitLength:      32,
+				CurveID:        math3.BN254,
+				IdemixIssuerPK: testingHelper(t),
+				ProofType:      tc.proofType,
+			})
+			require.NoError(t, err)
+			raw, err := params.Serialize()
+			require.NoError(t, err)
+
+			_, err = NewPublicParamsFromBytes(reencodePP(t, raw, tc.mutate), DLogNoGHDriverName, ProtocolV1)
+			require.ErrorContains(t, err, "invalid G1: expected curve")
+		})
+	}
 }

@@ -16,9 +16,12 @@ import (
 	math2 "github.com/LFDT-Panurus/panurus/token/core/common/crypto/math"
 	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/benchmark"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
 	driver2 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/driver"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/mock"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
 	v1token "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/transfer"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	mock2 "github.com/LFDT-Panurus/panurus/token/driver/mock"
 	benchmark2 "github.com/LFDT-Panurus/panurus/token/services/benchmark"
@@ -281,4 +284,44 @@ func newBenchmarkTransferEnv(n int, benchmarkCase *benchmark2.Case, configuratio
 	}
 
 	return &benchmarkTransferEnv{Envs: envs}, nil
+}
+
+// TestTransferService_RejectsWrongCurve checks that DeserializeTransferAction and VerifyTransfer
+// reject elements on a curve other than pp.Curve.
+func TestTransferService_RejectsWrongCurve(t *testing.T) {
+	pp, err := setup.Setup(32, nil, math.BN254)
+	require.NoError(t, err)
+	ppm := &mock.PublicParametersManager{}
+	ppm.PublicParamsReturns(pp)
+	service := &v1.TransferService{Logger: logger, PublicParametersManager: ppm}
+	curve := math.Curves[pp.Curve]
+	foreign := math.Curves[math.BLS12_381_BBS]
+	newAction := func(out *math.G1) *transfer.Action {
+		return &transfer.Action{
+			Inputs:    []*transfer.ActionInput{{ID: &token.ID{TxId: "tx0"}, Token: &v1token.Token{Owner: []byte("owner-1"), Data: curve.GenG1}}},
+			Outputs:   []*v1token.Token{{Owner: []byte("owner-2"), Data: out}},
+			ProofType: rp.RangeProofType,
+			Proof:     []byte("proof"),
+		}
+	}
+
+	raw, err := newAction(curve.GenG1).Serialize()
+	require.NoError(t, err)
+	_, err = service.DeserializeTransferAction(raw)
+	require.NoError(t, err)
+	raw, err = newAction(foreign.GenG1).Serialize()
+	require.NoError(t, err)
+	_, err = service.DeserializeTransferAction(raw)
+	require.ErrorContains(t, err, "invalid G1: expected curve")
+
+	meta, err := (&v1token.Metadata{Type: "COIN", Value: foreign.NewZrFromInt(1), BlindingFactor: foreign.NewZrFromInt(2)}).Serialize()
+	require.NoError(t, err)
+	err = service.VerifyTransfer(t.Context(), newAction(curve.GenG1), []*driver.TransferOutputMetadata{{OutputMetadata: meta}})
+	require.ErrorContains(t, err, "invalid Zr: expected curve")
+
+	// Metadata on pp.Curve passes decoding and fails later, when opening the commitment.
+	meta, err = (&v1token.Metadata{Type: "COIN", Value: curve.NewZrFromInt(1), BlindingFactor: curve.NewZrFromInt(2)}).Serialize()
+	require.NoError(t, err)
+	err = service.VerifyTransfer(t.Context(), newAction(curve.GenG1), []*driver.TransferOutputMetadata{{OutputMetadata: meta}})
+	require.ErrorContains(t, err, "failed getting token in the clear")
 }

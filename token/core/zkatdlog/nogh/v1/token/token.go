@@ -52,7 +52,8 @@ func (t *Token) Serialize() ([]byte, error) {
 }
 
 // Deserialize unmarshals the Token from bytes and validates its type.
-func (t *Token) Deserialize(bytes []byte) error {
+// It rejects a commitment that is not on curve.
+func (t *Token) Deserialize(bytes []byte, curve math.CurveID) error {
 	typed, err := comm.UnmarshalTypedToken(bytes)
 	if err != nil {
 		return errors.Wrapf(err, "failed deserializing token")
@@ -65,7 +66,7 @@ func (t *Token) Deserialize(bytes []byte) error {
 		return errors.Wrapf(err, "failed unmarshalling token")
 	}
 	t.Owner = token.Owner
-	t.Data, err = utils.FromG1Proto(token.Data)
+	t.Data, err = utils.FromG1Proto(token.Data, curve)
 
 	return err
 }
@@ -181,7 +182,8 @@ func NewMetadata(curve math.CurveID, tokenType token.Type, values []uint64, bfs 
 }
 
 // Deserialize unmarshals Metadata from bytes and validates its structure.
-func (m *Metadata) Deserialize(b []byte) error {
+// It rejects scalars that are not on curve.
+func (m *Metadata) Deserialize(b []byte, curve math.CurveID) error {
 	typed, err := comm.UnmarshalTypedToken(b)
 	if err != nil {
 		return errors.Wrapf(err, "failed deserializing metadata")
@@ -191,11 +193,11 @@ func (m *Metadata) Deserialize(b []byte) error {
 		return errors.Wrapf(err, "failed unmarshalling metadata")
 	}
 	m.Type = token.Type(metadata.Type)
-	m.Value, err = utils.FromZrProto(metadata.Value)
+	m.Value, err = utils.FromZrProto(metadata.Value, curve)
 	if err != nil {
 		return errors.Wrapf(err, "failed to deserialize metadata")
 	}
-	m.BlindingFactor, err = utils.FromZrProto(metadata.BlindingFactor)
+	m.BlindingFactor, err = utils.FromZrProto(metadata.BlindingFactor, curve)
 	if err != nil {
 		return errors.Wrapf(err, "failed to deserialize metadata")
 	}

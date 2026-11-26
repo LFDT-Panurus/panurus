@@ -14,6 +14,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/transfer"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
 // ValidateTransferFunc is a function that validates a transfer action
@@ -36,12 +37,15 @@ type ActionDeserializer struct {
 
 // DeserializeActions deserializes the actions from the token request
 func (a *ActionDeserializer) DeserializeActions(tr *driver.TokenRequest) ([]*issue.Action, []*transfer.Action, error) {
+	if a.PublicParams == nil {
+		return nil, nil, errors.New("public parameters not set")
+	}
 	issues := tr.GetIssues()
 	issueActions := make([]*issue.Action, len(issues))
 	for i := range issues {
 		ia := &issue.Action{}
 		ia.SetLimits(a.Limits)
-		if err := ia.Deserialize(issues[i]); err != nil {
+		if err := ia.Deserialize(issues[i], a.PublicParams.Curve); err != nil {
 			return nil, nil, err
 		}
 		issueActions[i] = ia
@@ -52,7 +56,7 @@ func (a *ActionDeserializer) DeserializeActions(tr *driver.TokenRequest) ([]*iss
 	for i := range transfers {
 		ta := &transfer.Action{}
 		ta.SetLimits(a.Limits)
-		if err := ta.Deserialize(transfers[i]); err != nil {
+		if err := ta.Deserialize(transfers[i], a.PublicParams.Curve); err != nil {
 			return nil, nil, err
 		}
 		transferActions[i] = ta

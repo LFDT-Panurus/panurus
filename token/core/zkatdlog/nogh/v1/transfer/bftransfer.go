@@ -35,12 +35,16 @@ func (p *Proof) Serialize() ([]byte, error) {
 	return asn1.Marshal[asn1.Serializer](p.TypeAndSum, p.RangeCorrectness)
 }
 
-// Deserialize unmarshals the Proof from bytes.
-func (p *Proof) Deserialize(bytes []byte) error {
+// Deserialize unmarshals the Proof from bytes and validates it: every element must be non-nil and on curve.
+func (p *Proof) Deserialize(bytes []byte, curve math.CurveID) error {
 	p.TypeAndSum = &TypeAndSumProof{}
 	p.RangeCorrectness = &bulletproof.RangeCorrectness{}
 
-	return asn1.Unmarshal[asn1.Serializer](bytes, p.TypeAndSum, p.RangeCorrectness)
+	if err := asn1.Unmarshal[asn1.Serializer](bytes, p.TypeAndSum, p.RangeCorrectness); err != nil {
+		return err
+	}
+
+	return p.Validate(curve)
 }
 
 // Validate ensures the proof components are present and well-formed.
@@ -98,11 +102,8 @@ func NewBulletProofVerifier(inputs, outputs []*math.G1, pp *v1.PublicParams) *Bu
 // Verify checks the validity of a serialized Proof.
 func (v *BulletProofVerifier) Verify(proofRaw []byte) error {
 	proof := Proof{}
-	err := proof.Deserialize(proofRaw)
+	err := proof.Deserialize(proofRaw, v.PP.Curve)
 	if err != nil {
-		return errors.Wrap(err, "invalid transfer proof")
-	}
-	if err := proof.Validate(v.PP.Curve); err != nil {
 		return errors.Wrap(err, "invalid transfer proof")
 	}
 
