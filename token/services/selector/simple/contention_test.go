@@ -9,6 +9,7 @@ package simple_test
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"path"
 	"testing"
 	"time"
@@ -92,7 +93,7 @@ func startSimpleManagersWithPool(t *testing.T, number int, backoff time.Duration
 	maxIdleConns := maxOpenConns
 	maxIdleTime := time.Minute
 	cfg := fscSqlite.Config{
-		DataSource:   fmt.Sprintf("file:%s?_pragma=busy_timeout(20000)", path.Join(t.TempDir(), "db.sqlite")),
+		DataSource:   (&url.URL{Scheme: "file", Path: path.Join(t.TempDir(), "db.sqlite"), RawQuery: "_pragma=busy_timeout(20000)"}).String(),
 		MaxOpenConns: maxOpenConns,
 		MaxIdleConns: &maxIdleConns,
 		MaxIdleTime:  &maxIdleTime,

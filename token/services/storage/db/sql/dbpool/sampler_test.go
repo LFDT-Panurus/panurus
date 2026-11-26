@@ -8,6 +8,7 @@ package dbpool
 
 import (
 	"database/sql"
+	"net/url"
 	"path"
 	"runtime"
 	"sync"
@@ -196,7 +197,7 @@ func TestNewMetricsNilProviderDoesNotPanic(t *testing.T) {
 // tracks held connections, and a checkout blocked by SetMaxOpenConns advances
 // WaitCount.
 func TestSamplerAgainstRealSQLitePool(t *testing.T) {
-	dsn := "file:" + path.Join(t.TempDir(), "pool.sqlite")
+	dsn := (&url.URL{Scheme: "file", Path: path.Join(t.TempDir(), "pool.sqlite")}).String()
 	db, err := sql.Open("sqlite", dsn)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })

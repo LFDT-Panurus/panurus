@@ -34,7 +34,7 @@ type busyFixture struct {
 func newBusyFixture(t *testing.T) *busyFixture {
 	t.Helper()
 
-	dsn := "file:" + path.Join(t.TempDir(), "busy.sqlite") + "?_pragma=busy_timeout(0)"
+	dsn := sqliteDataSource(path.Join(t.TempDir(), "busy.sqlite"), "_pragma=busy_timeout(0)")
 	open := func() *sql.DB {
 		db, err := sql.Open("sqlite", dsn)
 		require.NoError(t, err)

@@ -305,7 +305,7 @@ func TestQueryValidationFailuresEndorser(t *testing.T) {
 // TestValidationFailureRetentionCap checks that only the most recent rejected rows are kept
 // and approved rows are never pruned.
 func TestValidationFailureRetentionCap(t *testing.T) {
-	dsn := "file:" + path.Join(t.TempDir(), "endorser.sqlite") + "?_pragma=busy_timeout(20000)"
+	dsn := sqliteDataSource(path.Join(t.TempDir(), "endorser.sqlite"), "_pragma=busy_timeout(20000)")
 	db, err := sql.Open("sqlite", dsn)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
