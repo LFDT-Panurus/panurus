@@ -51,10 +51,6 @@ func (i *IdentityConfig) CacheSizeForOwnerID(id string) int {
 	return i.Wallets.DefaultCacheSize
 }
 
-func (i *IdentityConfig) DefaultCacheSize() int {
-	return i.Wallets.DefaultCacheSize
-}
-
 // SignerCacheSize returns the configured identity Provider signer cache size; 0 if unset.
 func (i *IdentityConfig) SignerCacheSize() int {
 	return i.Wallets.SignerCacheSize

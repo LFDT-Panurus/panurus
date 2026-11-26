@@ -95,9 +95,7 @@ func (d *BaseWalletServiceFactory) NewWalletService(
 			key.PublicKey,
 			key.Curve,
 			keyStore,
-			identityConfig,
 			ignoreRemote,
-			metricsProvider,
 			identityDB,
 		)
 		kmps = append(kmps, kmp)

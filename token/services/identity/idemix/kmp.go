@@ -11,10 +11,8 @@ import (
 
 	bccsp "github.com/IBM/idemix/bccsp/types"
 	math "github.com/IBM/mathlib"
-	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
-	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/cache"
 	crypto2 "github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/membership"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
@@ -35,8 +33,6 @@ type KeyManagerProvider struct {
 	issuerPublicKey []byte
 	curveID         math.CurveID
 	keyStore        bccsp.KeyStore
-	config          idriver.Config
-	metricsProvider metrics.Provider
 
 	newKeyManager NewKeyManagerFunc
 
@@ -48,17 +44,13 @@ func NewKeyManagerProvider(
 	issuerPublicKey []byte,
 	curveID math.CurveID,
 	keyStore bccsp.KeyStore,
-	config idriver.Config,
 	ignoreVerifyOnlyWallet bool,
-	metricsProvider metrics.Provider,
 ) *KeyManagerProvider {
 	return NewKeyManagerProviderWithKeyManagerFactory(
 		issuerPublicKey,
 		curveID,
 		keyStore,
-		config,
 		ignoreVerifyOnlyWallet,
-		metricsProvider,
 		func(conf *crypto2.Config, sigType bccsp.SignatureType, csp bccsp.BCCSP) (membership.KeyManager, error) {
 			return NewKeyManager(conf, sigType, csp)
 		},
@@ -69,18 +61,14 @@ func NewKeyManagerProviderWithKeyManagerFactory(
 	issuerPublicKey []byte,
 	curveID math.CurveID,
 	keyStore bccsp.KeyStore,
-	config idriver.Config,
 	ignoreVerifyOnlyWallet bool,
-	metricsProvider metrics.Provider,
 	newKeyManager NewKeyManagerFunc,
 ) *KeyManagerProvider {
 	return &KeyManagerProvider{
 		issuerPublicKey:        issuerPublicKey,
 		curveID:                curveID,
 		keyStore:               keyStore,
-		config:                 config,
 		ignoreVerifyOnlyWallet: ignoreVerifyOnlyWallet,
-		metricsProvider:        metricsProvider,
 		newKeyManager:          newKeyManager,
 	}
 }
@@ -111,28 +99,6 @@ func (l *KeyManagerProvider) Get(ctx context.Context, identityConfig *driver.Ide
 		return nil, errors.Wrapf(err, "failed instantiating idemix key manager provider from [%s]", identityConfig.URL)
 	}
 
-	cacheSize := l.config.CacheSizeForOwnerID(identityConfig.ID)
-
-	var getIdentityFunc func(context.Context, []byte) (*idriver.IdentityDescriptor, error)
-	// identityCache is kept on the wrapper, not discarded: the cache owns a background
-	// provisioning goroutine and only its Close can stop it. Taking just the Identity
-	// method value here would make the cache unreachable and the goroutine permanent.
-	var identityCache *cache.IdentityCache
-	if keyManager.IsRemote() {
-		id := identityConfig.ID
-		getIdentityFunc = func(context.Context, []byte) (*idriver.IdentityDescriptor, error) {
-			return nil, errors.Errorf("cannot invoke this function, remote must register pseudonyms on wallet [%v]", id)
-		}
-	} else {
-		identityCache = cache.NewIdentityCache(
-			keyManager.Identity,
-			cacheSize,
-			nil,
-			cache.NewMetrics(l.metricsProvider),
-		)
-		getIdentityFunc = identityCache.Identity
-	}
-
 	// finalize identity configuration
 	// remove SK and keep only SKI
 	conf.Signer.Sk = nil
@@ -143,31 +109,22 @@ func (l *KeyManagerProvider) Get(ctx context.Context, identityConfig *driver.Ide
 	identityConfig.Raw = identityConfigurationRawField
 
 	return &WrappedKeyManager{
-		KeyManager:      keyManager,
-		getIdentityFunc: getIdentityFunc,
-		identityCache:   identityCache,
+		KeyManager: keyManager,
+		id:         identityConfig.ID,
 	}, nil
 }
 
 type WrappedKeyManager struct {
 	membership.KeyManager
-	getIdentityFunc func(context.Context, []byte) (*idriver.IdentityDescriptor, error)
-	// identityCache is nil for remote key managers, which do not pre-provision.
-	identityCache *cache.IdentityCache
-}
-
-// Close releases the resources held by this key manager, stopping the background
-// identity provisioning of its cache. It is idempotent and safe to call on a remote
-// key manager, which has no cache. LocalMembership.Close calls this for every key
-// manager it loaded.
-func (k *WrappedKeyManager) Close() {
-	if k.identityCache != nil {
-		k.identityCache.Close()
-	}
+	id string
 }
 
 func (k *WrappedKeyManager) Identity(ctx context.Context, auditInfo []byte) (*idriver.IdentityDescriptor, error) {
-	return k.getIdentityFunc(ctx, auditInfo)
+	if k.IsRemote() {
+		return nil, errors.Errorf("cannot invoke this function, remote must register pseudonyms on wallet [%v]", k.id)
+	}
+
+	return k.KeyManager.Identity(ctx, auditInfo)
 }
 
 // DeserializeSignerNoProbe forwards to the wrapped KeyManager if it supports probe-free

@@ -512,7 +512,9 @@ token:
           # path to the folder containing the cryptographic material associated with the wallet.
           # The content of the folder is driver dependent.
           path:  /path/to/alice-wallet
-          # Cache size, in case the wallet supports caching (e.g., idemix-based wallet).
+          # Number of pseudonyms pre-generated for this wallet (anonymous owner wallets only).
+          # This is the single buffer in front of pseudonym generation; see
+          # docs/services/identity.md#wallet-lifecycle-and-recipient-data-caching.
           # 0 disables caching for this wallet; omit the field to use defaultCacheSize.
           cacheSize: 3
         - id: alice.id1

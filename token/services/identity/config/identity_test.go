@@ -34,7 +34,6 @@ func TestCacheSizeIdentityConfig(t *testing.T) {
 	tms := config2.NewConfiguration(cp, "n1c1ns1", driver.TMSID{})
 	identityConfig, err := config.NewIdentityConfig(tms)
 	require.NoError(t, err, "failed creating identity config")
-	assert.Equal(t, 3, identityConfig.DefaultCacheSize(), "default cache size should be 3")
 	assert.Equal(t, 5, identityConfig.CacheSizeForOwnerID("owner1"), "alice cache size should be 5")
 	assert.Equal(t, 3, identityConfig.CacheSizeForOwnerID("unknown"))
 }

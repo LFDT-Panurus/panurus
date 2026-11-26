@@ -69,9 +69,9 @@ underlying provider on the caller's behalf, **Prometheus attributes the metric t
 `token/core/common/metrics`, and not to the package that declared it.
 
 Every metric created through a TMS-scoped provider is therefore exported under
-`panurus_core_common_metrics_`, whatever its source file. The clearest example is `cache_level`: it is
-declared in `token/services/identity/idemix/cache/metrics.go`, yet exported as
-`panurus_core_common_metrics_cache_level`.
+`panurus_core_common_metrics_`, whatever its source file. The clearest example is
+`recipient_data_cache_level`: it is declared in `token/services/identity/role/metrics.go`, yet
+exported as `panurus_core_common_metrics_recipient_data_cache_level`.
 
 The wiring that decides this is the driver setup in
 `token/core/{fabtoken/v1,zkatdlog/nogh/v1}/driver/driver.go`, which builds a TMS-scoped provider and
@@ -355,13 +355,10 @@ path while the identity backend keeps failing; the corresponding log line alone 
 | `panurus_core_common_metrics_identity_get_signer_duration_seconds` | histogram | `network,channel,namespace,path` | Histogram of GetSigner wall-clock time in seconds, labeled by resolution path |
 | `panurus_core_common_metrics_identity_signer_router_registrations_total` | counter | `network,channel,namespace` | Total number of conf_id-to-KeyManager bindings registered with the SignerRouter |
 | `panurus_core_common_metrics_identity_signer_router_no_probe_errors_total` | counter | `network,channel,namespace` | Total number of errors from the SignerRouter's probe-free signer deserialization path |
-| `panurus_core_common_metrics_cache_level` | gauge | `network,channel,namespace` | Level of the idemix cache |
-| `panurus_core_common_metrics_cache_provision_failures_total` | counter | `network,channel,namespace` | Failed attempts to pre-provision idemix identities |
 | `panurus_core_common_metrics_recipient_data_cache_level` | gauge | `network,channel,namespace` | Level of the wallet recipient data cache |
 | `panurus_core_common_metrics_recipient_data_provision_failures_total` | counter | `network,channel,namespace` | Failed attempts to pre-provision wallet recipient data |
 
-Source: `token/services/identity/metrics.go`, `token/services/identity/idemix/cache/metrics.go`,
-`token/services/identity/role/metrics.go`.
+Source: `token/services/identity/metrics.go`, `token/services/identity/role/metrics.go`.
 
 ## Wallet service
 
@@ -609,12 +606,12 @@ Proposal: `panurus_services_auditor_lock_wait_duration_seconds` and `..._lock_ho
 
 ### 6. Identity cache effectiveness
 
-`cache_level` and `recipient_data_cache_level` report occupancy, not effectiveness. A cache that is
-always full but never hit looks identical to one that serves every request.
+`recipient_data_cache_level` reports occupancy, not effectiveness. A cache that is always full but
+never hit looks identical to one that serves every request.
 
 Proposal: `identity_cache_requests_total{cache,outcome}` (counter) with `outcome` in `hit|miss`,
-alongside the existing gauges. `identity_signer_resolutions_total` already does this for signers; the
-identity and recipient-data caches deserve the same treatment.
+alongside the existing gauge. `identity_signer_resolutions_total` already does this for signers; the
+recipient-data cache deserves the same treatment.
 
 ### 7. Wallet resolution
 
