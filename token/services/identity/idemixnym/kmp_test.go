@@ -13,7 +13,6 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemixnym/mock"
 	kvs2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs"
-	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics/disabled"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -40,20 +39,8 @@ func testNewKeyManagerProvider(t *testing.T, configPath string, curveID math.Cur
 		config.Ipk,
 		curveID,
 		keyStore,
-		&mockConfig{},
 		false,
-		&disabled.Provider{},
 		identityStoreService,
 	)
 	assert.NotNil(t, kmp)
-}
-
-type mockConfig struct{}
-
-func (m mockConfig) CacheSizeForOwnerID(string) int {
-	return 0
-}
-
-func (m mockConfig) TranslatePath(path string) string {
-	return path
 }

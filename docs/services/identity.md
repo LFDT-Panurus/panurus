@@ -256,7 +256,7 @@ sign+verify probe) on every `GetSigner`; size the cache to at least twice that w
 *   **Wiring**: a driver builds a `SignerRouter` with `identity.NewSignerRouter(m *Metrics)`, registers `KeyManager`s against their `conf_id` with `Register`, sets a `ConfIDResolver` with `SetConfIDResolver`, and attaches it to the `Provider` with `Provider.SetSignerRouter`. See `token/core/fabtoken/v1/driver/ws.go` and the zkatdlog equivalent.
 *   **Fallback semantics**: `Resolve` returns `ok=false` (never an error) whenever routing cannot be attempted (no resolver set, no `conf_id` mapping, no `KeyManager` registered for it) or the routed `KeyManager` itself fails — callers always fall back to the probing deserializer in that case, never treating it as a hard failure.
 *   **Probe-free deserialization**: when the registered `KeyManager` also implements `idriver.ProbeFreeSignerDeserializer`, `Resolve` calls `DeserializeSignerNoProbe` directly, skipping the cryptographic probe that the fallback path relies on to catch a mismatched `KeyManager`. This is only safe because the `conf_id` already pins the identity to exactly one `KeyManager`.
-*   **Teardown**: a registration pins its `KeyManager` — and, for idemix, the BCCSP instance and `IdentityCache` behind it — for as long as the entry lives, so registrations have an explicit lifecycle:
+*   **Teardown**: a registration pins its `KeyManager` — and, for idemix, the BCCSP instance behind it — for as long as the entry lives, so registrations have an explicit lifecycle:
     *   `Unregister(confIDs ...string)` drops specific entries. `LocalMembership.Close` calls it with the `conf_id`s of its own local identities right after closing their `KeyManager`s, so a released `KeyManager` is never left routable with the probe skipped. Because `conf_id` is derived from `(ID, Type, URL)` with `Type` being the membership's identity type, one role's teardown cannot unpin another's entries.
     *   `Close()` drops every entry, for tearing down a whole router. It does not close the `KeyManager`s themselves — the router borrows them; `LocalMembership` owns them. The router stays usable afterwards.
     *   `Len()` reports how many bindings are currently held.
@@ -297,16 +297,18 @@ Three consequences worth knowing:
 
 Anonymous owner wallets hand out a fresh pseudonym for every payment. Generating one is
 expensive (an Idemix pseudonym plus a registry binding), so `AnonymousOwnerWallet` keeps a
-pre-provisioned buffer of recipient data. Two caches implement that buffer:
+pre-provisioned buffer of recipient data.
 
 | Cache | Buffers | Sized by |
 |:------|:--------|:---------|
 | `role.RecipientDataCache` (`token/services/identity/role/cache.go`) | `driver.RecipientData` (pseudonym + audit info) for one wallet | `wallets.owners[].cacheSize`, falling back to `wallets.defaultCacheSize` (see [configuration](../configuration.md)) |
-| `idemix/cache.IdentityCache` (`token/services/identity/idemix/cache/cache.go`) | `idriver.IdentityDescriptor` for one Idemix key manager | same lookup, via `Config.CacheSizeForOwnerID` |
+
+This is the only buffer in front of pseudonym generation: the idemix key manager itself is
+not cached, since a second buffer over the same generator adds queue depth, not throughput.
 
 `wallets.owners[].cacheSize` is a `*int`: `0` means *no cache*, an absent field falls back to
 `wallets.defaultCacheSize`, and a negative size is treated as `0`. There is no built-in
-default size: with both keys absent the caches are off.
+default size: with both keys absent the cache is off.
 
 Both follow the same contract:
 
@@ -337,19 +339,17 @@ Each cache persists the nym key of every pseudonym it pre-generates. See
 |:-------|:-----|:------|:--------|
 | `recipient_data_cache_level` | Gauge | `RecipientDataCache` | Entries currently buffered. Counted only once an entry is really in the buffer, so it cannot drift upward when the producer is blocked. |
 | `recipient_data_provision_failures_total` | Counter | `RecipientDataCache` | Failed pre-provisioning attempts. A rising rate means the identity backend is failing and requests are falling back to the slower on-demand path. |
-| `cache_level` | Gauge | idemix `IdentityCache` | As above, for Idemix identities. |
-| `cache_provision_failures_total` | Counter | idemix `IdentityCache` | As above, for Idemix identities. |
 
-> **Note:** these providers are `NewTMSProvider`-wrapped, so every `GaugeOpts`/`CounterOpts`
+> **Note:** this provider is `NewTMSProvider`-wrapped, so every `GaugeOpts`/`CounterOpts`
 > above must declare `network`, `channel` and `namespace` in `LabelNames` — omitting them
 > panics with "inconsistent label cardinality" on first use. See
 > [Driver Metrics](../drivers/metrics.md#pitfall-labelnames-must-include-network-channel-namespace).
 
 ### Who calls `Close()`
 
-Application code does not normally close these caches itself: they are released by the
-existing teardown chain when a token management service is unloaded, for instance when
-its public parameters are updated.
+Application code does not normally close the cache itself: it is released by the existing
+teardown chain when a token management service is unloaded, for instance when its public
+parameters are updated.
 
 ```
 core.TMSProvider.Update            (token/core/tms.go)

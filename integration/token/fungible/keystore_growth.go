@@ -46,24 +46,22 @@ type KeystoreGrowth struct {
 // registered tells whether the wallet is registered, runs is the number of node processes that used
 // the wallet, and used is the number of pseudonyms the wallet put in token outputs.
 //
-// Each process run fills two lazy caches of n entries, each holding n+1 pseudonyms, and every
-// pseudonym key is stored when it is generated. With n <= 0 no cache is filled:
-//   - role.RecipientDataCache entries have a Signers row: they are visible to skicleanup.
-//   - idemix/cache.IdentityCache entries have no Signers row until they are used.
+// Each process run fills one lazy cache of n entries, holding n+1 pseudonyms, and every
+// pseudonym key is stored when it is generated. With n <= 0 no cache is filled.
+// role.RecipientDataCache entries have a Signers row, so they are visible to skicleanup.
 //
 // Change this model, and only this model, to benchmark a change in key consumption.
 func expectedKeystoreGrowth(n int, registered bool, runs int, used int) KeystoreGrowth {
 	usk := expectedUSK(registered)
-	visible, invisible := 0, 0
+	cached := 0
 	if n > 0 {
-		visible = (n + 1) * runs
-		invisible = (n + 1) * runs
+		cached = (n + 1) * runs
 	}
 
 	return KeystoreGrowth{
-		Keys:                 usk + used + visible + invisible,
-		SignerSKIs:           used + visible,
-		SignerSKIsInKeystore: used + visible,
+		Keys:                 usk + used + cached,
+		SignerSKIs:           used + cached,
+		SignerSKIsInKeystore: used + cached,
 		SignerSKIsWithToken:  used,
 	}
 }

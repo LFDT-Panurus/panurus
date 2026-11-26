@@ -8,10 +8,7 @@ package idemix
 
 import (
 	"context"
-	"runtime"
-	"strings"
 	"testing"
-	"time"
 
 	math "github.com/IBM/mathlib"
 	"github.com/LFDT-Panurus/panurus/token"
@@ -20,26 +17,9 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/identity/membership"
 	kvs2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
-	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics/disabled"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-type mockConfig struct {
-	cacheSize int
-}
-
-func (m mockConfig) CacheSizeForOwnerID(string) int {
-	return m.cacheSize
-}
-
-func (m mockConfig) TranslatePath(path string) string {
-	return path
-}
-
-func (m mockConfig) IdentitiesForRole(driver.IdentityRoleType) ([]driver.ConfiguredIdentity, error) {
-	return nil, nil
-}
 
 //go:norace
 func TestNewKeyManagerProvider(t *testing.T) {
@@ -56,14 +36,7 @@ func testNewKeyManagerProvider(t *testing.T, configPath string, curveID math.Cur
 	keyStore, err := crypto.NewKeyStore(curveID, kvs2.Keystore(backend))
 	require.NoError(t, err)
 
-	kmp := NewKeyManagerProvider(
-		config.Ipk,
-		curveID,
-		keyStore,
-		&mockConfig{},
-		false,
-		&disabled.Provider{},
-	)
+	kmp := NewKeyManagerProvider(config.Ipk, curveID, keyStore, false)
 	assert.NotNil(t, kmp)
 	idConfig := &token.IdentityConfiguration{
 		ID:  "alice",
@@ -71,7 +44,6 @@ func testNewKeyManagerProvider(t *testing.T, configPath string, curveID math.Cur
 	}
 	km, err := kmp.Get(t.Context(), idConfig)
 	require.NoError(t, err)
-	closeKeyManager(t, km)
 	assert.NotNil(t, km)
 	assert.NotNil(t, idConfig.Raw)
 	signAndVerify(t, km)
@@ -81,7 +53,6 @@ func testNewKeyManagerProvider(t *testing.T, configPath string, curveID math.Cur
 	idConfig.URL = ""
 	km, err = kmp.Get(t.Context(), idConfig)
 	require.NoError(t, err)
-	closeKeyManager(t, km)
 	assert.NotNil(t, km)
 	assert.NotNil(t, idConfig.Raw)
 	signAndVerify(t, km)
@@ -90,7 +61,6 @@ func testNewKeyManagerProvider(t *testing.T, configPath string, curveID math.Cur
 
 	km, err = kmp.Get(t.Context(), idConfig)
 	require.NoError(t, err)
-	closeKeyManager(t, km)
 	assert.NotNil(t, km)
 	assert.NotNil(t, idConfig.Raw)
 	signAndVerify(t, km)
@@ -107,16 +77,6 @@ func testNewKeyManagerProvider(t *testing.T, configPath string, curveID math.Cur
 	_, err = kmp.Get(t.Context(), idConfig)
 	require.Error(t, err)
 	require.EqualError(t, err, "unsupported protocol version: 0")
-}
-
-// closeKeyManager releases a key manager produced by KeyManagerProvider.Get once the test
-// ends, stopping the background identity provisioning owned by its cache. Without it each
-// test that fetches an identity leaves a goroutine behind for the rest of the run.
-func closeKeyManager(t *testing.T, km membership.KeyManager) {
-	t.Helper()
-	if c, ok := km.(interface{ Close() }); ok {
-		t.Cleanup(c.Close)
-	}
 }
 
 func signAndVerify(t *testing.T, km membership.KeyManager) {
@@ -158,14 +118,7 @@ func testKeyManagerProviderErrorPaths(t *testing.T, configPath string, curveID m
 	keyStore, err := crypto.NewKeyStore(curveID, kvs2.Keystore(backend))
 	require.NoError(t, err)
 
-	kmp := NewKeyManagerProvider(
-		config.Ipk,
-		curveID,
-		keyStore,
-		&mockConfig{},
-		false,
-		&disabled.Provider{},
-	)
+	kmp := NewKeyManagerProvider(config.Ipk, curveID, keyStore, false)
 
 	// Test Getting a key-manager using a bad IdentityConfiguration due to an invalid raw identity config
 	idConfig := &driver.IdentityConfiguration{
@@ -204,7 +157,6 @@ func testKeyManagerProviderErrorPaths(t *testing.T, configPath string, curveID m
 	}
 	kmRemote, err := kmp.Get(context.Background(), idConfigRemote)
 	require.NoError(t, err)
-	closeKeyManager(t, kmRemote)
 
 	// Try to get an identity from the remote wallet - should fail
 	_, err = kmRemote.Identity(context.Background(), nil)
@@ -212,8 +164,7 @@ func testKeyManagerProviderErrorPaths(t *testing.T, configPath string, curveID m
 	assert.Contains(t, err.Error(), "cannot invoke this function, remote must register pseudonyms")
 }
 
-// TestWrappedKeyManagerIdentity tests the WrappedKeyManager.Identity method
-// that uses a pre-generated cache of Idemix pseudonyms so that calling Identity is fast
+// TestWrappedKeyManagerIdentity tests the WrappedKeyManager.Identity method.
 func TestWrappedKeyManagerIdentity(t *testing.T) {
 	testWrappedKeyManagerIdentity(t, "./testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testWrappedKeyManagerIdentity(t, "./testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
@@ -228,14 +179,7 @@ func testWrappedKeyManagerIdentity(t *testing.T, configPath string, curveID math
 	keyStore, err := crypto.NewKeyStore(curveID, kvs2.Keystore(backend))
 	require.NoError(t, err)
 
-	kmp := NewKeyManagerProvider(
-		config.Ipk,
-		curveID,
-		keyStore,
-		&mockConfig{cacheSize: 3},
-		false,
-		&disabled.Provider{},
-	)
+	kmp := NewKeyManagerProvider(config.Ipk, curveID, keyStore, false)
 
 	idConfig := &token.IdentityConfiguration{
 		ID:  "alice",
@@ -244,7 +188,6 @@ func testWrappedKeyManagerIdentity(t *testing.T, configPath string, curveID math
 	// create the WrappedKeyManager (km) from the constructed KeyManagerProvider
 	km, err := kmp.Get(context.Background(), idConfig)
 	require.NoError(t, err)
-	closeKeyManager(t, km)
 
 	// Test that Identity method works fine through the wrapper
 	id1, err := km.Identity(context.Background(), nil)
@@ -271,14 +214,7 @@ func TestKeyManagerProviderWithIgnoreVerifyOnlyWallet(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test with ignoreVerifyOnlyWallet = true
-	kmp := NewKeyManagerProvider(
-		config.Ipk,
-		math.BLS12_381_BBS_GURVY,
-		keyStore,
-		&mockConfig{},
-		true, // ignoreVerifyOnlyWallet
-		&disabled.Provider{},
-	)
+	kmp := NewKeyManagerProvider(config.Ipk, math.BLS12_381_BBS_GURVY, keyStore, true)
 
 	idConfig := &token.IdentityConfiguration{
 		ID:  "alice",
@@ -286,7 +222,6 @@ func TestKeyManagerProviderWithIgnoreVerifyOnlyWallet(t *testing.T) {
 	}
 	km, err := kmp.Get(context.Background(), idConfig)
 	require.NoError(t, err)
-	closeKeyManager(t, km)
 	assert.NotNil(t, km)
 }
 
@@ -300,14 +235,7 @@ func TestKeyManagerProviderGetWithRawConfig(t *testing.T) {
 	keyStore, err := crypto.NewKeyStore(math.BLS12_381_BBS_GURVY, kvs2.Keystore(backend))
 	require.NoError(t, err)
 
-	kmp := NewKeyManagerProvider(
-		config.Ipk,
-		math.BLS12_381_BBS_GURVY,
-		keyStore,
-		&mockConfig{},
-		false,
-		&disabled.Provider{},
-	)
+	kmp := NewKeyManagerProvider(config.Ipk, math.BLS12_381_BBS_GURVY, keyStore, false)
 
 	// First get an idConfig from a URL to populate a valid Raw idConfig
 	idConfig := &token.IdentityConfiguration{
@@ -326,63 +254,5 @@ func TestKeyManagerProviderGetWithRawConfig(t *testing.T) {
 	// get a KeyManager using this idConfig based on just the Raw config
 	km2, err := kmp.Get(context.Background(), idConfig2)
 	require.NoError(t, err)
-	closeKeyManager(t, km2)
 	assert.NotNil(t, km2)
-}
-
-// idemixProvisionGoroutineName is the symbol appearing in the stack trace of the idemix
-// identity cache's background provisioning goroutine.
-const idemixProvisionGoroutineName = "cache.(*IdentityCache).provisionIdentities"
-
-// idemixProvisioningGoroutines counts the running idemix provisioning goroutines.
-func idemixProvisioningGoroutines() int {
-	buf := make([]byte, 1<<16)
-	for {
-		n := runtime.Stack(buf, true)
-		if n < len(buf) {
-			return strings.Count(string(buf[:n]), idemixProvisionGoroutineName)
-		}
-		buf = make([]byte, 2*len(buf))
-	}
-}
-
-// TestWrappedKeyManagerClose checks that the identity cache built by Get stays reachable
-// through the wrapper, so its background provisioning goroutine can actually be stopped.
-// Previously Get kept only the cache's Identity method value, leaving the cache
-// unreachable and its Close unreachable with it.
-func TestWrappedKeyManagerClose(t *testing.T) {
-	configPath := "./testdata/bls12_381_bbs_gurvy/idemix"
-	curveID := math.BLS12_381_BBS_GURVY
-
-	backend, err := kvs2.NewInMemory()
-	require.NoError(t, err)
-	config, err := crypto.NewConfig(configPath)
-	require.NoError(t, err)
-	keyStore, err := crypto.NewKeyStore(curveID, kvs2.Keystore(backend))
-	require.NoError(t, err)
-
-	require.Eventually(t, func() bool {
-		return idemixProvisioningGoroutines() == 0
-	}, 5*time.Second, 10*time.Millisecond, "a previous test left a provisioning goroutine behind")
-
-	kmp := NewKeyManagerProvider(config.Ipk, curveID, keyStore, &mockConfig{cacheSize: 3}, false, &disabled.Provider{})
-	km, err := kmp.Get(context.Background(), &token.IdentityConfiguration{ID: "alice", URL: configPath})
-	require.NoError(t, err)
-
-	closable, ok := km.(interface{ Close() })
-	require.True(t, ok, "the key manager must expose Close")
-	t.Cleanup(closable.Close)
-
-	// Using it starts the background provisioning goroutine.
-	_, err = km.Identity(context.Background(), nil)
-	require.NoError(t, err)
-	require.Eventually(t, func() bool {
-		return idemixProvisioningGoroutines() == 1
-	}, 5*time.Second, 10*time.Millisecond, "the provisioning goroutine did not start")
-
-	// Close must terminate it, even though the cache is only reachable through the wrapper.
-	closable.Close()
-	require.Eventually(t, func() bool {
-		return idemixProvisioningGoroutines() == 0
-	}, 5*time.Second, 10*time.Millisecond, "the provisioning goroutine did not terminate")
 }

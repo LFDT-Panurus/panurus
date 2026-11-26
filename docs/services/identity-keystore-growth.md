@@ -1,7 +1,7 @@
 # Owner Wallet Key Store Growth
 
 This page explains how the key store of an Idemix owner wallet grows (for example, with the
-`zkatdlog` driver). It also explains why some keys are invisible to `skicleanup`.
+`zkatdlog` driver).
 
 ## What the Key Store Holds
 
@@ -13,19 +13,18 @@ For each Idemix owner wallet, the key store holds:
     `Temporary: false`, so the key store persists it at generation time, not at first use
     (`token/services/identity/idemix/km.go`).
 
-## Two Stacked Caches
+## The Pseudonym Cache
 
-Two lazy, in-memory caches pre-generate pseudonyms for an anonymous owner wallet:
+One lazy, in-memory cache pre-generates pseudonyms for an anonymous owner wallet:
 
 | Cache | Backend | Writes a `Signers` row |
 |:------|:--------|:-----------------------|
-| `role.RecipientDataCache` (`token/services/identity/role/cache.go`) | `AnonymousOwnerWallet.getRecipientIdentity`, which pulls from the idemix cache and registers the identity descriptor | Yes |
-| `idemix/cache.IdentityCache` (`token/services/identity/idemix/cache/cache.go`) | `KeyManager.Identity`, which only derives the nym key | No |
+| `role.RecipientDataCache` (`token/services/identity/role/cache.go`) | `AnonymousOwnerWallet.getRecipientIdentity`, which calls `KeyManager.Identity` and registers the identity descriptor | Yes |
 
-Both caches take their size from `wallets.owners[].cacheSize`, falling back to
+It takes its size from `wallets.owners[].cacheSize`, falling back to
 `wallets.defaultCacheSize`. Call this size `N`.
 
-Each cache holds `N + 1` entries:
+The cache holds `N + 1` entries:
 
 *   The buffered channel holds `N` entries.
 *   The provisioning goroutine generates one more entry and blocks while it sends it.
@@ -38,21 +37,16 @@ goroutine starts and every request goes to the backend.
 For `N > 0`:
 
 ```
-keys = usk + used pseudonyms + 2(N+1) per process run that uses the wallet
+keys = usk + used pseudonyms + (N+1) per process run that uses the wallet
 ```
 
 *   `usk` is the user secret key (one per wallet).
 *   Each used pseudonym is replaced in the cache by a new one, so it adds one key.
 *   Cached entries live only in memory. A restart loses them, but their keys stay in the key
-    store. The next run that uses the wallet fills both caches again.
+    store. The next run that uses the wallet fills the cache again.
 *   A restart that does not use the wallet adds no keys.
 
-Of the `2(N+1)` keys of each run:
-
-*   `N + 1` belong to the `RecipientDataCache` entries. They have `Signers` rows, so
-    `cmd/skicleanup` lists them as orphans.
-*   `N + 1` belong to the `IdentityCache` entries. They have no `Signers` row, so
-    `cmd/skicleanup` cannot see them.
+Every pseudonym key has a `Signers` row, so `cmd/skicleanup` lists all of them as orphans.
 
 > **Warning:** do not delete the keys of "orphan" SKIs while the node runs. Some of these
 > SKIs belong to pseudonyms that still wait in the live `RecipientDataCache`. The wallet can

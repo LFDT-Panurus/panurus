@@ -905,11 +905,6 @@
       },
       "targets": [
         {
-          "refId": "ic",
-          "expr": "panurus_core_common_metrics_cache_level{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\"}",
-          "legendFormat": "idemix cache"
-        },
-        {
           "refId": "rc",
           "expr": "panurus_core_common_metrics_recipient_data_cache_level{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\"}",
           "legendFormat": "recipient data cache"
@@ -1004,7 +999,7 @@
       "type": "timeseries",
       "id": 753,
       "title": "Cache provisioning failures (rate)",
-      "description": "Failed background pre-provisioning attempts for the idemix and wallet recipient-data caches. While these rise, requests are served on the slow path because the identity backend keeps failing.",
+      "description": "Failed background pre-provisioning attempts for the wallet recipient-data cache. While this rises, requests are served on the slow path because the identity backend keeps failing.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -1021,11 +1016,6 @@
         }
       },
       "targets": [
-        {
-          "refId": "idemix",
-          "expr": "sum(rate(panurus_core_common_metrics_cache_provision_failures_total{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\"}[$__rate_interval]))",
-          "legendFormat": "idemix provision failures/s"
-        },
         {
           "refId": "recipient",
           "expr": "sum(rate(panurus_core_common_metrics_recipient_data_provision_failures_total{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\"}[$__rate_interval]))",

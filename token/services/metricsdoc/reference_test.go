@@ -28,7 +28,6 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/auditor"
 	"github.com/LFDT-Panurus/panurus/token/services/certifier/interactive"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
-	idemixcache "github.com/LFDT-Panurus/panurus/token/services/identity/idemix/cache"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/role"
 	_ "github.com/LFDT-Panurus/panurus/token/services/logging" // registers the "panurus" metric namespace replacer
 	chaguarqueue "github.com/LFDT-Panurus/panurus/token/services/network/chaguar/finality/queue"
@@ -215,15 +214,6 @@ var groups = []group{
 			{file: "token/core/zkatdlog/nogh/v1/driver/driver.go", call: "ws, err := d.NewWalletService("},
 		},
 		build: func(p metrics.Provider) { identity.NewMetrics(p) },
-	},
-	{
-		subsystem: "Identity: idemix identity cache",
-		source:    "token/services/identity/idemix/cache/metrics.go",
-		scope:     tmsScoped,
-		wiring: []wiringSite{
-			{file: "token/services/identity/idemix/kmp.go", call: "cache.NewMetrics(l.metricsProvider)"},
-		},
-		build: func(p metrics.Provider) { idemixcache.NewMetrics(p) },
 	},
 	{
 		subsystem: "Identity: wallet recipient data cache",
