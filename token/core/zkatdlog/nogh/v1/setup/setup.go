@@ -197,6 +197,9 @@ func (rpp *RangeProofParams) ToProtos() (*pp.RangeProofParams, error) {
 
 // FromProto populates rpp from params, rejecting generators not on curve.
 func (rpp *RangeProofParams) FromProto(params *pp.RangeProofParams, curve mathlib.CurveID) error {
+	if params == nil {
+		return nil
+	}
 	rpp.NumberOfRounds = params.NumberOfRounds
 	rpp.BitLength = params.BitLength
 	var err error

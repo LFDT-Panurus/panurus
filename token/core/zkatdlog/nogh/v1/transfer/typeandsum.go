@@ -215,12 +215,18 @@ func (p *TypeAndSumProver) Prove() (*TypeAndSumProof, error) {
 	// sum = G_2^r
 	sum := p.Curve.NewG1()
 	for i := range len(p.Inputs) {
+		if p.Inputs[i] == nil {
+			return nil, ErrEmptyInputToken
+		}
 		// compute in = inputs[i]/commitmentToType
 		inputs[i] = p.Inputs[i].Copy()
 		inputs[i].Sub(p.CommitmentToType)
 		sum.Add(inputs[i])
 	}
 	for i := range len(p.Outputs) {
+		if p.Outputs[i] == nil {
+			return nil, ErrEmptyOutputToken
+		}
 		// compute out = outputs[i]/commitmentToType
 		outputs[i] = p.Outputs[i].Copy()
 		outputs[i].Sub(p.CommitmentToType)
@@ -334,7 +340,7 @@ func NewTypeAndSumVerifier(pp []*math.G1, inputs []*math.G1, outputs []*math.G1,
 
 // Verify checks the validity of a TypeAndSumProof.
 func (v *TypeAndSumVerifier) Verify(stp *TypeAndSumProof) error {
-	if stp.TypeBlindingFactor == nil || stp.Type == nil || stp.CommitmentToType == nil || stp.EqualityOfSum == nil {
+	if stp == nil || stp.TypeBlindingFactor == nil || stp.Type == nil || stp.CommitmentToType == nil || stp.EqualityOfSum == nil || stp.Challenge == nil {
 		return ErrMissingSumAndTypeComponents
 	}
 	if len(stp.InputBlindingFactors) != len(v.Inputs) {
@@ -361,6 +367,9 @@ func (v *TypeAndSumVerifier) Verify(stp *TypeAndSumProof) error {
 		if stp.InputValues[i] == nil {
 			return ErrMissingSumAndTypeInputValue
 		}
+		if stp.InputBlindingFactors[i] == nil || v.Inputs[i] == nil {
+			return ErrMissingSumAndTypeComponents
+		}
 		inputs[i] = v.Inputs[i].Copy()
 		inputs[i].Sub(stp.CommitmentToType)
 		sum.Add(inputs[i])
@@ -375,6 +384,9 @@ func (v *TypeAndSumVerifier) Verify(stp *TypeAndSumProof) error {
 	}
 
 	for i := range len(v.Outputs) {
+		if v.Outputs[i] == nil {
+			return ErrMissingSumAndTypeComponents
+		}
 		outputs[i] = v.Outputs[i].Copy()
 		outputs[i].Sub(stp.CommitmentToType)
 		sum.Sub(outputs[i])

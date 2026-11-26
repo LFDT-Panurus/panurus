@@ -570,6 +570,16 @@ func (v *rangeVerifier) Verify(rp *RangeProof) error {
 	if len(v.LeftGenerators) != len(v.RightGenerators) || uint64(len(v.LeftGenerators)) != v.BitLength {
 		return errors.New("invalid range proof: generator/bit-length mismatch")
 	}
+	if v.Commitment == nil || v.P == nil || len(v.CommitmentGenerators) < 2 {
+		return errors.New("invalid range verifier: nil commitment, nil P, or missing commitment generators")
+	}
+	for _, gens := range [][]*math.G1{v.CommitmentGenerators, v.LeftGenerators, v.RightGenerators} {
+		for _, g := range gens {
+			if g == nil {
+				return errors.New("invalid range verifier: nil generator")
+			}
+		}
+	}
 	// Replay the same transcript sequence as the prover: absorb the public statement, the
 	// commitment, C, D to derive y and z, then absorb T1, T2 to derive x. This binds x to
 	// the earlier commitments so it cannot be chosen independently of them (see preprocess

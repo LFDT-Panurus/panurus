@@ -165,7 +165,7 @@ func NewBulletProofProver(inputWitness, outputWitness []*token.Metadata, inputs,
 	}
 	typeBF := c.NewRandomZr(rand)
 	for i := range outputWitness {
-		if outputWitness[i] == nil || outputWitness[i].BlindingFactor == nil {
+		if outputWitness[i] == nil || outputWitness[i].BlindingFactor == nil || outputWitness[i].Value == nil {
 			return nil, ErrInvalidTokenWitness
 		}
 		outW[i] = outputWitness[i].Clone()
@@ -189,6 +189,9 @@ func NewBulletProofProver(inputWitness, outputWitness []*token.Metadata, inputs,
 		coms := make([]*math.G1, len(outputs))
 		// The range prover takes as input commitments outputs[i]/commitmentToType
 		for i := range outputs {
+			if outputs[i] == nil {
+				return nil, ErrEmptyOutputToken
+			}
 			coms[i] = outputs[i].Copy()
 			coms[i].Sub(commitmentToType)
 		}

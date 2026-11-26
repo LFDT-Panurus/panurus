@@ -82,6 +82,9 @@ func (s *IssueService) resolveUpgradeIssueParams(ctx context.Context, opts *driv
 	s.Logger.DebugfContext(ctx, "upgrade: extracted token type [%s] and value [%d] from the passed tokens", tokenType, totalValue)
 
 	// fetch issuer identity
+	if opts.Wallet == nil {
+		return nil, "", nil, errors.New("no issuer wallet provided to resolve the issuer identity for the upgrade")
+	}
 	issuerIdentity, err := opts.Wallet.GetIssuerIdentity(tokenType)
 	if err != nil {
 		return nil, "", nil, errors.WithMessagef(err, "failed getting issuer identity for type [%s]", tokenType)

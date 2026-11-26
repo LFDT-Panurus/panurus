@@ -52,6 +52,28 @@ func BenchmarkAuditorServiceCheck(b *testing.B) {
 	}
 }
 
+// TestAuditorCheck_NilMetadata checks that AuditorCheck returns an error, not a panic,
+// on nil metadata or a nil action entry.
+func TestAuditorCheck_NilMetadata(t *testing.T) {
+	env, err := newAuditEnv(&benchmark2.Case{NumInputs: 1, NumOutputs: 1})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		metadata *driver.TokenRequestMetadata
+	}{
+		{"nil metadata", nil},
+		{"nil action entry", &driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{nil}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var err error
+			require.NotPanics(t, func() { err = env.as.AuditorCheck(t.Context(), env.request, tc.metadata, env.anchor) })
+			require.Error(t, err)
+		})
+	}
+}
+
 // TestParallelBenchmarkAuditorServiceCheck runs the auditor check benchmark in parallel.
 func TestParallelBenchmarkAuditorServiceCheck(t *testing.T) {
 	_, _, cases, err := benchmark2.GenerateCasesWithDefaults()

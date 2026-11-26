@@ -269,6 +269,9 @@ func extractIssueActionTokenIDs(action *driver.ActionMetadataEntry, tokenIDMap m
 // extractActionTokenIDs records the token IDs spent by a single action (transfer inputs, and
 // issue inputs for token upgrades/conversions) into tokenIDMap/tokenIDs.
 func extractActionTokenIDs(action *driver.ActionMetadataEntry, tokenIDMap map[string]*token.ID, tokenIDs *[]*token.ID, i int, anchor driver.TokenRequestAnchor) error {
+	if action == nil {
+		return errors.Errorf("nil action metadata at index [%d] for tx [%s]", i, anchor)
+	}
 	if err := extractTransferActionTokenIDs(action, tokenIDMap, tokenIDs, i, anchor); err != nil {
 		return err
 	}

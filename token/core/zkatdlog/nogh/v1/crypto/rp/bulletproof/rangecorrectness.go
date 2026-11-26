@@ -220,7 +220,7 @@ func NewRangeCorrectnessVerifier(
 
 // Verify checks if the provided set of range proofs is valid.
 func (v *RangeCorrectnessVerifier) Verify(rc *RangeCorrectness) error {
-	if len(rc.Proofs) != len(v.Commitments) {
+	if rc == nil || len(rc.Proofs) != len(v.Commitments) {
 		return errors.New("invalid range proof")
 	}
 

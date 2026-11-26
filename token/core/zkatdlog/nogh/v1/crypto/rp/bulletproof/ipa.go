@@ -387,7 +387,7 @@ func NewIPAVerifier(
 // Verify checks if the provided inner product argument proof is valid.
 func (v *ipaVerifier) Verify(proof *IPA) error {
 	// check that the proof is well-formed
-	if proof.Left == nil || proof.Right == nil {
+	if proof == nil || proof.Left == nil || proof.Right == nil {
 		return errors.New("invalid IPA proof: nil elements")
 	}
 	if len(proof.L) != len(proof.R) || uint64(len(proof.L)) != v.NumberOfRounds {
@@ -404,6 +404,9 @@ func (v *ipaVerifier) Verify(proof *IPA) error {
 	}
 	if v.Transcript == nil {
 		return errors.New("invalid IPA verifier: nil transcript")
+	}
+	if v.InnerProduct == nil {
+		return errors.New("invalid IPA verifier: nil inner product")
 	}
 	// compute the first challenge x — mirrors ipaProver.Prove exactly
 	genBytes, err := common.GetG1Array(v.RightGenerators, v.LeftGenerators, []*mathlib.G1{v.Q, v.Commitment}).Bytes()

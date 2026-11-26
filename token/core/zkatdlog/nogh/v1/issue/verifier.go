@@ -61,6 +61,9 @@ func (v *BulletProofVerifier) Verify(proof []byte) error {
 	commitmentToType := tp.SameType.CommitmentToType.Copy()
 	coms := make([]*math.G1, len(v.SameType.Tokens))
 	for i := range len(v.SameType.Tokens) {
+		if v.SameType.Tokens[i] == nil {
+			return errors.Join(ErrInvalidIssueProof, ErrNilOutputData)
+		}
 		coms[i] = v.SameType.Tokens[i].Copy()
 		coms[i].Sub(commitmentToType)
 	}

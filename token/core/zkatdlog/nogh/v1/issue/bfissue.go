@@ -61,6 +61,16 @@ func NewBulletProofProver(tw []*token.Metadata, tokens []*math.G1, pp *v1.Public
 	if len(tw) == 0 {
 		return nil, errors.Wrap(ErrInvalidInputs, "cannot create bulletproof prover: no token witnesses")
 	}
+	for i := range tw {
+		if tw[i] == nil || tw[i].BlindingFactor == nil || tw[i].Value == nil {
+			return nil, ErrInvalidTokenWitness
+		}
+	}
+	for i := range tokens {
+		if tokens[i] == nil {
+			return nil, ErrNilOutputData
+		}
+	}
 	c := math.Curves[pp.Curve]
 	p := &BulletProofProver{}
 	tokenType := c.HashToZr([]byte(tw[0].Type))
@@ -77,9 +87,6 @@ func NewBulletProofProver(tw []*token.Metadata, tokens []*math.G1, pp *v1.Public
 	values := make([]uint64, len(tw))
 	blindingFactors := make([]*math.Zr, len(tw))
 	for i := range tw {
-		if tw[i] == nil || tw[i].BlindingFactor == nil {
-			return nil, ErrInvalidTokenWitness
-		}
 		// tw[i] = tw[i].Clone()
 		values[i], err = tw[i].Value.Uint()
 		if err != nil {

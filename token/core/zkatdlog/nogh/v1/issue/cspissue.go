@@ -62,6 +62,16 @@ func NewCSPBasedProver(tw []*token.Metadata, tokens []*math.G1, pp *v1.PublicPar
 	if len(tw) == 0 {
 		return nil, errors.Wrap(ErrInvalidInputs, "cannot create CSP-based prover: no token witnesses")
 	}
+	for i := range tw {
+		if tw[i] == nil || tw[i].BlindingFactor == nil || tw[i].Value == nil {
+			return nil, ErrInvalidTokenWitness
+		}
+	}
+	for i := range tokens {
+		if tokens[i] == nil {
+			return nil, ErrNilOutputData
+		}
+	}
 	c := math.Curves[pp.Curve]
 	p := &CSPBasedProver{}
 	tokenType := c.HashToZr([]byte(tw[0].Type))
@@ -78,9 +88,6 @@ func NewCSPBasedProver(tw []*token.Metadata, tokens []*math.G1, pp *v1.PublicPar
 	values := make([]uint64, len(tw))
 	blindingFactors := make([]*math.Zr, len(tw))
 	for i := range tw {
-		if tw[i] == nil || tw[i].BlindingFactor == nil {
-			return nil, ErrInvalidTokenWitness
-		}
 		values[i], err = tw[i].Value.Uint()
 		if err != nil {
 			return nil, errors.Join(ErrInvalidTokenWitnessValues, err)
@@ -180,6 +187,9 @@ func (v *CSPVerifier) Verify(proof []byte) error {
 	commitmentToType := tp.SameType.CommitmentToType.Copy()
 	coms := make([]*math.G1, len(v.SameType.Tokens))
 	for i := range len(v.SameType.Tokens) {
+		if v.SameType.Tokens[i] == nil {
+			return errors.Join(ErrInvalidIssueProof, ErrNilOutputData)
+		}
 		coms[i] = v.SameType.Tokens[i].Copy()
 		coms[i].Sub(commitmentToType)
 	}
