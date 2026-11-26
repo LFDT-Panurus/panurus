@@ -34,3 +34,5 @@ integration/token/fungible/evmgw/evmgw.test
 integration/token/fungible/evmgwfabtoken/evmgwfabtoken.test
 # ginkgo -cover writes this next to the suite it ran.
 integration/token/fungible/*/coverprofile.out
+# External public parameters for the zkatdlog regression generator; kept local, not committed.
+token/core/zkatdlog/nogh/v1/regression/testdata/external/

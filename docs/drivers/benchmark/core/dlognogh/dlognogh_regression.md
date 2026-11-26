@@ -24,6 +24,16 @@ Regression tests ensure **backwards compatibility** of the ZK-ATDLOG validator b
 
 ```
 testdata/
+├── external/                       # Public parameters produced outside this repository (gitignored)
+│   ├── zkat.json                   # 64-BN254, IPA, legacy-style generators, no auditor
+│   ├── zkat-2.json                 # same, other Pedersen generators and idemix issuer
+│   └── zkat-audit.json             # as zkat-2.json, with one x509 auditor
+├── generated/                      # Public-parameter sets only, with their signers
+│   ├── <mode>/<proof>/<config>/    # mode: domain|legacy; proof: ipa|csp|open-policy
+│   └── custom/<name>/<proof>/<config>/ # from testdata/external/<name>.json
+│       ├── params.txt              # Base64-encoded public parameters
+│       ├── pp.json                 # Parameters, bit length, curve
+│       └── signers.json            # Test-only auditor/issuer keys and identities
 └── zero/
     ├── 32-BLS12_381_BBS_GURVY/     # 32-bit IPA/bulletproof range proofs, BLS12_381 curve
     │   ├── params.txt              # Base64-encoded public parameters
@@ -50,6 +60,44 @@ testdata/
         ├── 64-BLS12_381_BBS_GURVY/
         └── 64-BN254/
 ```
+
+### Public Parameters Generator Modes
+
+`TestPublicParamsValidate` (`regression/generators_test.go`) checks how `Validate` and the
+validator treat the generators of the public parameters:
+
+- **Stored parameters**: every `params.txt` under `testdata/zero`, `zero/csp` and `zero/open-policy`
+  is loaded and validated. They declare no generator domain. Their token requests are the stored
+  vectors that `TestRegression` verifies. They cannot be regenerated, because the signing keys of
+  the stored parameters are not kept.
+- **External parameters**: every `testdata/external/<name>.json` is loaded and validated, and fails
+  with another generator domain. They come from outside this repository. Their idemix issuer is not
+  in the testdata, so no request can be signed against them. The `zkat*.json` files are 64-bit BN254
+  IPA sets with legacy-style generators, no domain, and no issuers. They share the range-proof
+  generators and differ in the Pedersen generators. `zkat-audit.json` registers one x509 auditor.
+  The directory is gitignored and kept local. Without it, this subtest is skipped, and the
+  generated sets of these files are verified without the comparison to the source file.
+- **Stored parameter sets**: `testdata/generated/<mode>/<proof>/<config>/` and
+  `testdata/generated/custom/<mode>/<proof>/<config>/` hold 30 sets:
+  mode `domain` or `legacy` with proof `ipa`, `csp` or `open-policy` (IPA proof, empty issuer
+  policy) and config `<bits>-<curve>` (4 configurations), plus, under `custom/`, for each external
+  file, mode `<file name>` with proof `ipa` and `open-policy` for `64-BN254`. Each directory contains:
+  - `params.txt`: base64 public parameters;
+  - `pp.json`: the parameters with their bit length and curve;
+  - `signers.json`: the auditor, second auditor and issuer ECDSA keys (base64 DER), identities and
+    audit info registered in the parameters. These are test-only keys, with no value.
+
+  The test loads each set with `benchmark.LoadSetupConfigurations`, generates a request of every
+  kind (transfer, issue, redeem, swap, upgrade witness, public metadata, multi-auditor, open issuer
+  policy, and the two negative fixtures) signed with the stored keys, and verifies them with the
+  same code as `TestRegression`. Adding a directory adds a subtest. The modes are:
+  - a generator domain (`regression.domain.v1`): the generators derive from it;
+  - legacy-style generators (`benchmark.UseLegacyGenerators`): random Pedersen generators and
+    range-proof generators from plain strings, as in releases up to v0.13.0, with no domain.
+    `Validate` accepts them as they are.
+  - external generators (`<file name>`): the generators and domain of
+    `testdata/external/<file name>.json`, with the bit length and curve of that file. They are
+    committed; regenerating them needs the local file. The test checks that they are equal to it.
 
 ### Test Vector Format
 
@@ -184,9 +232,22 @@ go run . -bits=32,64 -curves=BN254,BLS12_381_BBS_GURVY -num_inputs=1,2 -num_outp
 # CSP vectors (testdata/zero/csp/<config>)
 go run . -proof_type=csp -bits=32,64 -curves=BN254,BLS12_381_BBS_GURVY -num_inputs=1,2 -num_outputs=1,2
 
-# Or, equivalently, run both go:generate directives in this package:
+# Public-parameter sets only (testdata/generated/<mode>/<proof>/<config>), no vectors
+go run . -generator_domain=regression.domain.v1 -bits=32,64 -curves=BN254,BLS12_381_BBS_GURVY -num_inputs=1 -num_outputs=1
+go run . -legacy_generators -bits=32,64 -curves=BN254,BLS12_381_BBS_GURVY -num_inputs=1 -num_outputs=1
+# Generators of external parameters (testdata/generated/custom/<file name>/<proof>/<config>); the bit
+# length and curve come from the file, and only its range-proof systems are generated
+# Local only: needs the gitignored files; these runs are commented out in main.go
+go run . -generators_from=../../external/zkat.json
+go run . -generators_from=../../external/zkat-2.json
+go run . -generators_from=../../external/zkat-audit.json
+
+# Or, equivalently, run all go:generate directives in this package:
 go generate .
 ```
+
+`-generator_domain`, `-legacy_generators` and `-generators_from` are mutually exclusive. When one is set, the
+generator writes only the parameter sets and no `testdata.json`.
 
 This regenerates every `testdata.json` in each affected configuration directory
 (the swept action/input/output cases plus the fixed-shape scenario fixtures, in one

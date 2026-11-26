@@ -13,20 +13,49 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	math "github.com/IBM/mathlib"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/benchmark"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/testutils"
 	sbenchmark "github.com/LFDT-Panurus/panurus/token/services/benchmark"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemixnym"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
 //go:generate go run . -bits=32,64 -curves=BN254,BLS12_381_BBS_GURVY -num_inputs=1,2 -num_outputs=1,2
 //go:generate go run . -proof_type=csp -bits=32,64 -curves=BN254,BLS12_381_BBS_GURVY -num_inputs=1,2 -num_outputs=1,2
+//go:generate go run . -generator_domain=regression.domain.v1 -bits=32,64 -curves=BN254,BLS12_381_BBS_GURVY -num_inputs=1 -num_outputs=1
+//go:generate go run . -legacy_generators -bits=32,64 -curves=BN254,BLS12_381_BBS_GURVY -num_inputs=1 -num_outputs=1
+// The external public parameters are not committed, so their generator runs are disabled. To use
+// them, copy them to testdata/external and run:
+//   go run . -generators_from=../../external/zkat.json
+//   go run . -generators_from=../../external/zkat-2.json
+//   go run . -generators_from=../../external/zkat-audit.json
+
+// generatorsFrom selects the parameter-only run that reuses the generators of stored external
+// public parameters.
+var generatorsFrom = flag.String("generators_from", "", "external public parameters file; generates only the public parameter sets under testdata/generated/custom/<file name>, with its generators")
+
 func main() {
 	flag.Parse()
+	if *generatorsFrom != "" {
+		if err := generateExternalParameterSets(*generatorsFrom); err != nil {
+			panic(err)
+		}
+
+		return
+	}
+	if benchmark.GeneratorDomain() != "" || benchmark.LegacyGenerators() {
+		if err := generateParameterSets(); err != nil {
+			panic(err)
+		}
+
+		return
+	}
 	// The -proof_type flag (registered by the benchmark package) selects the
 	// range-proof system: RangeProofType (IPA/bulletproof, the default) or
 	// CSPRangeProofType (CSP). CSP vectors are written to a separate `csp`
@@ -263,4 +292,146 @@ func generateOpenPolicyCorpus(bits []uint64, curves []math.CurveID) error {
 	}
 
 	return nil
+}
+
+// generateParameterSets writes only the public parameter sets, with the signers that
+// are registered in them, under testdata/generated/<mode>/<proof>/<config>/, where mode
+// is domain or legacy and proof is ipa, csp, or open-policy (IPA proof, empty issuer
+// policy). It is selected by -generator_domain or -legacy_generators.
+func generateParameterSets() error {
+	domain, legacy := benchmark.GeneratorDomain(), benchmark.LegacyGenerators()
+	if domain != "" && legacy {
+		return errors.New("-generator_domain and -legacy_generators are mutually exclusive")
+	}
+	bits, curves, _, err := sbenchmark.GenerateCasesWithDefaults()
+	if err != nil {
+		return err
+	}
+
+	mode := "domain"
+	params := benchmark.SetupParams{
+		IdemixTestdataPath: "./../../../../testdata",
+		Bits:               bits,
+		CurveIDs:           curves,
+		OwnerIdentityType:  idemixnym.IdentityType,
+		GeneratorDomain:    domain,
+	}
+	if legacy {
+		mode = "legacy"
+		params.Customize = benchmark.UseLegacyGenerators
+	}
+	root := filepath.Join("./../../generated", mode)
+
+	for _, proof := range []struct {
+		name      string
+		proofType rp.ProofType
+		open      bool
+	}{
+		{"ipa", rp.RangeProofType, false},
+		{"csp", rp.CSPRangeProofType, false},
+		{"open-policy", rp.RangeProofType, true},
+	} {
+		params.ProofType = proof.proofType
+		newConfigurations := benchmark.NewSetupConfigurationsWithParams
+		if proof.open {
+			newConfigurations = benchmark.NewOpenIssuerPolicySetupConfigurations
+		}
+		configurations, err := newConfigurations(params)
+		if err != nil {
+			return err
+		}
+		if err := configurations.SaveWithSignersTo(filepath.Join(root, proof.name)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// generateExternalParameterSets writes the public parameter sets, with the signers that are
+// registered in them, under testdata/generated/custom/<name>/<proof>/<config>/, where name is the base
+// name of file without extension. The sets reuse the generators and the generator domain of the
+// public parameters in file, and its bit length and curve. They are generated only for the
+// range-proof systems that file has: ipa and open-policy for IPA, csp for CSP.
+func generateExternalParameterSets(file string) error {
+	if benchmark.GeneratorDomain() != "" || benchmark.LegacyGenerators() {
+		return errors.New("-generators_from, -generator_domain and -legacy_generators are mutually exclusive")
+	}
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		return errors.Wrapf(err, "failed reading [%s]", file)
+	}
+	src, err := setup.NewPublicParamsFromBytes(raw, setup.DLogNoGHDriverName, setup.ProtocolV1)
+	if err != nil {
+		return errors.Wrapf(err, "failed deserializing [%s]", file)
+	}
+	if err := src.Validate(); err != nil {
+		return errors.Wrapf(err, "invalid public parameters [%s]", file)
+	}
+
+	params := benchmark.SetupParams{
+		IdemixTestdataPath: "./../../../../testdata",
+		Bits:               []uint64{src.BitLength()},
+		CurveIDs:           []math.CurveID{src.Curve},
+		OwnerIdentityType:  idemixnym.IdentityType,
+		GeneratorDomain:    src.GeneratorDomain,
+		Customize:          func(pp *setup.PublicParams) error { return useGeneratorsOf(pp, src) },
+	}
+	name := strings.TrimSuffix(filepath.Base(file), filepath.Ext(file))
+	root := filepath.Join("./../../generated", "custom", name)
+
+	for _, proof := range []struct {
+		name      string
+		proofType rp.ProofType
+		open      bool
+		present   bool
+	}{
+		{"ipa", rp.RangeProofType, false, src.RangeProofParams != nil},
+		{"csp", rp.CSPRangeProofType, false, src.CSPRangeProofParams != nil},
+		{"open-policy", rp.RangeProofType, true, src.RangeProofParams != nil},
+	} {
+		if !proof.present {
+			continue
+		}
+		params.ProofType = proof.proofType
+		newConfigurations := benchmark.NewSetupConfigurationsWithParams
+		if proof.open {
+			newConfigurations = benchmark.NewOpenIssuerPolicySetupConfigurations
+		}
+		configurations, err := newConfigurations(params)
+		if err != nil {
+			return err
+		}
+		if err := configurations.SaveWithSignersTo(filepath.Join(root, proof.name)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// useGeneratorsOf replaces the Pedersen and range-proof generators of pp with those of src. It
+// keeps only the range-proof system of pp, which src must have.
+func useGeneratorsOf(pp, src *setup.PublicParams) error {
+	if len(pp.PedersenGenerators) != len(src.PedersenGenerators) {
+		return errors.Errorf("pedersen generators: got [%d], expected [%d]", len(src.PedersenGenerators), len(pp.PedersenGenerators))
+	}
+	copy(pp.PedersenGenerators, src.PedersenGenerators)
+	if pp.RangeProofParams != nil {
+		if src.RangeProofParams == nil {
+			return errors.New("source has no range proof parameters")
+		}
+		rpp := *src.RangeProofParams
+		pp.RangeProofParams = &rpp
+	}
+	if pp.CSPRangeProofParams != nil {
+		if src.CSPRangeProofParams == nil {
+			return errors.New("source has no csp range proof parameters")
+		}
+		cpp := *src.CSPRangeProofParams
+		pp.CSPRangeProofParams = &cpp
+	}
+	pp.GeneratorDomain = src.GeneratorDomain
+
+	return pp.Validate()
 }
