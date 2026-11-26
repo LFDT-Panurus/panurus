@@ -147,6 +147,8 @@ func (p *NetworkHandler) GenerateExtension(tms *topology2.TMS, node *sfcnode.Nod
 		"Endorser":              func() bool { return topology2.ToOptions(node.Options).Endorser() },
 		"EndorsementPolicyType": func() string { return FSCEndorsementPolicyType(tms) },
 		"EndorserSelection":     func() []string { return EndorserSelectionFor(tms, node) },
+		"DefaultCacheSize":      func() int { return topology2.ToOptions(node.Options).DefaultCacheSize() },
+		"StorageCleanupEnabled": func() bool { return !topology2.ToOptions(node.Options).StorageCleanupDisabled() },
 	}).Parse(Extension)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 

@@ -59,7 +59,13 @@ type Opts struct {
 	// endorsement to the peers of its own organization
 	// (services.network.fabric.endorsement.mspIDs).
 	EndorsersFromOwnOrg bool
+	// KeystoreGrowthCacheSize, if positive, adds the party node KeystoreGrowthNode, with no
+	// topology wallets, this owner wallet cache size, and storage cleanup disabled.
+	KeystoreGrowthCacheSize int
 }
+
+// KeystoreGrowthNode is the party node added by Opts.KeystoreGrowthCacheSize.
+const KeystoreGrowthNode = "dan"
 
 func SetDefaultParams(tms *topology.TMS, opts TMSOpts) {
 	switch opts.TokenSDKDriver {

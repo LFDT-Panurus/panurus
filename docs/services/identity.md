@@ -323,6 +323,9 @@ Both follow the same contract:
     and its backend closure alive for the lifetime of the process. After `Close()` the
     cache still serves requests from the backend; it simply stops pre-provisioning.
 
+Each cache persists the nym key of every pseudonym it pre-generates. See
+[Owner Wallet Key Store Growth](identity-keystore-growth.md) for the resulting growth formula.
+
 ### Cache metrics
 
 | Metric | Type | Cache | Purpose |

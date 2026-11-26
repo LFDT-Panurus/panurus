@@ -72,6 +72,7 @@ func (p *SDK) Install() error {
 			registry.RegisterFactory("GetPublicParams", &views.GetPublicParamsViewFactory{}),
 			registry.RegisterFactory("FetchAndUpdatePublicParams", &views.UpdatePublicParamsViewFactory{}),
 			registry.RegisterFactory("SetBinding", &views.SetBindingViewFactory{}),
+			registry.RegisterFactory("KeystoreStats", &views.KeystoreStatsViewFactory{}),
 			registry.RegisterResponder(&views.AcceptCashView{}, &views.IssueCashView{}),
 			registry.RegisterResponder(&views.AcceptCashView{}, &views.TransferView{}),
 			registry.RegisterResponder(&views.AcceptCashView{}, &views.TransferWithSelectorView{}),

@@ -126,6 +126,10 @@ integration-tests-dlog-fabric-t15:
 integration-tests-dlog-fabric-t17:
 	make integration-tests-dlog-fabric TEST_FILTER="T17"
 
+.PHONY: integration-tests-dlog-fabric-t18
+integration-tests-dlog-fabric-t18:
+	make integration-tests-dlog-fabric TEST_FILTER="T18"
+
 # T1, T17, T4, T5, T3, T2.1 and T2 share one network per infrastructure type (see the
 # "T1 Fungible with Auditor ne Issuer and extras" container in
 # integration/token/fungible/dlog), and T6 and T7 another one (the "Fungible with

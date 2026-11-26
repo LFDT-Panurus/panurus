@@ -9,6 +9,7 @@ package token
 import (
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
 	fsc "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc/node"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
 func WithIssuerIdentity(label string, hsm bool) fsc.Option {
@@ -110,6 +111,28 @@ func WithAuditorIdentityWithHSM() fsc.Option {
 	return func(o *fsc.Options) error {
 		topology.ToOptions(o).SetAuditor(true)
 		topology.ToOptions(o).UseHSMForAuditor()
+
+		return nil
+	}
+}
+
+// WithDefaultCacheSize sets the owner wallets default cache size of the node.
+// It defaults to topology.DefaultOwnerCacheSize. A negative size is an error.
+func WithDefaultCacheSize(n int) fsc.Option {
+	return func(o *fsc.Options) error {
+		if n < 0 {
+			return errors.Errorf("invalid default cache size [%d]: must be non-negative", n)
+		}
+		topology.ToOptions(o).SetDefaultCacheSize(n)
+
+		return nil
+	}
+}
+
+// WithStorageCleanupDisabled disables the token storage cleanup of the node. It is enabled by default.
+func WithStorageCleanupDisabled() fsc.Option {
+	return func(o *fsc.Options) error {
+		topology.ToOptions(o).SetStorageCleanupDisabled(true)
 
 		return nil
 	}

@@ -42,15 +42,15 @@ token:
             {{ end }}
         storage:
           cleanup:
-            enabled: true
+            enabled: {{ StorageCleanupEnabled }}
             ttl: 1ms
             scanInterval: 1s
             batchSize: 100
             workerCount: 1 
-      {{ if Wallets }}
       # Wallets associated with this TMS
       wallets:
-        defaultCacheSize: 3
+        defaultCacheSize: {{ DefaultCacheSize }}
+      {{ if Wallets }}
         {{ if Wallets.Certifiers }}
         # Certifiers wallets are used to certify tokens
         certifiers: {{ range Wallets.Certifiers }}

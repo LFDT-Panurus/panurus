@@ -138,6 +138,40 @@ func (o *Options) IsUseHSMForAuditor() bool {
 	return v.(bool)
 }
 
+// DefaultOwnerCacheSize is the owner wallets default cache size used when none is set.
+const DefaultOwnerCacheSize = 3
+
+// DefaultCacheSize returns the owner wallets default cache size, or DefaultOwnerCacheSize if unset.
+func (o *Options) DefaultCacheSize() int {
+	switch v := o.Mapping["DefaultCacheSize"].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	default:
+		return DefaultOwnerCacheSize
+	}
+}
+
+// SetDefaultCacheSize sets the owner wallets default cache size.
+func (o *Options) SetDefaultCacheSize(n int) {
+	o.Mapping["DefaultCacheSize"] = n
+}
+
+// StorageCleanupDisabled returns true if the token storage cleanup is disabled.
+func (o *Options) StorageCleanupDisabled() bool {
+	res, ok := o.Mapping["StorageCleanupDisabled"].(bool)
+
+	return ok && res
+}
+
+// SetStorageCleanupDisabled disables (true) or enables (false) the token storage cleanup.
+func (o *Options) SetStorageCleanupDisabled(v bool) {
+	o.Mapping["StorageCleanupDisabled"] = v
+}
+
 func ToOptions(o *node.Options) *Options {
 	opt, ok := o.Mapping["token"]
 	if !ok {

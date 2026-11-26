@@ -211,6 +211,17 @@ func addNodes(fscTopology *fsc.Topology, opts common.Opts) (issuer, auditor *nod
 	)
 	manager.AddOptions(opts.ReplicationOpts.For("manager")...)
 
+	if opts.KeystoreGrowthCacheSize > 0 {
+		// Its owner wallets are registered at runtime, so nothing touches a default wallet.
+		dan := fscTopology.AddNodeByName(common.KeystoreGrowthNode).AddOptions(
+			fabric.WithOrganization("Org2"),
+			fabric.WithAnonymousIdentity(),
+			token.WithDefaultCacheSize(opts.KeystoreGrowthCacheSize),
+			token.WithStorageCleanupDisabled(),
+		)
+		dan.AddOptions(opts.ReplicationOpts.For(common.KeystoreGrowthNode)...)
+	}
+
 	return issuer, auditor
 }
 
@@ -304,7 +315,7 @@ func addSDKs(fscTopology *fsc.Topology, opts common.Opts, endorserIDs []string) 
 	}
 
 	// parties
-	for _, node := range fscTopology.ListNodes("alice", "bob", "charlie", "manager") {
+	for _, node := range fscTopology.ListNodes("alice", "bob", "charlie", "manager", common.KeystoreGrowthNode) {
 		node.AddSDKWithBase(opts.SDKs[0], &party.SDK{})
 	}
 
