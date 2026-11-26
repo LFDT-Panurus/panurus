@@ -12,11 +12,13 @@ import (
 	"strings"
 
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/boolpolicy"
 	identitydriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemixnym"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/x509"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/services/cleanup"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
 // stats holds counters accumulated during a Run.
@@ -141,6 +143,13 @@ func runWithTyped(
 	found, err := stores.Token.HasTokenForIdentity(ctx, typed.Identity, ownerType)
 	if err != nil {
 		return entryResult{}, fmt.Errorf("token lookup: %w", err)
+	}
+	if !found && ownerType == boolpolicy.PolicyString {
+		// Older Tokens rows carry the legacy policy owner type.
+		found, err = stores.Token.HasTokenForIdentity(ctx, typed.Identity, LegacyPolicyOwnerType)
+		if err != nil {
+			return entryResult{}, errors.Wrap(err, "token lookup with legacy policy owner type")
+		}
 	}
 
 	if found {
