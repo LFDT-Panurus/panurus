@@ -86,6 +86,7 @@ var tokensCases = []struct {
 	{"PublicParams", TPublicParams},
 	{"Certification", TCertification},
 	{"QueryTokenDetails", TQueryTokenDetails},
+	{"QueryTokenDetailsOwnerWalletOnly", TQueryTokenDetailsOwnerWalletOnly},
 	{"AmountValidation", TAmountValidation},
 	{"TTokenTypes", TTokenTypes},
 	{"QuerySpendableTokens", TQuerySpendableTokens},
@@ -1135,6 +1136,9 @@ func TQueryTokenDetails(t *testing.T, db TestTokenDB) {
 	assertEqual(t, tx1, res[0])
 	assertEqual(t, tx2, res[1])
 	assertEqual(t, tx21, res[2])
+	assert.Equal(t, "alice", res[0].OwnerEnrollment)
+	assert.Equal(t, "alice", res[1].OwnerEnrollment)
+	assert.Equal(t, "bob", res[2].OwnerEnrollment)
 	assert.False(t, res[0].IsSpent, "tx1 is not spent")
 	assert.False(t, res[1].IsSpent, "tx2-0 is not spent")
 	assert.False(t, res[2].IsSpent, "tx2-1 is not spent")
@@ -1195,6 +1199,84 @@ func TQueryTokenDetails(t *testing.T, db TestTokenDB) {
 	assert.Len(t, res, 2)
 	assertEqual(t, tx1, res[0])
 	assertEqual(t, tx2, res[1])
+}
+
+// TQueryTokenDetailsOwnerWalletOnly verifies that QueryTokenDetails returns a token that
+// has an owner wallet but no Ownership row, alongside a token that has an Ownership row.
+// OwnerEnrollment is the Ownership wallet id when present, else the owner wallet id.
+func TQueryTokenDetailsOwnerWalletOnly(t *testing.T, db TestTokenDB) {
+	t.Helper()
+	ctx := t.Context()
+	newRecord := func(txID, ownerWalletID, tokenType string) driver2.TokenRecord {
+		return driver2.TokenRecord{
+			TxID:           txID,
+			Index:          0,
+			IssuerRaw:      []byte{},
+			OwnerRaw:       []byte{1, 2, 3},
+			OwnerType:      "idemix",
+			OwnerIdentity:  []byte{},
+			OwnerWalletID:  ownerWalletID,
+			Ledger:         []byte("ledger"),
+			LedgerMetadata: []byte{},
+			Quantity:       "0x01",
+			Type:           token.Type(tokenType),
+			Amount:         big.NewInt(1),
+			Owner:          true,
+		}
+	}
+	// plain owner wallet token: no Ownership row
+	plain := newRecord("tx1", "alice", "TST1")
+	// token with an Ownership row only
+	escrow := newRecord("tx2", "", "TST2")
+	// token with both: the Ownership wallet id takes precedence
+	both := newRecord("tx3", "carol", "TST2")
+
+	tx, err := db.NewTokenDBTransaction()
+	require.NoError(t, err)
+	require.NoError(t, tx.StoreToken(ctx, plain, nil))
+	require.NoError(t, tx.StoreToken(ctx, escrow, []string{"bob"}))
+	require.NoError(t, tx.StoreToken(ctx, both, []string{"dave"}))
+	require.NoError(t, tx.Commit())
+
+	// check queries and compares results by tx id, as a map of tx id to OwnerEnrollment.
+	check := func(params driver2.QueryTokenDetailsParams, expected map[string]string) []driver2.TokenDetails {
+		t.Helper()
+		res, err := queryTokenDetails(db, ctx, params)
+		require.NoError(t, err, "params %+v", params)
+		got := map[string]string{}
+		for _, d := range res {
+			got[d.TxID] = d.OwnerEnrollment
+		}
+		require.Len(t, res, len(expected), "params %+v", params)
+		assert.Equal(t, expected, got, "params %+v", params)
+
+		return res
+	}
+
+	all := map[string]string{"tx1": "alice", "tx2": "bob", "tx3": "dave"}
+	res := check(driver2.QueryTokenDetailsParams{}, all)
+	for _, d := range res {
+		if d.TxID == "tx1" {
+			assertEqual(t, plain, d)
+		}
+	}
+	check(driver2.QueryTokenDetailsParams{WalletID: "alice"}, map[string]string{"tx1": "alice"})
+	check(driver2.QueryTokenDetailsParams{WalletID: "bob"}, map[string]string{"tx2": "bob"})
+	check(driver2.QueryTokenDetailsParams{WalletID: "carol"}, map[string]string{"tx3": "dave"})
+	check(driver2.QueryTokenDetailsParams{WalletID: "eve"}, map[string]string{})
+	check(driver2.QueryTokenDetailsParams{WalletIDs: []string{"alice", "bob"}}, map[string]string{"tx1": "alice", "tx2": "bob"})
+	check(driver2.QueryTokenDetailsParams{TokenType: "TST1"}, map[string]string{"tx1": "alice"})
+	check(driver2.QueryTokenDetailsParams{IDs: []*token.ID{{TxId: "tx1", Index: 0}}}, map[string]string{"tx1": "alice"})
+	check(driver2.QueryTokenDetailsParams{IncludeDeleted: true}, all)
+
+	// spend the plain token
+	require.NoError(t, db.DeleteTokens(ctx, "delby", &token.ID{TxId: "tx1", Index: 0}))
+	check(driver2.QueryTokenDetailsParams{}, map[string]string{"tx2": "bob", "tx3": "dave"})
+	check(driver2.QueryTokenDetailsParams{WalletID: "alice"}, map[string]string{})
+	res = check(driver2.QueryTokenDetailsParams{WalletID: "alice", IncludeDeleted: true}, map[string]string{"tx1": "alice"})
+	assert.True(t, res[0].IsSpent)
+	assert.Equal(t, "delby", res[0].SpentBy)
+	check(driver2.QueryTokenDetailsParams{IncludeDeleted: true}, all)
 }
 
 func TTokenTypes(t *testing.T, db TestTokenDB) {
