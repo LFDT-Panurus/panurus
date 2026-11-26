@@ -76,7 +76,8 @@ type TokenDetails struct {
 	OwnerIdentity []byte
 	// OwnerType is the deserialized type inside OwnerRaw
 	OwnerType string
-	// OwnerEnrollment is the enrollment id of the owner
+	// OwnerEnrollment is the enrollment id of the owner. For a token without an
+	// Ownership entry, it is the owner wallet id (empty if the token has none).
 	OwnerEnrollment string
 	// Type is the type of token
 	Type string

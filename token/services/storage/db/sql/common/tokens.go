@@ -1142,14 +1142,16 @@ func (db *TokenStore) HasTokenForIdentity(ctx context.Context, ownerIdentity []b
 // if they have been spent or not. Filters work cumulatively and may be left empty.
 // If a token is owned by two enrollmentIDs and there is no filter on enrollmentID,
 // the token is returned twice (once for each owner).
+// OwnerEnrollment is the Ownership wallet_id. A token without an Ownership row is
+// returned once, with OwnerEnrollment set to its owner_wallet_id (empty if unset).
 func (db *TokenStore) QueryTokenDetails(ctx context.Context, params driver.QueryTokenDetailsParams) (driver.TokenDetailsIterator, error) {
 	tokenTable, ownershipTable := q.Table(db.table.Tokens), q.Table(db.table.Ownership)
 	query, args := q.Select().
 		Fields(
 			tokenTable.Field("tx_id"), tokenTable.Field("idx"), common3.FieldName("owner_identity"),
-			common3.FieldName("owner_type"), common3.FieldName("wallet_id"), common3.FieldName("token_type"),
+			common3.FieldName("owner_type"), ownershipTable.Field("wallet_id"), common3.FieldName("token_type"),
 			common3.FieldName("amount"), common3.FieldName("is_deleted"), common3.FieldName("spent_by"),
-			common3.FieldName("stored_at"),
+			common3.FieldName("stored_at"), tokenTable.Field("owner_wallet_id"),
 		).
 		From(tokenTable.Join(ownershipTable, cond.And(
 			cond.Cmp(tokenTable.Field("tx_id"), "=", ownershipTable.Field("tx_id")),
@@ -1166,10 +1168,17 @@ func (db *TokenStore) QueryTokenDetails(ctx context.Context, params driver.Query
 
 	return common.NewIterator(rows, func(td *driver.TokenDetails) error {
 		var amount BigInt
-		if err := rows.Scan(&td.TxID, &td.Index, &td.OwnerIdentity, &td.OwnerType, &td.OwnerEnrollment, &td.Type, &amount, &td.IsSpent, &td.SpentBy, &td.StoredAt); err != nil {
+		// Both are NULL-able: wallet_id when the token has no Ownership row (LEFT JOIN),
+		// owner_wallet_id when the token has no owner wallet.
+		var walletID, ownerWalletID sql.NullString
+		if err := rows.Scan(&td.TxID, &td.Index, &td.OwnerIdentity, &td.OwnerType, &walletID, &td.Type, &amount, &td.IsSpent, &td.SpentBy, &td.StoredAt, &ownerWalletID); err != nil {
 			return err
 		}
 		td.Amount = amount.Int
+		td.OwnerEnrollment = ownerWalletID.String
+		if walletID.Valid {
+			td.OwnerEnrollment = walletID.String
+		}
 
 		return nil
 	}), nil
