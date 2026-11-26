@@ -92,10 +92,10 @@ classDiagram
 
 ### Wallet Registry concurrency
 
-`role.Registry` (`token/services/identity/role/registry.go`) is the per-role wallet cache behind
-`wallet.Service`. Its contract:
+`role.Registry` (`token/services/identity/role/registry.go`) holds the per-role wallets behind
+`wallet.Service`. `RegisteredWallets` is live state the registry owns, not a cache. Its contract:
 
-*   **`WalletMu` guards the `Wallets` map only.** It is taken as a short `RLock` for map reads and a
+*   **`WalletMu` guards the `RegisteredWallets` map only.** It is taken as a short `RLock` for map reads and a
     short `Lock` for map writes. It is never held while calling out to the identity provider, the
     wallet store, or the wallet factory.
 *   **`WalletFactory.NewWallet` is always called with no registry lock held.** The factory receives the
@@ -116,17 +116,17 @@ classDiagram
     a flight that failed only because *another* caller's context was cancelled is retried instead of
     reported, up to a small bound. What a caller still shares with the flight is the wallet itself:
     the instance handed to every caller is the one the winner built.
-*   **Nothing is cached once `Done` has run.** Because construction happens outside `WalletMu`, it can
-    overlap `Done`, which drops the cache and closes the wallets it held. A creation that completes
-    after that point releases the wallet it built (closing it, if it holds resources) and returns an
-    error rather than repopulating the cache, since a wallet added afterwards would be closed by
-    nobody.
+*   **Nothing is registered once `Done` has run.** Because construction happens outside `WalletMu`,
+    it can overlap `Done`, which drops the map and closes the wallets it held. A creation that
+    completes after that point releases the wallet it built (closing it, if it holds resources) and
+    returns an error rather than repopulating the map, since a wallet added afterwards would be
+    closed by nobody.
 
 A `WalletFactory` implementation must therefore be safe to call concurrently for distinct wallet
 identifiers, and may assume no registry lock is held when it is invoked.
 
 A wallet identifier registered with a `nil` wallet counts as absent, both on the fast path and when
-creation double-checks the cache; a factory that returns no wallet and no error is reported as an
+creation double-checks the map; a factory that returns no wallet and no error is reported as an
 error.
 
 ### Wallet accessor error contract
@@ -424,7 +424,7 @@ The **DER envelopes** of an identity must be the canonical encoding of the value
 *   `marshal.DecodeIdentity` (the `TypedIdentity` envelope decoder in `token/services/identity/marshal`) pins the outer `SEQUENCE`'s declared length to the end of the buffer, requires the read position to land exactly on the last byte after the final field (`ErrTrailingBytes`), rejects non-minimal DER length encodings — a length that fits the short form written in the long form, or a long form with leading zero bytes (`ErrNonMinimalLen`) — and rejects non-minimal `INTEGER` contents, i.e. a redundant leading `0x00`/`0xFF` in the type field (`ErrNonMinimalInt`).
 *   Envelopes decoded with `encoding/asn1` (`MultiIdentity`, `PolicyIdentity`, `MultiSignature`, `PolicySignature`) go through `marshal.UnmarshalCanonicalDER`, which rejects any bytes left over after the top-level value **and** re-encodes the decoded value to require it reproduces the input byte-for-byte (`ErrNonCanonical`). The second check is the load-bearing one: `asn1.Unmarshal`'s `rest` return only reports bytes *after* the top-level TLV, while `encoding/asn1` silently discards `SEQUENCE` elements the destination struct has no field for and accepts `T61String`/`IA5String`/`GeneralString` where a `UTF8String` was declared — neither of which leaves anything in `rest`.
 
-The reason is `Identity.UniqueID()`: it hashes the **raw** identity bytes rather than a canonicalised form of the decoded value, and it is the cache key throughout the identity and wallet layers (`role/registry.go`'s fast-path cache, `provider.go`'s signer cache, and so on). Any two byte strings that decode to the same logical identity but hash differently give that one identity two cache slots — a token paid to the second spelling still verifies, because verification works on the decoded value, but never resolves to its owner's wallet, because the lookup works on `UniqueID()`. Both producers of these bytes — `appendTLV` in the `marshal` package and `encoding/asn1.Marshal` for legacy encodings — already emit minimal lengths, minimal integers and no undeclared elements, so the stricter decode rejects nothing this tree ever writes. That last statement is about data written by *this* encoder — see **Upgrade considerations** below for bytes that are already persisted.
+The reason is `Identity.UniqueID()`: it hashes the **raw** identity bytes rather than a canonicalised form of the decoded value, and it is the cache key throughout the identity and wallet layers (`role/registry.go`'s fast-path wallet lookup, `provider.go`'s signer cache, and so on). Any two byte strings that decode to the same logical identity but hash differently give that one identity two cache slots — a token paid to the second spelling still verifies, because verification works on the decoded value, but never resolves to its owner's wallet, because the lookup works on `UniqueID()`. Both producers of these bytes — `appendTLV` in the `marshal` package and `encoding/asn1.Marshal` for legacy encodings — already emit minimal lengths, minimal integers and no undeclared elements, so the stricter decode rejects nothing this tree ever writes. That last statement is about data written by *this* encoder — see **Upgrade considerations** below for bytes that are already persisted.
 
 **What this does not cover.** The guarantee is about the envelopes, not about everything reachable through them:
 
