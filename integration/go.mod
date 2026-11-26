@@ -5,7 +5,7 @@ go 1.27.4
 replace github.com/LFDT-Panurus/panurus => ../
 
 require (
-	github.com/IBM/idemix v0.3.2-0.20261125111019-729f139ab5a9
+	github.com/IBM/idemix v0.3.2-0.20261126105746-0f1fb00ddf4e
 	github.com/IBM/mathlib v0.3.3-0.20261103131649-7162020950b3
 	github.com/LFDT-Panurus/panurus v0.0.0
 	github.com/LFDT-Panurus/panurus/x/token/services/network/evm v0.0.0
