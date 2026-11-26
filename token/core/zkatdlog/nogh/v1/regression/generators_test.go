@@ -8,11 +8,12 @@ package regression_test
 
 import (
 	"encoding/base64"
-	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"io/fs"
 	"path"
 	"strings"
 	"testing"
+
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
 	math "github.com/IBM/mathlib"
 	pp3 "github.com/LFDT-Panurus/panurus/token/core/common/encoding/pp"
