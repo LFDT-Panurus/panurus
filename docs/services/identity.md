@@ -61,7 +61,6 @@ classDiagram
     class identity_Provider["identity.Provider"] {
         -Storage
         -Deserializers
-        -SignerCache
     }
     class wallet_Service["wallet.Service"] {
         -RoleRegistry
@@ -237,17 +236,18 @@ func (d *Base) NewWalletService(...) (*wallet.Service, error) {
 }
 ```
 
-### Signer cache size
+### Signer resolution
 
-`Provider` keeps resolved signers in a bounded in-memory cache keyed by the identity's `UniqueID()`.
-Its size defaults to `identity.DefaultSignerCacheSize` (50 entries) and is set per TMS with
-`token.tms.<tms>.wallets.signerCacheSize` (see [configuration](../configuration.md)), which the drivers
-pass to `NewProvider` via `identity.WithSignerCacheSize`; a value of 0 or less selects the default.
+`Provider` keeps no signer cache. Every `GetSigner` resolves the signer again, via the
+[`SignerRouter`](#signerrouter-conf_id-pinned-fast-path) when the identity's `conf_id` pins it to a
+`KeyManager`, otherwise via the probing fallback deserializer. That re-runs the key load and, for
+Idemix on the fallback path, the sign+verify probe, but it is not a database round trip: the identity
+store caches signer and audit info (5000 entries each), and the signer info row that marks the
+identity as ours is written once, on the first resolution.
 
-Each typed identity takes **two** slots — the outer typed bytes and the bare inner identity are both
-lookup keys — so the default holds about 25 typed identities. A node that signs with more distinct
-identities than that in rotation evicts them and re-deserializes (for Idemix, re-running the
-sign+verify probe) on every `GetSigner`; size the cache to at least twice that working set.
+The exception is an **ephemeral** signer (`RegisterEphemeralSigner`, used by HTLC claim and reclaim):
+nothing can rebuild it, so it stays in memory for the process lifetime and is the first thing
+`GetSigner` and `IsMe` look at.
 
 ### SignerRouter (conf_id-pinned fast path)
 
@@ -436,7 +436,7 @@ The **DER envelopes** of an identity must be the canonical encoding of the value
 *   `marshal.DecodeIdentity` (the `TypedIdentity` envelope decoder in `token/services/identity/marshal`) pins the outer `SEQUENCE`'s declared length to the end of the buffer, requires the read position to land exactly on the last byte after the final field (`ErrTrailingBytes`), rejects non-minimal DER length encodings — a length that fits the short form written in the long form, or a long form with leading zero bytes (`ErrNonMinimalLen`) — and rejects non-minimal `INTEGER` contents, i.e. a redundant leading `0x00`/`0xFF` in the type field (`ErrNonMinimalInt`).
 *   Envelopes decoded with `encoding/asn1` (`MultiIdentity`, `PolicyIdentity`, `MultiSignature`, `PolicySignature`) go through `marshal.UnmarshalCanonicalDER`, which rejects any bytes left over after the top-level value **and** re-encodes the decoded value to require it reproduces the input byte-for-byte (`ErrNonCanonical`). The second check is the load-bearing one: `asn1.Unmarshal`'s `rest` return only reports bytes *after* the top-level TLV, while `encoding/asn1` silently discards `SEQUENCE` elements the destination struct has no field for and accepts `T61String`/`IA5String`/`GeneralString` where a `UTF8String` was declared — neither of which leaves anything in `rest`.
 
-The reason is `Identity.UniqueID()`: it hashes the **raw** identity bytes rather than a canonicalised form of the decoded value, and it is the cache key throughout the identity and wallet layers (`role/registry.go`'s fast-path wallet lookup, `provider.go`'s signer cache, and so on). Any two byte strings that decode to the same logical identity but hash differently give that one identity two cache slots — a token paid to the second spelling still verifies, because verification works on the decoded value, but never resolves to its owner's wallet, because the lookup works on `UniqueID()`. Both producers of these bytes — `appendTLV` in the `marshal` package and `encoding/asn1.Marshal` for legacy encodings — already emit minimal lengths, minimal integers and no undeclared elements, so the stricter decode rejects nothing this tree ever writes. That last statement is about data written by *this* encoder — see **Upgrade considerations** below for bytes that are already persisted.
+The reason is `Identity.UniqueID()`: it hashes the **raw** identity bytes rather than a canonicalised form of the decoded value, and it is the lookup key throughout the identity and wallet layers (`role/registry.go`'s fast-path wallet lookup, the identity store's signer and audit info caches, and so on). Any two byte strings that decode to the same logical identity but hash differently give that one identity two cache slots — a token paid to the second spelling still verifies, because verification works on the decoded value, but never resolves to its owner's wallet, because the lookup works on `UniqueID()`. Both producers of these bytes — `appendTLV` in the `marshal` package and `encoding/asn1.Marshal` for legacy encodings — already emit minimal lengths, minimal integers and no undeclared elements, so the stricter decode rejects nothing this tree ever writes. That last statement is about data written by *this* encoder — see **Upgrade considerations** below for bytes that are already persisted.
 
 **What this does not cover.** The guarantee is about the envelopes, not about everything reachable through them:
 

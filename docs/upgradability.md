@@ -704,6 +704,34 @@ The error distinguishes a caller-driven abort (a cancelled or deadline-exceeded 
 `errors.Is(err, context.Canceled)` / `context.DeadlineExceeded`) from a genuine storage
 failure, so a cancellation is not misread as a broken backend.
 
+### `GetSigner` no longer answers for multisig and policy identities (issue #2817)
+
+> [!WARNING]
+> **Behaviour change**: `SigService().GetSigner(id)` now fails when `id` is a composite multisig
+> or policy identity. `IsMe(id)` is unaffected.
+
+**Why it changed.** No deserializer can rebuild a signer from a composite identity; the only thing
+that ever answered those calls was the provider's signer cache, which is gone. The old behaviour
+held only while the entry survived that 50-entry cache, so it was already unreliable.
+
+**Migration.** Unwrap first and sign per component, as the SDK's own signing path does
+(`ttx/collectendorsements.go`): `multisig.Unwrap(id)` or `boolpolicy.Unwrap(id)`, then `GetSigner`
+on each component identity.
+
+**Removed exported symbols.** The cache and its knob took these with them:
+
+| Removed | Replacement |
+|---|---|
+| `identity.SignerEntry` | none; signers are held as `driver.Signer` |
+| `identity.DefaultSignerCacheSize` | none |
+| `identity.ProviderOption`, `identity.WithSignerCacheSize` | none; `NewProvider` no longer takes options |
+| `config.Wallets.SignerCacheSize`, `(*IdentityConfig).SignerCacheSize()` | none |
+
+`identity.NewProvider` lost its trailing `opts ...ProviderOption` parameter, so a call that passed
+options no longer compiles; drop them. A `core.yaml` that still sets
+`token.tms.<tms>.wallets.signerCacheSize` keeps loading — unknown keys are ignored — so no
+configuration has to change.
+
 ---
 
 ## Fabric Smart Client Upgrades

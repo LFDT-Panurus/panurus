@@ -10,10 +10,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"sync"
 	"testing"
-	"unsafe"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	drvmock "github.com/LFDT-Panurus/panurus/token/driver/mock"
@@ -74,6 +72,9 @@ func TestProvider_RegisterSigner_And_IsMe(t *testing.T) {
 	// storage called
 	require.Equal(t, 1, storage.RegisterIdentityDescriptorCallCount())
 
+	// a registered signer is only recorded in storage, which is what IsMe reads
+	storage.GetExistingSignerInfoReturns([]string{id.UniqueID()}, nil)
+
 	// provider should now consider this identity as "me"
 	isMe, err := p.IsMe(t.Context(), id)
 	require.NoError(t, err)
@@ -91,7 +92,7 @@ func TestProvider_IsMe_StorageErrorIsPropagated(t *testing.T) {
 
 	p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu, nil)
 
-	// The identity is not warm in the cache, so areMe must consult storage, which fails.
+	// areMe has to consult storage for this identity, and storage fails.
 	storage.GetExistingSignerInfoReturns(nil, errors.New("boom"))
 
 	id := driver.Identity("owned_but_uncached")
@@ -108,10 +109,10 @@ func TestProvider_IsMe_StorageErrorIsPropagated(t *testing.T) {
 }
 
 // TestProvider_AreMe_StorageErrorIsPropagated verifies the fix for issue #2066: when some
-// identities are cache hits and the storage lookup for the rest fails, AreMe must surface the
-// error so the caller does not treat the cache-only partial slice as authoritative. On error the
-// returned slice is nil — the cache-only partial is deliberately not handed back, so a caller
-// cannot mistake "couldn't check" for "confirmed not mine".
+// identities are answered from memory and the storage lookup for the rest fails, AreMe must
+// surface the error so the caller does not treat the partial slice as authoritative. On error the
+// returned slice is nil — the partial is deliberately not handed back, so a caller cannot mistake
+// "couldn't check" for "confirmed not mine".
 func TestProvider_AreMe_StorageErrorIsPropagated(t *testing.T) {
 	storage := &idmock.Storage{}
 	des := &idmock.Deserializer{}
@@ -120,18 +121,17 @@ func TestProvider_AreMe_StorageErrorIsPropagated(t *testing.T) {
 
 	p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu, nil)
 
-	// Warm the cache for `cached` by registering a signer for it.
-	cached := driver.Identity("cached")
-	storage.RegisterIdentityDescriptorReturns(nil)
-	require.NoError(t, p.RegisterSigner(t.Context(), cached, &drvmock.Signer{}, &drvmock.Verifier{}, nil, false))
+	// An ephemeral signer is answered from memory, without storage.
+	inMemory := driver.Identity("ephemeral")
+	require.NoError(t, p.RegisterSigner(t.Context(), inMemory, &drvmock.Signer{}, &drvmock.Verifier{}, nil, true))
 
-	// The storage lookup for the remaining (uncached) identity fails.
+	// The storage lookup for the remaining identity fails.
 	storage.GetExistingSignerInfoReturns(nil, errors.New("boom"))
 
-	me, err := p.AreMe(t.Context(), cached, driver.Identity("uncached"))
-	require.Error(t, err, "a storage failure must be propagated so the cache-only partial is not trusted")
-	// On error the slice is nil: the cache-only partial (the cached hit) is deliberately not
-	// returned, so a caller cannot treat it as an authoritative answer.
+	me, err := p.AreMe(t.Context(), inMemory, driver.Identity("not_in_memory"))
+	require.Error(t, err, "a storage failure must be propagated so the partial answer is not trusted")
+	// On error the slice is nil: the in-memory partial is deliberately not returned, so a caller
+	// cannot treat it as an authoritative answer.
 	assert.Nil(t, me)
 }
 
@@ -307,53 +307,6 @@ func TestProvider_GetAuditInfo(t *testing.T) {
 	require.Equal(t, 1, storage.GetAuditInfoCallCount())
 }
 
-// tombstoneSigner reproduces the state FSC's secondcache.Delete leaves behind: the signers-cache
-// key for id survives, but its stored *SignerEntry is zeroed to nil, so a later Get returns
-// (nil, true). The signers cache is an unexported field of Provider with no public invalidation
-// API, so from this black-box test package the only way to create the tombstone is to reach the
-// field via reflection and invoke its exported Delete. The reflect.NewAt+UnsafeAddr dance strips
-// the read-only flag that reflection puts on values read from unexported fields, making the
-// interface value callable.
-func tombstoneSigner(t *testing.T, p *identity.Provider, id driver.Identity) {
-	t.Helper()
-	field := reflect.ValueOf(p).Elem().FieldByName("signers")
-	field = reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem()
-	field.MethodByName("Delete").Call([]reflect.Value{reflect.ValueOf(id.UniqueID())})
-}
-
-// TestProvider_GetSigner_TombstonedCacheEntryIsMiss reproduces the latent nil-pointer footgun
-// behind issue #2065: FSC's secondcache.Delete does not remove the key, it zeroes the stored value
-// in place, so a later Get returns (nil, true). getSignerAndCache must treat that nil entry as a
-// cache miss and re-resolve, rather than dereferencing entry.Signer on a nil *SignerEntry (which
-// panicked before the fix).
-func TestProvider_GetSigner_TombstonedCacheEntryIsMiss(t *testing.T) {
-	storage := &idmock.Storage{}
-	des := &idmock.Deserializer{}
-	nbs := &idmock.NetworkBinderService{}
-	eidu := &idmock.EnrollmentIDUnmarshaler{}
-
-	p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu, nil)
-
-	id := driver.Identity("an_identity")
-	expected := &drvmock.Signer{}
-	des.DeserializeSignerReturns(expected, nil)
-	storage.StoreSignerInfoReturns(nil)
-
-	// first resolution caches the signer under id
-	s, err := p.GetSigner(t.Context(), id)
-	require.NoError(t, err)
-	require.Equal(t, expected, s)
-
-	// simulate FSC secondcache.Delete: the key survives with a nil value, so the next Get is a
-	// (nil, true) tombstone
-	tombstoneSigner(t, p, id)
-
-	// must not panic; the tombstone is treated as a miss and the signer is re-resolved
-	s, err = p.GetSigner(t.Context(), id)
-	require.NoError(t, err)
-	require.Equal(t, expected, s)
-}
-
 // TestProvider_GetSigner_NilSignerReturnsError checks the defense-in-depth guard: when resolution
 // yields a nil signer without an error (e.g. a deserializer that returns (nil, nil)), GetSigner
 // returns an error instead of propagating a nil signer that would panic on the caller's first Sign.
@@ -387,7 +340,7 @@ func (f fakeSignerDeserializer) DeserializeSigner(_ context.Context, _ []byte) (
 
 // TestProvider_GetSigner_Metrics proves GetSigner reports SignerResolutions/GetSignerDuration
 // under the correct "outcome"/"path" label for each of the three ways a signer can be obtained:
-// a cache hit, a SignerRouter-routed hit, and the fallback deserializer.
+// an in-memory ephemeral signer, a SignerRouter-routed hit, and the fallback deserializer.
 func TestProvider_GetSigner_Metrics(t *testing.T) {
 	t.Run("fallback", func(t *testing.T) {
 		storage := &idmock.Storage{}
@@ -410,7 +363,7 @@ func TestProvider_GetSigner_Metrics(t *testing.T) {
 		assert.Equal(t, 1, provider.histogramObserveCount("identity_get_signer_duration_seconds", "path", "fallback"))
 	})
 
-	t.Run("cache", func(t *testing.T) {
+	t.Run("ephemeral", func(t *testing.T) {
 		storage := &idmock.Storage{}
 		des := &idmock.Deserializer{}
 		nbs := &idmock.NetworkBinderService{}
@@ -420,19 +373,17 @@ func TestProvider_GetSigner_Metrics(t *testing.T) {
 		p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu, identity.NewMetrics(provider))
 
 		expected := &drvmock.Signer{}
-		des.DeserializeSignerReturns(expected, nil)
-		storage.StoreSignerInfoReturns(nil)
+		des.DeserializeSignerReturns(nil, errors.New("not deserializable"))
 
 		id := driver.Identity("an_identity")
-		_, err := p.GetSigner(t.Context(), id)
-		require.NoError(t, err)
+		require.NoError(t, p.RegisterSigner(t.Context(), id, expected, &drvmock.Verifier{}, nil, true))
 
 		s, err := p.GetSigner(t.Context(), id)
 		require.NoError(t, err)
 		assert.Equal(t, expected, s)
 
-		assert.Equal(t, 1, provider.counterAddCount("identity_signer_resolutions_total", "outcome", "cache"))
-		assert.Equal(t, 1, provider.histogramObserveCount("identity_get_signer_duration_seconds", "path", "cache"))
+		assert.Equal(t, 1, provider.counterAddCount("identity_signer_resolutions_total", "outcome", "ephemeral"))
+		assert.Equal(t, 1, provider.histogramObserveCount("identity_get_signer_duration_seconds", "path", "ephemeral"))
 	})
 
 	t.Run("routed", func(t *testing.T) {
@@ -467,8 +418,31 @@ func TestProvider_GetSigner_Metrics(t *testing.T) {
 	})
 }
 
-// TestProvider_GetSigner_EphemeralSurvivesCacheEviction is a regression test for #2814.
-func TestProvider_GetSigner_EphemeralSurvivesCacheEviction(t *testing.T) {
+// TestProvider_GetSigner_PersistsOnce pins the signer info row to one write per identity: signing
+// resolves the same identity repeatedly, and the write is a database round trip.
+func TestProvider_GetSigner_PersistsOnce(t *testing.T) {
+	storage := &idmock.Storage{}
+	des := &idmock.Deserializer{}
+	des.DeserializeSignerReturns(&drvmock.Signer{}, nil)
+
+	p := identity.NewProvider(logging.MustGetLogger(), storage, des, &idmock.NetworkBinderService{}, &idmock.EnrollmentIDUnmarshaler{}, nil)
+
+	id := driver.Identity("an_identity")
+	_, err := p.GetSigner(t.Context(), id)
+	require.NoError(t, err)
+	require.Equal(t, 1, storage.StoreSignerInfoCallCount())
+
+	// the row is there now, which the store reports from its own signer info cache
+	storage.SignerInfoExistsReturns(true, nil)
+
+	_, err = p.GetSigner(t.Context(), id)
+	require.NoError(t, err)
+	assert.Equal(t, 1, storage.StoreSignerInfoCallCount(), "the row must be written once, not per GetSigner")
+}
+
+// TestProvider_GetSigner_Ephemeral is a regression test for #2814: an ephemeral signer is never
+// persisted, so memory is the only place GetSigner and IsMe can find it.
+func TestProvider_GetSigner_Ephemeral(t *testing.T) {
 	storage := &idmock.Storage{}
 	des := &idmock.Deserializer{}
 	des.DeserializeSignerReturns(nil, errors.New("not deserializable"))
@@ -479,12 +453,6 @@ func TestProvider_GetSigner_EphemeralSurvivesCacheEviction(t *testing.T) {
 	ephemeralSigner := &drvmock.Signer{}
 	require.NoError(t, p.RegisterSigner(t.Context(), ephemeralID, ephemeralSigner, &drvmock.Verifier{}, nil, true))
 	require.Equal(t, 0, storage.RegisterIdentityDescriptorCallCount(), "an ephemeral signer is not persisted")
-
-	// overflow the signer cache with unrelated identities
-	for i := range 4 * identity.DefaultSignerCacheSize {
-		id := driver.Identity(fmt.Appendf(nil, "other-%d", i))
-		require.NoError(t, p.RegisterSigner(t.Context(), id, &drvmock.Signer{}, &drvmock.Verifier{}, nil, false))
-	}
 
 	signer, err := p.GetSigner(t.Context(), ephemeralID)
 	require.NoError(t, err)
