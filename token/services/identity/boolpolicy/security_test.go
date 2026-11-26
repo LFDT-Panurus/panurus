@@ -107,9 +107,9 @@ func TestDuplicateIdentityRejectedAtDeserializeTime(t *testing.T) {
 // deserialized successfully — while hashing to a *different*
 // Identity.UniqueID(), because UniqueID() hashes the raw bytes rather than a
 // canonicalised form of the decoded value. Since UniqueID() is the cache key
-// throughout the identity/wallet layers (role/registry.go's fast path,
-// provider.go's signer cache, …), one logical identity could occupy two cache
-// slots.
+// throughout the identity/wallet layers (role/registry.go's fast path, the
+// identity store's signer and audit info caches, …), one logical identity could
+// occupy two cache slots.
 func TestTrailingBytesRejectedOnIdentityDeserialize(t *testing.T) {
 	canonical, err := (&PolicyIdentity{Policy: "$0 OR $1", Identities: [][]byte{id0, id1}}).Bytes()
 	require.NoError(t, err)

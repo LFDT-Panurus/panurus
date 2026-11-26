@@ -69,9 +69,7 @@ func (s *SignatureService) RegisterSigner(ctx context.Context, identity Identity
 
 // RegisterEphemeralSigner registers the pair (signer, verifier) bound to the given identity only in memory
 //
-// Verification: as for RegisterSigner. An ephemeral registration never reaches
-// storage but still populates the in-memory signer cache, which is keyed the
-// same way, so it is held to the same conditions.
+// Verification: as for RegisterSigner — the in-memory map is keyed the same way.
 func (s *SignatureService) RegisterEphemeralSigner(ctx context.Context, identity Identity, signer Signer, verifier Verifier) error {
 	if err := s.checkSignerIdentity(ctx, identity); err != nil {
 		return errors.WithMessage(err, "refusing to register ephemeral signer")

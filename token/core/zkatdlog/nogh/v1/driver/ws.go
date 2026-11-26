@@ -67,7 +67,6 @@ func (d *BaseWalletServiceFactory) NewWalletService(
 	}
 	identityProvider := identity.NewProvider(
 		logger.Named("identity"), identityDB, deserializerManager, binder, NewEIDRHDeserializer(), identityMetrics,
-		identity.WithSignerCacheSize(identityConfig.SignerCacheSize()),
 	)
 	identityProvider.SetSignerRouter(signerRouter)
 

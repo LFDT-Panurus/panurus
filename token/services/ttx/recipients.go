@@ -637,6 +637,7 @@ func (s *RespondRequestRecipientIdentityView) handleMultisig(
 		return err
 	}
 	logger.DebugfContext(context.Context(), "registering signer for reclaim...")
+	// the row makes IsMe true; GetSigner on the composite does not resolve, see docs/upgradability.md
 	if err := sigService.RegisterSigner(
 		context.Context(),
 		multisigRecipientData.RecipientData.Identity,
@@ -748,6 +749,7 @@ func (s *RespondRequestRecipientIdentityView) handlePolicy(
 	if err != nil {
 		return err
 	}
+	// as for multisig: IsMe only, GetSigner on the composite does not resolve
 	if err := sigService.RegisterSigner(context.Context(), prd.RecipientData.Identity, signer, nil); err != nil {
 		return errors.Wrapf(err, "failed to register policy signer")
 	}

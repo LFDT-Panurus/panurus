@@ -50,6 +50,30 @@ func TestStoreIdentityData_ConflictIsSuccess(t *testing.T) {
 	require.NoError(t, f.mock.ExpectationsWereMet())
 }
 
+// TestStoreSignerInfo_WarmsTheExistenceCheck pins what identity.Provider.persistSigner relies on:
+// after the row is written, SignerInfoExists answers from the signer info cache without querying
+// the database, so repeated signer resolutions cost no round trip.
+func TestStoreSignerInfo_WarmsTheExistenceCheck(t *testing.T) {
+	f := newSQLFixture(t, func(db *sql.DB, _ sqlmock.Sqlmock) *IdentityStore {
+		return &IdentityStore{
+			readDB:          db,
+			writeDB:         db,
+			table:           identityTables{IdentityInfo: "ID_INFO", Signers: "SIGNERS"},
+			signerInfoCache: cache2.NewSecondChanceCache[bool](10, 1),
+			auditInfoCache:  cache2.NewNoCache[[]byte](),
+		}
+	})
+
+	f.mock.ExpectExec(signerInfoInsert).WillReturnResult(sqlmock.NewResult(0, 0))
+	require.NoError(t, f.store.StoreSignerInfo(t.Context(), tdriver.Identity("alice"), nil))
+
+	// no further query is expected: an unexpected one fails the mock
+	exists, err := f.store.SignerInfoExists(t.Context(), tdriver.Identity("alice"))
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.NoError(t, f.mock.ExpectationsWereMet())
+}
+
 // TestStoreSignerInfo_ConflictIsSuccess is the signer-info counterpart.
 func TestStoreSignerInfo_ConflictIsSuccess(t *testing.T) {
 	f := newTestIdentityStore(t)

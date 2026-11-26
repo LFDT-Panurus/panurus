@@ -13,9 +13,8 @@ import (
 
 // Metrics holds the instrumentation for the identity Provider and its SignerRouter.
 type Metrics struct {
-	// SignerResolutions counts GetSigner calls by how the signer was ultimately obtained:
-	// "cache" (already cached), "routed" (conf_id-pinned SignerRouter hit), or "fallback"
-	// (linear-scan probing deserializer).
+	// SignerResolutions counts GetSigner calls by how the signer was obtained: "ephemeral"
+	// (in-memory), "routed" (conf_id-pinned SignerRouter) or "fallback" (probing deserializer).
 	SignerResolutions metrics.Counter
 
 	// GetSignerDuration is a histogram of GetSigner wall-clock time, in seconds, labeled by
@@ -43,7 +42,7 @@ func newMetrics(p metrics.Provider) *Metrics {
 	return &Metrics{
 		SignerResolutions: p.NewCounter(metrics.CounterOpts{
 			Name:       "identity_signer_resolutions_total",
-			Help:       "Total number of GetSigner calls by outcome (cache, routed, fallback)",
+			Help:       "Total number of GetSigner calls by outcome (ephemeral, routed, fallback)",
 			LabelNames: []string{"network", "channel", "namespace", "outcome"},
 		}),
 		GetSignerDuration: p.NewHistogram(metrics.HistogramOpts{

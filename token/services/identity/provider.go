@@ -8,7 +8,6 @@ package identity
 
 import (
 	"context"
-	"runtime/debug"
 	"sync"
 	"time"
 
@@ -16,10 +15,8 @@ import (
 	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/integrity"
-	cache2 "github.com/LFDT-Panurus/panurus/token/services/utils/cache"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections"
-	"go.uber.org/zap/zapcore"
 )
 
 var (
@@ -58,12 +55,6 @@ type Storage interface {
 	RegisterIdentityDescriptor(ctx context.Context, descriptor *idriver.IdentityDescriptor, alias driver.Identity) error
 }
 
-type cache[T any] interface {
-	Get(key string) (T, bool)
-	Add(key string, value T)
-	Delete(key string)
-}
-
 //go:generate counterfeiter -o mock/deserializer.go -fake-name Deserializer . Deserializer
 type Deserializer interface {
 	DeserializeSigner(ctx context.Context, raw []byte) (driver.Signer, error)
@@ -72,11 +63,6 @@ type Deserializer interface {
 //go:generate counterfeiter -o mock/nbs.go -fake-name NetworkBinderService . NetworkBinderService
 type NetworkBinderService interface {
 	Bind(ctx context.Context, longTerm driver.Identity, ephemeral ...driver.Identity) error
-}
-
-type SignerEntry struct {
-	Signer     driver.Signer
-	DebugStack []byte
 }
 
 // Provider implements the driver.IdentityProvider interface.
@@ -90,31 +76,11 @@ type Provider struct {
 	signerRouter            *SignerRouter
 	metrics                 *Metrics
 
-	signers cache[*SignerEntry]
-
-	// ephemeralSigners holds signers registered with Ephemeral set. They are never persisted, so
-	// this map is their only home and must not evict: nothing can rebuild an HTLC claim signer
-	// (it carries the preimage) or a reclaim signer (it wraps another signer).
+	// Ephemeral signers are never persisted and cannot be rebuilt (an HTLC claim signer carries the
+	// preimage), so this map is their only home.
 	// shortcut: entries live for the process lifetime; see #2823 for a per-transaction lifetime.
 	ephemeralSignersMutex sync.RWMutex
-	ephemeralSigners      map[string]*SignerEntry
-}
-
-// DefaultSignerCacheSize is the default number of entries of the Provider's signer cache.
-const DefaultSignerCacheSize = 50
-
-// ProviderOption configures a Provider.
-type ProviderOption func(*providerOptions)
-
-type providerOptions struct {
-	signerCacheSize int
-}
-
-// WithSignerCacheSize sets the signer cache size; n <= 0 selects DefaultSignerCacheSize.
-func WithSignerCacheSize(n int) ProviderOption {
-	return func(o *providerOptions) {
-		o.signerCacheSize = n
-	}
+	ephemeralSigners      map[string]driver.Signer
 }
 
 // NewProvider returns a new instance of Provider. m may be nil, in which case the provider's
@@ -126,17 +92,9 @@ func NewProvider(
 	binder NetworkBinderService,
 	enrollmentIDUnmarshaler EnrollmentIDUnmarshaler,
 	m *Metrics,
-	opts ...ProviderOption,
 ) *Provider {
 	if m == nil {
 		m = NewMetrics(nil)
-	}
-	o := &providerOptions{}
-	for _, opt := range opts {
-		opt(o)
-	}
-	if o.signerCacheSize <= 0 {
-		o.signerCacheSize = DefaultSignerCacheSize
 	}
 
 	return &Provider{
@@ -145,8 +103,7 @@ func NewProvider(
 		enrollmentIDUnmarshaler: enrollmentIDUnmarshaler,
 		deserializer:            deserializer,
 		storage:                 storage,
-		signers:                 cache2.NewSecondChanceCache[*SignerEntry](o.signerCacheSize, 1),
-		ephemeralSigners:        map[string]*SignerEntry{},
+		ephemeralSigners:        map[string]driver.Signer{},
 		metrics:                 m,
 	}
 }
@@ -192,16 +149,12 @@ func (p *Provider) RegisterSigner(ctx context.Context, identity driver.Identity,
 	return p.RegisterIdentityDescriptor(ctx, identityDescriptor, nil)
 }
 
-// AreMe returns the hashes of the passed identities that have a signer registered before.
-// Each identity is resolved via the signer cache and configured storage.
-// There is no secondary "is me" cache: a real cache would need careful handling for
-// single-use identities (for example Idemix nyms) and is intentionally omitted here.
-// A non-nil error means ownership could not be determined for at least one identity; in that
-// case the returned slice is nil and no identity may be treated as checked. The cache-only
-// partial is deliberately not returned: a caller must not mistake "couldn't check" for
-// "confirmed not mine". The error distinguishes a caller-driven abort (a cancelled or
-// deadline-exceeded context — errors.Is context.Canceled / context.DeadlineExceeded) from a
-// genuine storage failure, so a cancellation is not misread as a broken backend.
+// AreMe returns the hashes of the passed identities that have a signer registered before,
+// looked up in the ephemeral signers and then in storage. There is no "is me" cache: single-use
+// identities (Idemix nyms) would need careful invalidation, so it is intentionally omitted.
+// On error the slice is nil and nothing may be treated as checked, so a partial result cannot be
+// mistaken for "confirmed not mine"; errors.Is(err, context.Canceled/DeadlineExceeded) tells a
+// caller-driven abort from a storage failure.
 func (p *Provider) AreMe(ctx context.Context, identities ...driver.Identity) ([]string, error) {
 	p.Logger.DebugfContext(ctx, "identity [%s] is me?", identities)
 
@@ -226,22 +179,15 @@ func (p *Provider) GetAuditInfo(ctx context.Context, identity driver.Identity) (
 	return p.storage.GetAuditInfo(ctx, identity)
 }
 
-// GetSigner returns a Signer for passed identity.
-// If a signer cannot be retrieved an error is returned.
-// Signers that can be reused are cached.
-// If a signer is not found in cache,
-// this provider tries to construct an instance of driver.Signer that produces valid signatures under that identity.
+// GetSigner returns a Signer for the passed identity, or an error.
+// Unless the signer is ephemeral, it is re-resolved on every call.
 func (p *Provider) GetSigner(ctx context.Context, identity driver.Identity) (driver.Signer, error) {
-	idHash := identity.UniqueID()
-	signer, err := p.getSigner(ctx, identity, idHash)
+	signer, err := p.getSigner(ctx, identity)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get signer for identity [%s], it is neither register nor deserialazable", identity.String())
 	}
 	if signer == nil {
-		// Defense in depth: no resolution path may report success with a nil signer. Returning
-		// (nil, nil) here would defer the failure to the caller's first Sign() call, panicking far
-		// from the actual cause. See getSignerAndCache for the cache-tombstone case that makes a
-		// nil signer reachable.
+		// Defense in depth: returning (nil, nil) would defer the failure to the caller's first Sign().
 		return nil, errors.Errorf("no signer available for identity [%s]", identity.String())
 	}
 
@@ -296,12 +242,10 @@ func (p *Provider) RollbackPartialRecipientRegistration(ctx context.Context, id 
 // RegisterIdentityDescriptor stores the given identity descriptor in the configured storage.
 // If alias is not nil, the alias can be used as an alternative to `idriver.IdentityDescriptor#Identity`.
 //
-// Verification: the descriptor's identity must be non-empty. This is checked
-// here rather than only in the storage layer because an ephemeral descriptor
-// never reaches storage and yet still populates the signer cache, which is
-// keyed the same way — an empty identity would install a signer under the key
-// shared by every empty identity. See
-// docs/security/store_integrity_verification.md.
+// Verification: the descriptor's identity must be non-empty. Checked here, not only in storage,
+// because an ephemeral descriptor never reaches storage and an empty identity would install its
+// signer under the key shared by every empty identity.
+// See docs/security/store_integrity_verification.md.
 func (p *Provider) RegisterIdentityDescriptor(ctx context.Context, identityDescriptor *idriver.IdentityDescriptor, alias driver.Identity) error {
 	if identityDescriptor == nil {
 		return errors.New("cannot register nil identity descriptor")
@@ -317,10 +261,7 @@ func (p *Provider) RegisterIdentityDescriptor(ctx context.Context, identityDescr
 		}
 	}
 
-	// update caches
-	p.Logger.DebugfContext(ctx, "update identity provider caches...")
-	p.updateCaches(identityDescriptor, alias)
-	p.Logger.DebugfContext(ctx, "update identity provider caches...done")
+	p.registerEphemeralSigner(identityDescriptor, alias)
 
 	return nil
 }
@@ -331,10 +272,10 @@ func (p *Provider) areMe(ctx context.Context, identities ...driver.Identity) ([]
 	result := collections.NewSet[string]()
 	notFound := make([]driver.Identity, 0)
 
-	// check local cache
+	// ephemeral signers never reach storage, so memory is the only place they can be found
 	for _, id := range identities {
 		if _, ok := p.lookupSigner(id.UniqueID()); ok {
-			p.Logger.DebugfContext(ctx, "is me [%s]? yes, from cache", id)
+			p.Logger.DebugfContext(ctx, "is me [%s]? yes, ephemeral", id)
 			result.Add(id.UniqueID())
 		} else {
 			notFound = append(notFound, id)
@@ -345,10 +286,8 @@ func (p *Provider) areMe(ctx context.Context, identities ...driver.Identity) ([]
 		return result.ToSlice(), nil
 	}
 
-	// check Storage. A failure here must not be flattened into a negative answer: the
-	// identities we could not check are exactly the ones in notFound, and silently dropping
-	// them would report an owned identity as not-owned. Return (nil, err) so callers key off
-	// the error and cannot mistake the cache-only partial for a "confirmed not mine".
+	// A storage failure must not be flattened into a negative answer: notFound is exactly what we
+	// could not check, so return (nil, err) and never the partial result.
 	found, err := p.storage.GetExistingSignerInfo(ctx, notFound...)
 	if err != nil {
 		// Distinguish "we gave up" from "storage is broken". A context cancellation or
@@ -368,9 +307,9 @@ func (p *Provider) areMe(ctx context.Context, identities ...driver.Identity) ([]
 	return result.ToSlice(), nil
 }
 
-func (p *Provider) getSigner(ctx context.Context, identity driver.Identity, idHash string) (driver.Signer, error) {
+func (p *Provider) getSigner(ctx context.Context, identity driver.Identity) (driver.Signer, error) {
 	start := time.Now()
-	signer, path, err := p.getSignerAndCache(ctx, identity, idHash)
+	signer, path, err := p.resolveSigner(ctx, identity)
 	p.metrics.GetSignerDuration.With("path", path).Observe(time.Since(start).Seconds())
 	if err == nil {
 		p.metrics.SignerResolutions.With("outcome", path).Add(1)
@@ -379,20 +318,15 @@ func (p *Provider) getSigner(ctx context.Context, identity driver.Identity, idHa
 	return signer, err
 }
 
-// getSignerAndCache resolves the signer for identity. The returned path reports how the signer
-// was ultimately obtained ("cache", "routed", or "fallback"), for the caller's metrics; on the
-// recursive call for a TypedIdentity's inner identity, the inner call's path is propagated
-// unchanged rather than overwritten, since that recursion is an implementation detail of the
-// fallback resolution, not a resolution of its own.
-func (p *Provider) getSignerAndCache(ctx context.Context, identity driver.Identity, idHash string) (driver.Signer, string, error) {
-	// check cache. A cache hit carrying a nil entry is a tombstone left by secondcache.Delete,
-	// which zeroes the stored value in place rather than removing the key, so a later Get returns
-	// (nil, true). Treat that as a miss and re-resolve, instead of dereferencing entry.Signer on a
-	// nil *SignerEntry and panicking.
-	if entry, ok := p.lookupSigner(idHash); ok && entry != nil {
-		p.Logger.DebugfContext(ctx, "signer for [%s] found", idHash)
+// resolveSigner returns the signer and how it was obtained ("ephemeral", "routed" or "fallback"),
+// for metrics. The recursive call for a TypedIdentity's inner identity propagates the inner path:
+// that recursion is part of fallback resolution, not a path of its own.
+func (p *Provider) resolveSigner(ctx context.Context, identity driver.Identity) (driver.Signer, string, error) {
+	idHash := identity.UniqueID()
+	if signer, ok := p.lookupSigner(idHash); ok {
+		p.Logger.DebugfContext(ctx, "ephemeral signer for [%s] found", idHash)
 
-		return entry.Signer, "cache", nil
+		return signer, "ephemeral", nil
 	}
 
 	p.Logger.DebugfContext(ctx, "signer for [%s] not found, attempting to deserialize", idHash)
@@ -402,8 +336,6 @@ func (p *Provider) getSignerAndCache(ctx context.Context, identity driver.Identi
 	// bytes, KeyManager error) falls straight through to the fallback below, unchanged.
 	if p.signerRouter != nil {
 		if signer, ok := p.signerRouter.Resolve(ctx, identity); ok {
-			p.cacheSigner(idHash, signer)
-
 			if err := p.persistSigner(ctx, identity); err != nil {
 				return nil, "routed", err
 			}
@@ -433,13 +365,11 @@ func (p *Provider) getSignerAndCache(ctx context.Context, identity driver.Identi
 		}
 
 		// recursively resolve the inner identity
-		signer, path, err = p.getSignerAndCache(ctx, typed.Identity, typed.Identity.UniqueID())
+		signer, path, err = p.resolveSigner(ctx, typed.Identity)
 		if err != nil {
 			return nil, path, errors.Wrapf(err, "failed getting signer for identity [%s]", typed.Identity)
 		}
 	}
-
-	p.cacheSigner(idHash, signer)
 
 	if err := p.persistSigner(ctx, identity); err != nil {
 		return nil, path, err
@@ -448,19 +378,17 @@ func (p *Provider) getSignerAndCache(ctx context.Context, identity driver.Identi
 	return signer, path, nil
 }
 
-// cacheSigner is an optimisation only: dropping it costs a re-resolution, not correctness.
-func (p *Provider) cacheSigner(idHash string, signer driver.Signer) {
-	entry := &SignerEntry{Signer: signer}
-	if p.Logger.IsEnabledFor(zapcore.DebugLevel) {
-		entry.DebugStack = debug.Stack()
-	}
-	p.signers.Add(idHash, entry)
-}
-
 // persistSigner is load bearing: it is the only place an on-demand-resolved identity is marked as
 // ours, so IsMe/AreMe answer false without it. The nil blob is a presence marker, not reconstruction
 // material; StoreSignerInfo must not overwrite an existing row.
+//
+// The row is written once per identity, not once per GetSigner: signing resolves the same identity
+// over and over, and the write is a database round trip. The store answers the existence check from
+// its own signer info cache once the row is there. A failed check falls through to the write.
 func (p *Provider) persistSigner(ctx context.Context, identity driver.Identity) error {
+	if exists, err := p.storage.SignerInfoExists(ctx, identity); err == nil && exists {
+		return nil
+	}
 	if err := p.storage.StoreSignerInfo(ctx, identity, nil); err != nil {
 		return errors.Wrap(err, "failed to store entry in Storage for the passed signer")
 	}
@@ -468,42 +396,25 @@ func (p *Provider) persistSigner(ctx context.Context, identity driver.Identity) 
 	return nil
 }
 
-// lookupSigner returns the registered entry for idHash. The cache comes first because most nodes
-// register no ephemeral signer, and no identity can be in both stores. A nil cache hit is a
-// tombstone (see getSignerAndCache), so it falls through instead of shadowing the map.
-func (p *Provider) lookupSigner(idHash string) (*SignerEntry, bool) {
-	if entry, ok := p.signers.Get(idHash); ok && entry != nil {
-		return entry, true
-	}
-
+func (p *Provider) lookupSigner(idHash string) (driver.Signer, bool) {
 	p.ephemeralSignersMutex.RLock()
 	defer p.ephemeralSignersMutex.RUnlock()
-	entry, ok := p.ephemeralSigners[idHash]
+	signer, ok := p.ephemeralSigners[idHash]
 
-	return entry, ok
+	return signer, ok
 }
 
-func (p *Provider) updateCaches(descriptor *idriver.IdentityDescriptor, alias driver.Identity) {
-	id := descriptor.Identity.UniqueID()
-	setAlias := !alias.IsNone()
-	aliasID := alias.UniqueID()
+// registerEphemeralSigner keeps an ephemeral signer in memory, under the identity and its alias.
+// Non-ephemeral descriptors need nothing: their signer info is in storage and GetSigner re-resolves.
+func (p *Provider) registerEphemeralSigner(descriptor *idriver.IdentityDescriptor, alias driver.Identity) {
+	if !descriptor.Ephemeral || descriptor.Signer == nil {
+		return
+	}
 
-	// signers
-	if descriptor.Signer != nil {
-		if descriptor.Ephemeral {
-			// no DebugStack: nothing evicts these, and the snapshot dwarfs the signer
-			entry := &SignerEntry{Signer: descriptor.Signer}
-			p.ephemeralSignersMutex.Lock()
-			p.ephemeralSigners[id] = entry
-			if setAlias {
-				p.ephemeralSigners[aliasID] = entry
-			}
-			p.ephemeralSignersMutex.Unlock()
-		} else {
-			p.cacheSigner(id, descriptor.Signer)
-			if setAlias {
-				p.cacheSigner(aliasID, descriptor.Signer)
-			}
-		}
+	p.ephemeralSignersMutex.Lock()
+	defer p.ephemeralSignersMutex.Unlock()
+	p.ephemeralSigners[descriptor.Identity.UniqueID()] = descriptor.Signer
+	if !alias.IsNone() {
+		p.ephemeralSigners[alias.UniqueID()] = descriptor.Signer
 	}
 }

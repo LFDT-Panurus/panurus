@@ -343,7 +343,7 @@ All identity instrumentation is created through the TMS-scoped provider from the
 (`token/core/{fabtoken/v1,zkatdlog/nogh/v1}/driver/ws.go`), hence the
 `panurus_core_common_metrics_` prefix despite living under `token/services/identity`.
 
-`outcome` and `path` are `cache`, `routed` or `fallback`. A near-zero
+`outcome` and `path` are `ephemeral`, `routed` or `fallback`. A near-zero
 `identity_signer_router_registrations_total` in a busy deployment means routing is not being populated
 and every signer lookup falls back to the probing deserializer. The two `*_provision_failures_total`
 counters rise when a cache cannot pre-provision in the background, so requests are served on the slow
@@ -351,7 +351,7 @@ path while the identity backend keeps failing; the corresponding log line alone 
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
-| `panurus_core_common_metrics_identity_signer_resolutions_total` | counter | `network,channel,namespace,outcome` | Total number of GetSigner calls by outcome (cache, routed, fallback) |
+| `panurus_core_common_metrics_identity_signer_resolutions_total` | counter | `network,channel,namespace,outcome` | Total number of GetSigner calls by outcome (ephemeral, routed, fallback) |
 | `panurus_core_common_metrics_identity_get_signer_duration_seconds` | histogram | `network,channel,namespace,path` | Histogram of GetSigner wall-clock time in seconds, labeled by resolution path |
 | `panurus_core_common_metrics_identity_signer_router_registrations_total` | counter | `network,channel,namespace` | Total number of conf_id-to-KeyManager bindings registered with the SignerRouter |
 | `panurus_core_common_metrics_identity_signer_router_no_probe_errors_total` | counter | `network,channel,namespace` | Total number of errors from the SignerRouter's probe-free signer deserialization path |
