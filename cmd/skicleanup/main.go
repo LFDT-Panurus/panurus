@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/LFDT-Panurus/panurus/cmd/skicleanup/cobra/config"
+	"github.com/LFDT-Panurus/panurus/cmd/skicleanup/cobra/ownedskis"
 	"github.com/LFDT-Panurus/panurus/cmd/skicleanup/cobra/signers"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -47,6 +48,7 @@ func Execute() error {
 
 	mainCmd.AddCommand(config.Cmd())
 	mainCmd.AddCommand(signers.Cmd())
+	mainCmd.AddCommand(ownedskis.Cmd())
 
 	return mainCmd.Execute()
 }

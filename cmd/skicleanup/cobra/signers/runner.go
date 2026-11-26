@@ -27,16 +27,29 @@ type stats struct {
 	skipped    int // entries found in the tokens table (not orphaned)
 }
 
+// LegacyPolicyOwnerType is the owner_type that Tokens rows carry for policy owners
+// stored before identity.TypeToString returned "policy" for them.
+const LegacyPolicyOwnerType = "Type (6)"
+
+// NewSKIExtractor returns the SKI extractor shared by the skicleanup commands.
+// It registers the same providers as the runtime cleanup service: idemix, idemixnym
+// (backed by identityStore), and a no-op for x509. Other types use the SHA-256 fallback.
+func NewSKIExtractor(identityStore idemixnym.IdentityStoreService) *cleanup.SKIExtractor {
+	extractor := cleanup.NewSKIExtractor()
+	extractor.RegisterProvider(idemix.IdentityTypeString, idemix.NewSKIProvider())
+	extractor.RegisterProvider(idemixnym.IdentityTypeString, idemixnym.NewSKIProvider(identityStore))
+	// X.509 deliberately derives no SKIs: an X.509 key belongs to the wallet,
+	// not to a single token. See cleanup.NoopSKIProvider.
+	extractor.RegisterProvider(x509.IdentityTypeString, cleanup.NewNoopSKIProvider())
+
+	return extractor
+}
+
 // Run iterates all entries in the Signers table in batches of batchSize.
 // For each signer entry whose identity is NOT found in the Tokens table,
 // it derives the SKIs and prints them to stdout.
 func Run(ctx context.Context, stores *Stores, batchSize int) error {
-	extractor := cleanup.NewSKIExtractor()
-	extractor.RegisterProvider(idemix.IdentityTypeString, idemix.NewSKIProvider())
-	extractor.RegisterProvider(idemixnym.IdentityTypeString, idemixnym.NewSKIProvider(stores.Identity))
-	// X.509 deliberately derives no SKIs, so orphaned X.509 signers report no keys to delete:
-	// an X.509 key belongs to the wallet, not to a single token. See cleanup.NoopSKIProvider.
-	extractor.RegisterProvider(x509.IdentityTypeString, cleanup.NewNoopSKIProvider())
+	extractor := NewSKIExtractor(stores.Identity)
 
 	var s stats
 	offset := 0
