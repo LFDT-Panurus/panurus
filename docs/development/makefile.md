@@ -18,17 +18,22 @@ These targets run various test suites.
 
 ### Unit Tests
 
+The unit-test targets live in [unit-tests.mk](../../unit-tests.mk). There is one target per Go module; `unit-tests-cmd` covers every `cmd/*` module.
+
 | Target | Description |
 | :--- | :--- |
-| `make unit-tests` | Runs standard unit tests for Panurus, excluding integration and regression tests. |
-| `make unit-tests-race` | Runs unit tests with the Go race detector enabled. Equivalent to running the three shards below in sequence. |
-| `make unit-tests-race-db` | Race shard: the `token/services/selector` and `token/services/storage` packages (most start Postgres or Vault containers; needs `make testing-docker-images`), plus the hashicorp Vault module. |
-| `make unit-tests-race-core` | Race shard: the `token/core` packages (drivers and crypto). |
-| `make unit-tests-race-rest` | Race shard: every other root-module package, the `integration/nwo` harness tests and the `x/token/services/network/evm` module. |
-| `make unit-tests-regression` | Runs regression tests. |
+| `make unit-tests` | Runs every target below, one after the other. |
+| `make unit-tests-race` | Same as `make unit-tests RACE=1`. |
+| `make unit-tests-main` | The main module. The regression packages run in a second `go test` call without the test timeout. Most selector and storage tests start Postgres or Vault containers; needs `make testing-docker-images`. |
+| `make unit-tests-hashicorp` | The `token/services/storage/db/kvs/hashicorp` module. Starts a Vault container. |
+| `make unit-tests-evm` | The `x/token/services/network/evm` module. The anvil e2e suite needs Foundry. |
+| `make unit-tests-integration` | The `integration` module packages whose tests do not import Ginkgo. The Ginkgo suites are integration tests. |
+| `make unit-tests-cmd` | Every `cmd/*` module. |
+| `make unit-tests-check` | Fails if a tracked Go module has no target, if an exempt module (`tools`) has tests, or if the two CI workflows do not run exactly these targets with the same `docker` and `foundry` flags. Part of `make checks-fast`. |
+| `make unit-tests-mk-test` | Tests the targets above (`ci/scripts/unit-tests-mk-test.sh`). Part of `make checks-fast`. |
 | `make test-evm-contracts` | Runs the EVM driver's Solidity tests (`forge test`) and `forge fmt --check`. Skips without `forge` or the `forge-std` submodule; set `EVM_CONTRACTS_REQUIRED=1` to fail instead. |
 
-The `unit-tests-race-*` shards accept `COVERAGE=1`, which instruments every root-module package (`-coverpkg=./...`) and writes the profile to `COVERAGE_PROFILE` (default `profile.cov`). CI runs each shard as its own `utest` job and uploads that profile, so the suite is not run a second time without `-race` for coverage. A shard whose package filter matches nothing fails instead of silently testing the repository root.
+Every unit-test target accepts `RACE=1`, which adds `-race` and sets `GORACE=history_size=7`. `unit-tests-main` and `unit-tests-evm` accept `COVERAGE=1`, which instruments every package of the module (`-coverpkg=./...`) and writes the profile to `COVERAGE_PROFILE` (default `profile.cov`). `unit-tests-main` fails if it finds no regression packages, instead of silently testing the repository root.
 
 ### Integration Tests
 

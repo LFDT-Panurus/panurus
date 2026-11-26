@@ -7,6 +7,7 @@
 ### Testing
 - `make unit-tests` - Run unit tests
 - `make unit-tests-race` - Unit tests with race detector
+- `make unit-tests-main` - One module (targets in `unit-tests.mk`); add `RACE=1` for race
 - `make integration-tests-fabtoken-fabric-t1` - Fabtoken integration tests
 - `make integration-tests-dlog-fabric-t1 TEST_FILTER="T1"` - ZK integration tests with T1 filter
 

@@ -155,8 +155,9 @@ The queue requires all of the following, both to enter it and to merge:
 - The PR targets `main`, is not a draft, has no conflicts, and has at least one approval with no
   outstanding change requests.
 - These CI checks pass: the `Tests` workflow jobs `checks`, `lint`, `proto-breaking`, `bench-check`,
-  `cgo-check`, and `publish-coverage` (which passes only if every `utest` and `itest` job passed),
-  plus `DCO` and the CodeQL workflow's `Analyze` job.
+  `cgo-check`, `publish-coverage` (which passes only if every `utest` and `itest` job passed), and
+  `unit-tests` (which passes only if every `utest` job passed), plus `DCO` and the CodeQL workflow's
+  `Analyze` job.
 
 If these are not met yet when you queue the PR, Mergify waits until they are. Once the PR is
 queued, Mergify handles queued PRs one at a time (in-place checks):
