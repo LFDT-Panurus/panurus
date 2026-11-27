@@ -81,7 +81,7 @@ func TestGuardedStoreLockerSkipCreateTable(t *testing.T) {
 		require.NoError(t, err)
 		defer func() { _ = db.Close() }()
 
-		store := &fakeSkipSQLAuditTxStore{fakeSQLAuditTxStore: fakeSQLAuditTxStore{db: db}, skip: true}
+		store := &fakeSkipSQLAuditTxStore{db: db, skip: true}
 		l, err := locker.NewFromConfig(cfg, guard.WrapAuditTransaction(store, guard.DefaultPolicy()), stubReplicaID{})
 		require.NoError(t, err)
 		require.NotNil(t, l)
@@ -97,7 +97,7 @@ func TestGuardedStoreLockerSkipCreateTable(t *testing.T) {
 		mock.ExpectExec(regexp.QuoteMeta("CREATE TABLE IF NOT EXISTS fsc_eid_leases")).
 			WillReturnResult(sqlmock.NewResult(0, 0))
 
-		store := &fakeSkipSQLAuditTxStore{fakeSQLAuditTxStore: fakeSQLAuditTxStore{db: db}}
+		store := &fakeSkipSQLAuditTxStore{db: db}
 		l, err := locker.NewFromConfig(cfg, guard.WrapAuditTransaction(store, guard.DefaultPolicy()), stubReplicaID{})
 		require.NoError(t, err)
 		require.NotNil(t, l)
