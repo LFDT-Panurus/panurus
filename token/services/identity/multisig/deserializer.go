@@ -168,15 +168,93 @@ func (d *TypedIdentityDeserializer) Recipients(id driver.Identity, typ identity.
 	return mid.Identities, nil
 }
 
+// AuditInfoDeserializer deserializes raw multisig audit info into AuditInfo
+// for the enrollment-ID / revocation-handle path.
+// It derives the multisig identity's enrollment ID from its members.
 type AuditInfoDeserializer struct {
+	inner driver2.AuditInfoDeserializer
 }
 
-func (a *AuditInfoDeserializer) DeserializeAuditInfo(ctx context.Context, identity driver.Identity, raw []byte) (driver2.AuditInfo, error) {
+// NewAuditInfoDeserializer constructs an AuditInfoDeserializer resolving
+// per-member audit infos through inner, typically the parent multiplex
+// deserializer. With a nil inner, the enrollment ID is always empty.
+func NewAuditInfoDeserializer(inner driver2.AuditInfoDeserializer) *AuditInfoDeserializer {
+	return &AuditInfoDeserializer{inner: inner}
+}
+
+// DeserializeAuditInfo decodes raw multisig audit info and derives its
+// enrollment ID: the one shared by all members, or "" when there is none.
+// id is the inner MultiIdentity bytes, not the typed identity.
+func (a *AuditInfoDeserializer) DeserializeAuditInfo(ctx context.Context, id driver.Identity, raw []byte) (driver2.AuditInfo, error) {
 	ei := &AuditInfo{}
-	err := json.Unmarshal(raw, ei)
-	if err != nil {
+	if err := json.Unmarshal(raw, ei); err != nil {
 		return nil, err
 	}
+	eid, err := a.commonEnrollmentID(ctx, id, ei)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed deriving multisig enrollment ID")
+	}
+	ei.eid = eid
 
 	return ei, nil
+}
+
+// commonEnrollmentID returns the enrollment ID shared by all members:
+// "" when a member has none (e.g. a nested composite), its audit info is
+// missing, or they disagree; an error on an invalid member identity,
+// unresolvable audit info or a member count mismatch.
+func (a *AuditInfoDeserializer) commonEnrollmentID(ctx context.Context, id driver.Identity, ei *AuditInfo) (string, error) {
+	if a.inner == nil {
+		return "", nil
+	}
+	// account for this level of nesting before resolving the members: inner is the parent
+	// multiplex, so a member's audit info may be a multisig audit info in turn and re-enter here
+	ctx, err := driver.EnterCompositeIdentity(ctx)
+	if err != nil {
+		return "", errors.Wrap(err, "cannot derive the enrollment ID of a multisig identity")
+	}
+	mi := MultiIdentity{}
+	if err := mi.Deserialize(id); err != nil {
+		return "", errors.Wrapf(err, "failed to deserialize multisig identity")
+	}
+	// the fan-out bound applies here too: every member's audit info is resolved through inner,
+	// which is one deserialization each and a further descent for a nested composite member
+	if err := validateComponentIdentities(mi.Identities, driver.MaxIdentityComponentsFrom(ctx)); err != nil {
+		return "", errors.Wrap(err, "invalid multisig identity")
+	}
+	if len(mi.Identities) != len(ei.IdentityAuditInfos) {
+		return "", errors.Errorf("expected %d member audit infos but received %d",
+			len(mi.Identities), len(ei.IdentityAuditInfos))
+	}
+	if len(mi.Identities) == 0 {
+		return "", errors.New("multisig identity has no members")
+	}
+	// resolve every member before declaring a result so corruption in a
+	// later member is not masked by an earlier "no common EID" outcome
+	eids := make([]string, len(ei.IdentityAuditInfos))
+	for k, info := range ei.IdentityAuditInfos {
+		if len(info.AuditInfo) == 0 {
+			// missing audit info is legal (e.g. an identity not registered
+			// locally): the member contributes no enrollment ID
+			continue
+		}
+		memberAuditInfo, err := a.inner.DeserializeAuditInfo(ctx, mi.Identities[k], info.AuditInfo)
+		if err != nil {
+			return "", errors.Wrapf(err, "failed to deserialize audit info of member [%d]", k)
+		}
+		if memberAuditInfo == nil {
+			// an inner deserializer may report neither audit info nor error:
+			// treat it like missing audit info rather than panicking
+			continue
+		}
+		eids[k] = memberAuditInfo.EnrollmentID()
+	}
+	for _, memberEID := range eids {
+		if memberEID == "" || memberEID != eids[0] {
+			// no common EID: a member has none or members belong to different ones
+			return "", nil
+		}
+	}
+
+	return eids[0], nil
 }

@@ -72,6 +72,9 @@ jobs:
           - name: identity-boolpolicy-audit-info-deserializer
             pkg: ./token/services/identity/boolpolicy
             func: FuzzDeserializeAuditInfoNoPanic
+          - name: identity-multisig-audit-info-deserializer
+            pkg: ./token/services/identity/multisig
+            func: FuzzAuditInfoDeserializer_DeserializeAuditInfo
           - name: common-request-limits
             pkg: ./token/core/common
             func: FuzzRequestResourceLimits
