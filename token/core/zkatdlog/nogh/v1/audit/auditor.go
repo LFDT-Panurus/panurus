@@ -201,6 +201,11 @@ func validateIssueAuditAction(ctx context.Context, infoMatcher InfoMatcher, pede
 		return errors.Errorf("issue action is nil")
 	}
 
+	// Reject before signing what the validator would reject anyway (GHSA-8pg9-2ph5-j563)
+	if err := issue.CheckInputsPolicy(auditCtx.PP.Issuers(), len(action.Inputs)); err != nil {
+		return err
+	}
+
 	// Get the metadata for this specific action using ActionIndex
 	if auditCtx.ActionIndex >= len(auditCtx.TokenRequestMetadata.Actions) {
 		return errors.Errorf("action index %d out of range (have %d actions)", auditCtx.ActionIndex, len(auditCtx.TokenRequestMetadata.Actions))

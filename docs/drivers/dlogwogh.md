@@ -429,6 +429,11 @@ To spend, the owner provides a **Signature of Knowledge (SoK)** proving they kno
 Issuers and Auditors are identified by standard X.509 certificates.
 
 - **Issuers**: Authorized to create value. Their public keys are listed in `PublicParams.IssuerIDs`.
+  An issue action may also carry inputs (used by the token upgrade / burn-and-reissue flow). These inputs carry no
+  owner signature, and the validator does not bind them in value, type, or format to the issued outputs: every issuer
+  listed in `PublicParams.IssuerIDs` is therefore trusted to consume any output in the namespace. When
+  `PublicParams.IssuerIDs` is empty (open issuer policy), issue actions carrying inputs are rejected by both the
+  validator and the auditor.
 - **Auditors**: Authorized to inspect transactions via signed audit requests. Their public keys are listed in `PublicParams.AuditorIDs`.
 
 ### 5.3 Identity Deserialization

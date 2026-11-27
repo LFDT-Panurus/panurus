@@ -6,7 +6,10 @@ SPDX-License-Identifier: Apache-2.0
 
 package validator
 
-import "github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+import (
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/issue"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+)
 
 var (
 	// ErrInvalidInputs is returned when the number of token inputs is invalid
@@ -27,6 +30,8 @@ var (
 	ErrIssueVerificationFailed = errors.New("failed to verify issue")
 	// ErrIssuerNotAuthorized is returned when the issuer is not authorized
 	ErrIssuerNotAuthorized = errors.New("issuer is not authorized")
+	// ErrOpenPolicyIssueWithInputs is returned when an issue action carries inputs under an open issuer policy
+	ErrOpenPolicyIssueWithInputs = issue.ErrOpenPolicyIssueWithInputs
 	// ErrInvalidZKP  is returned when the zk proof is not valid
 	ErrInvalidZKP = errors.New("invalid zero-knowledge proof")
 )

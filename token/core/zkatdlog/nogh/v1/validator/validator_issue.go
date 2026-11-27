@@ -27,11 +27,20 @@ var logger = logging.MustGetLogger()
 // This is an intentional open-policy design for deployments that do not restrict issuance
 // to a fixed set of identities. When issuer restriction is required, populate PP.IssuerIDs
 // with the authorized issuer identities before deploying the public parameters.
+//
+// Issue action inputs (burn-and-reissue/upgrade) carry no owner authorization, and the inputs
+// are bound neither in value, type, nor format to the outputs: every issuer in PP.IssuerIDs is
+// trusted to consume any output in the namespace. Under an open policy that set is anyone, so
+// issue actions with inputs are rejected (GHSA-8pg9-2ph5-j563, see issue.CheckInputsPolicy).
 func IssueValidate(c context.Context, ctx *Context) error {
 	action := ctx.IssueAction
 
 	if err := action.Validate(); err != nil {
 		return errors.Wrapf(err, "failed validating issue action")
+	}
+
+	if err := issue.CheckInputsPolicy(ctx.PP.Issuers(), len(action.Inputs)); err != nil {
+		return err
 	}
 
 	commitments, err := action.GetCommitments()

@@ -259,6 +259,58 @@ func TestAuditor(t *testing.T) {
 	})
 }
 
+// TestAuditor_GHSA8pg92ph5j563_IssueWithInputs verifies that the auditor mirrors the validator's
+// containment check: an issue action carrying inputs is rejected at audit time when PP.IssuerIDs
+// is empty (open issuer policy), before the auditor would sign and lock the referenced tokens.
+// Under a restricted policy the containment check must not fire.
+func TestAuditor_GHSA8pg92ph5j563_IssueWithInputs(t *testing.T) {
+	issuerID, _ := getIdemixInfo(t, "./testdata/bls12_381_bbs/idemix")
+	tests := []struct {
+		name    string
+		issuers []driver.Identity
+		check   func(t *testing.T, err error)
+	}{
+		{
+			name: "open policy rejected",
+			check: func(t *testing.T, err error) {
+				t.Helper()
+				require.ErrorIs(t, err, issue.ErrOpenPolicyIssueWithInputs)
+			},
+		},
+		{
+			name:    "restricted policy not rejected by containment",
+			issuers: []driver.Identity{issuerID},
+			check: func(t *testing.T, err error) {
+				t.Helper()
+				require.NotErrorIs(t, err, issue.ErrOpenPolicyIssueWithInputs)
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, pp, auditor := setupAuditorTest(t, tt.issuers...)
+			ia, metadata := createIssue(t, pp)
+
+			// Name an arbitrary (victim) output as input, with matching metadata so that
+			// structural matching does not fail first.
+			victimID := token3.ID{TxId: "victim-tx", Index: 0}
+			ia.Inputs = []*issue.ActionInput{{ID: victimID, Token: []byte("victim-serialized-token")}}
+			metadata.Inputs = []*driver.IssueInputMetadata{{TokenID: &victimID}}
+			raw, err := ia.Serialize()
+			require.NoError(t, err)
+
+			err = auditor.Check(
+				t.Context(),
+				&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: raw}}},
+				&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: metadata}}},
+				"1",
+				map[string]*token3.Token{victimID.String(): {Type: "ABC"}},
+			)
+			tt.check(t, err)
+		})
+	}
+}
+
 // TestAuditor_Errors tests error handling for various Auditor methods, ensuring that the auditor
 // correctly identifies and reports inconsistencies in input data and metadata.
 func TestAuditor_Errors(t *testing.T) {

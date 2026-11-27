@@ -20,6 +20,7 @@ import (
 
 	math "github.com/IBM/mathlib"
 	fv1 "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/actions"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/issue"
 	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/transfer"
@@ -31,9 +32,92 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/interop/encoding"
 	"github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// ===========================================================================
+// GHSA-8pg9-2ph5-j563 — open-policy issue action with inputs
+// ===========================================================================
+
+// TestSecurityGHSA8pg92ph5j563_IssueWithInputs verifies that an issue action
+// carrying inputs is rejected when PP.IssuerIDs is empty (open issuer policy).
+// ActionInput carries no owner authorization, so under an open policy anyone
+// signing as issuer could have the translator delete another owner's output.
+// Under a restricted policy the containment check must not fire.
+//
+// The "trust model pin" case documents the current trust assumption rather than
+// a desired property: IssueValidate does not inspect issue inputs at all, so a
+// listed issuer naming an arbitrary (here, forged) input is fully accepted. The
+// durable owner-authorization fix is expected to flip this case to a rejection.
+func TestSecurityGHSA8pg92ph5j563_IssueWithInputs(t *testing.T) {
+	tests := []struct {
+		name       string
+		restricted bool
+		check      func(t *testing.T, err error)
+	}{
+		{
+			name:       "open policy rejected",
+			restricted: false,
+			check: func(t *testing.T, err error) {
+				t.Helper()
+				require.ErrorIs(t, err, validator.ErrOpenPolicyIssueWithInputs)
+			},
+		},
+		{
+			name:       "restricted policy not rejected by containment",
+			restricted: true,
+			check: func(t *testing.T, err error) {
+				t.Helper()
+				require.NotErrorIs(t, err, validator.ErrOpenPolicyIssueWithInputs)
+			},
+		},
+		{
+			name:       "restricted policy trust model pin: listed issuer trusted, durable fix must flip this",
+			restricted: true,
+			check: func(t *testing.T, err error) {
+				t.Helper()
+				require.NoError(t, err)
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := newSecurityTestEnv(t)
+
+			issueAction := &issue.Action{}
+			require.NoError(t, issueAction.Deserialize(env.TRWithIssue.GetIssues()[0], testUseCaseExtra.CurveID))
+
+			env.Engine.PublicParams.IssuerIDs = nil
+			if tt.restricted {
+				env.Engine.PublicParams.IssuerIDs = []driver.Identity{issueAction.Issuer}
+			}
+
+			// Forge an input pointing at an arbitrary (victim) output.
+			issueAction.Inputs = []*issue.ActionInput{
+				{
+					ID:    token2.ID{TxId: "victim-tx", Index: 0},
+					Token: []byte("victim-serialized-token"),
+				},
+			}
+
+			ctx := &validator.Context{
+				Logger:       logging.MustGetLogger(),
+				PP:           env.Engine.PublicParams,
+				IssueAction:  issueAction,
+				Deserializer: env.Engine.Deserializer,
+				SignatureProvider: &mockSignatureProvider{
+					HasBeenSignedByFunc: func(ctx context.Context, id driver.Identity, verifier driver.Verifier) ([]byte, error) {
+						return []byte("sig"), nil
+					},
+				},
+			}
+
+			tt.check(t, validator.IssueValidate(context.Background(), ctx))
+		})
+	}
+}
 
 // ===========================================================================
 // STEP A — Backend cursor: mixed issue+transfer with extra auditor signature
