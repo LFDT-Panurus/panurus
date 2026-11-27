@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 
 	idemixmsp "github.com/IBM/idemix/msp"
+	idemixconfig "github.com/IBM/idemix/msp/config"
 	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/json"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto/protos-go/config"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
@@ -57,12 +58,28 @@ const (
 	ConfigDirUser = "user"
 	// ConfigFileSigner is the filename for the signer configuration.
 	ConfigFileSigner = "SignerConfig"
+	// ConfigFileFabricCARevocationPublicKey is the filename of the revocation public key in the Fabric-CA layout.
+	ConfigFileFabricCARevocationPublicKey = "IssuerRevocationPublicKey"
 )
 
 // ReadFile reads the contents of a file and returns it as a byte slice.
 func ReadFile(file string) ([]byte, error) {
 	fileCont, err := os.ReadFile(file)
 	if err != nil {
+		return nil, errors.Wrapf(err, "could not read file %s", file)
+	}
+
+	return fileCont, nil
+}
+
+// readOptionalFile returns nil, nil if the file does not exist; any other read error is returned.
+func readOptionalFile(file string) ([]byte, error) {
+	fileCont, err := os.ReadFile(file)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+
 		return nil, errors.Wrapf(err, "could not read file %s", file)
 	}
 
@@ -87,9 +104,10 @@ func NewConfigWithIPK(issuerPublicKey []byte, dir string, ignoreVerifyOnlyWallet
 	if err != nil {
 		logger.Debugf("failed reading idemix configuration from [%s]: [%s], try adding extra path element...", dir, err)
 		// Try with ExtraPathElement
-		conf, err = newConfigWithIPK(issuerPublicKey, filepath.Join(dir, ExtraPathElement), ignoreVerifyOnlyWallet)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed reading idemix configuration from [%s] and with extra path element", dir)
+		var err2 error
+		conf, err2 = newConfigWithIPK(issuerPublicKey, filepath.Join(dir, ExtraPathElement), ignoreVerifyOnlyWallet)
+		if err2 != nil {
+			return nil, errors.Wrapf(errors.Join(err, err2), "failed reading idemix configuration from [%s] and with extra path element", dir)
 		}
 	}
 
@@ -127,8 +145,7 @@ func NewIdemixConfig(issuerPublicKey []byte, dir string, ignoreVerifyOnlyWallet 
 	var signer *config.IdemixSignerConfig
 	signerBytes, err := os.ReadFile(signerConfigPath)
 	if err == nil {
-		signer = &config.IdemixSignerConfig{}
-		err = proto.Unmarshal(signerBytes, signer)
+		signer, err = unmarshalIdemixSignerConfig(signerBytes)
 		if err != nil {
 			return nil, err
 		}
@@ -136,15 +153,45 @@ func NewIdemixConfig(issuerPublicKey []byte, dir string, ignoreVerifyOnlyWallet 
 		logger.Debugf("cannot read the signer config file [%s]: [%s]", signerConfigPath, err)
 	}
 
-	return assembleConfig(issuerPublicKey, signer)
+	revocationPKPath := filepath.Join(dir, idemixmsp.IdemixConfigDirMsp, idemixmsp.IdemixConfigFileRevocationPublicKey)
+	revocationPK, err := readOptionalFile(revocationPKPath)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to read revocation public key at [%s]", revocationPKPath)
+	}
+
+	return assembleConfig(issuerPublicKey, signer, revocationPK)
+}
+
+// unmarshalIdemixSignerConfig decodes a signer config written by idemix tooling (e.g. idemixgen).
+// The file uses idemix's IdemixMSPSignerConfig, whose field numbers differ from the Panurus
+// IdemixSignerConfig (field 8 is curve_id there, ski here), so it must not be decoded directly.
+func unmarshalIdemixSignerConfig(raw []byte) (*config.IdemixSignerConfig, error) {
+	si := &idemixconfig.IdemixMSPSignerConfig{}
+	if err := proto.Unmarshal(raw, si); err != nil {
+		return nil, errors.Wrapf(err, "failed to unmarshal idemix signer config")
+	}
+
+	return &config.IdemixSignerConfig{
+		Cred:                            si.Cred,
+		Sk:                              si.Sk,
+		OrganizationalUnitIdentifier:    si.OrganizationalUnitIdentifier,
+		Role:                            si.Role,
+		EnrollmentId:                    si.EnrollmentId,
+		CredentialRevocationInformation: si.CredentialRevocationInformation,
+		RevocationHandle:                si.RevocationHandle,
+		Schema:                          si.Schema,
+	}, nil
 }
 
 // NewFabricCAIdemixConfig creates a new config from Fabric-CA files (JSON format).
 func NewFabricCAIdemixConfig(issuerPublicKey []byte, dir string) (*Config, error) {
 	var signer *config.IdemixSignerConfig
 	path := filepath.Join(dir, ConfigDirUser, ConfigFileSigner)
-	signerBytes, err := ReadFile(path)
-	if err == nil {
+	signerBytes, err := readOptionalFile(path)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to read the content of signer config at [%s]", path)
+	}
+	if signerBytes != nil {
 		// signerBytes is a json structure, convert it to protobuf
 		si := &SignerConfig{}
 		if err := json.Unmarshal(signerBytes, si); err != nil {
@@ -160,13 +207,15 @@ func NewFabricCAIdemixConfig(issuerPublicKey []byte, dir string) (*Config, error
 			RevocationHandle:                si.RevocationHandle,
 			Schema:                          si.Schema,
 		}
-	} else {
-		if !os.IsNotExist(errors.Cause(err)) {
-			return nil, errors.Wrapf(err, "failed to read the content of signer config at [%s]", path)
-		}
 	}
 
-	return assembleConfig(issuerPublicKey, signer)
+	revocationPKPath := filepath.Join(dir, ConfigFileFabricCARevocationPublicKey)
+	revocationPK, err := readOptionalFile(revocationPKPath)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to read revocation public key at [%s]", revocationPKPath)
+	}
+
+	return assembleConfig(issuerPublicKey, signer, revocationPK)
 }
 
 // NewConfigFromRaw creates config from protobuf bytes and validates it.
@@ -187,12 +236,14 @@ func NewConfigFromRaw(issuerPublicKey []byte, configRaw []byte) (*Config, error)
 	return config, nil
 }
 
-// assembleConfig constructs an IdemixConfig from the issuer public key and signer configuration.
-func assembleConfig(issuerPublicKey []byte, signer *config.IdemixSignerConfig) (*Config, error) {
+// assembleConfig constructs an IdemixConfig from the issuer public key, signer configuration,
+// and (optional) revocation public key.
+func assembleConfig(issuerPublicKey []byte, signer *config.IdemixSignerConfig, revocationPK []byte) (*Config, error) {
 	idemixConfig := &config.IdemixConfig{
-		Version: ProtobufProtocolVersionV1,
-		Ipk:     issuerPublicKey,
-		Signer:  signer,
+		Version:      ProtobufProtocolVersionV1,
+		Ipk:          issuerPublicKey,
+		Signer:       signer,
+		RevocationPk: revocationPK,
 	}
 
 	return idemixConfig, nil

@@ -15,8 +15,8 @@ require (
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2 // indirect
-	github.com/IBM/idemix v0.3.1 // indirect
-	github.com/IBM/mathlib v0.3.2 // indirect
+	github.com/IBM/idemix v0.4.0 // indirect
+	github.com/IBM/mathlib v0.4.0 // indirect
 	github.com/Microsoft/go-winio v0.6.4 // indirect
 	github.com/XSAM/otelsql v0.44.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect

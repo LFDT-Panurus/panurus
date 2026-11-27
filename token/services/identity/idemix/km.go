@@ -106,18 +106,18 @@ func NewKeyManagerWithSchema(
 		return nil, err
 	}
 
-	// IMPORTANT: we generate an ephemeral revocation key public key because
-	// it is never used in the current idemix implementations.
-	// This might change in the future
-	RevocationKey, err := csp.KeyGen(
-		&bccsp.IdemixRevocationKeyGenOpts{Temporary: true},
-	)
-	if err != nil {
-		return nil, errors.WithMessagef(err, "failed to generate revocation key")
-	}
-	RevocationPublicKey, err := RevocationKey.PublicKey()
-	if err != nil {
-		return nil, errors.WithMessagef(err, "failed to extract revocation public key")
+	// Import the revocation public key used to authenticate the CRI, if configured.
+	var revocationPublicKey bccsp.Key
+	if len(conf.RevocationPk) != 0 {
+		revocationPublicKey, err = csp.KeyImport(
+			conf.RevocationPk,
+			&bccsp.IdemixRevocationPublicKeyImportOpts{Temporary: true},
+		)
+		if err != nil {
+			return nil, errors.WithMessagef(err, "failed to import revocation public key")
+		}
+	} else {
+		logger.Warnf("idemix [%s]: no revocation public key configured, CRI authentication disabled", conf.Name)
 	}
 
 	if conf.Signer == nil {
@@ -203,7 +203,7 @@ func NewKeyManagerWithSchema(
 			Csp:             csp,
 			Ipk:             conf.Ipk,
 			IssuerPublicKey: issuerPublicKey,
-			RevocationPK:    RevocationPublicKey,
+			RevocationPK:    revocationPublicKey,
 			Epoch:           0,
 			VerType:         verType,
 			SchemaManager:   sm,

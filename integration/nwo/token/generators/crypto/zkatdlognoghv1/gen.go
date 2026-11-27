@@ -15,6 +15,7 @@ import (
 	"time"
 
 	idemix "github.com/IBM/idemix/msp"
+	idemixconfig "github.com/IBM/idemix/msp/config"
 	mathlib "github.com/IBM/mathlib"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/commands"
@@ -23,7 +24,6 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core"
 	dlognoghv1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
 	msp2 "github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto"
-	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto/protos-go/config"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/common"
@@ -177,7 +177,7 @@ func (d *CryptoMaterialGenerator) GenerateOwnerIdentities(tms *topology.TMS, n *
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			// nullify cred and sk
-			signerConfig := &config.IdemixSignerConfig{}
+			signerConfig := &idemixconfig.IdemixMSPSignerConfig{}
 			err = proto.Unmarshal(signerBytes, signerConfig)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			signerConfig.Cred = nil
