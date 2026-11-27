@@ -11,8 +11,8 @@ replace (
 require (
 	github.com/LFDT-Panurus/panurus v0.10.1
 	github.com/LFDT-Panurus/panurus/integration v0.0.0-00010101000000-000000000000
-	github.com/hyperledger-labs/fabric-smart-client v0.29.1
-	github.com/hyperledger-labs/fabric-smart-client/integration v0.29.1
+	github.com/hyperledger-labs/fabric-smart-client v0.29.2
+	github.com/hyperledger-labs/fabric-smart-client/integration v0.29.2
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.12.1
@@ -63,7 +63,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.32.0 // indirect
-	github.com/hyperledger-labs/fabric-smart-client/platform/fabric/services/state/cc/query v0.29.1 // indirect
+	github.com/hyperledger-labs/fabric-smart-client/platform/fabric/services/state/cc/query v0.29.2 // indirect
 	github.com/hyperledger/fabric-amcl v0.0.0-20230602173724-9e02669dceb2 // indirect
 	github.com/hyperledger/fabric-chaincode-go/v2 v2.3.1-0.20260831054443-83a556592560 // indirect
 	github.com/hyperledger/fabric-lib-go v1.1.5 // indirect
