@@ -21,7 +21,7 @@ require (
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2 // indirect
-	github.com/IBM/idemix v0.3.2-0.20261127095636-47661515a77d // indirect
+	github.com/IBM/idemix v0.4.0 // indirect
 	github.com/IBM/mathlib v0.4.0 // indirect
 	github.com/LFDT-Panurus/panurus/x/token/services/network/evm v0.0.0 // indirect
 	github.com/Masterminds/semver/v3 v3.5.0 // indirect

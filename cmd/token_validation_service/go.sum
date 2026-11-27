@@ -1,7 +1,7 @@
 github.com/DATA-DOG/go-sqlmock v1.5.2 h1:OcvFkGmslmlZibjAjaHm3L//6LiuBgolP7OputlJIzU=
 github.com/DATA-DOG/go-sqlmock v1.5.2/go.mod h1:88MAG/4G7SMwSE3CeA0ZKzrT5CiOU3OJ+JlNzwDqpNU=
-github.com/IBM/idemix v0.3.2-0.20261127095636-47661515a77d h1:XdUHIQoGAgwOJIYpZsPX61kkgx8qapUcnqTGjINHDGw=
-github.com/IBM/idemix v0.3.2-0.20261127095636-47661515a77d/go.mod h1:4IB+sb7bkmJ3VF5IoOAnzB6AyVwsFT/Ye5aP7sFAQbc=
+github.com/IBM/idemix v0.4.0 h1:jbj5uknFzowpdgHaPKNpCYAAu1vJq3RV1bYwNEZPi+Q=
+github.com/IBM/idemix v0.4.0/go.mod h1:4IB+sb7bkmJ3VF5IoOAnzB6AyVwsFT/Ye5aP7sFAQbc=
 github.com/IBM/mathlib v0.4.0 h1:ph5jt34hPVnse6N55VPgqQJX0qj8QfRzYI+8d8eLIRk=
 github.com/IBM/mathlib v0.4.0/go.mod h1:SoGBO5m5bHQ4hph+nhf3o5gmBgRLXXZ77/YVa1X7xbc=
 github.com/Masterminds/semver/v3 v3.5.0 h1:kQceYJfbupGfZOKZQg0kou0DgAKhzDg2NZPAwZ/2OOE=
