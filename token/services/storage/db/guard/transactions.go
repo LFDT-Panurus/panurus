@@ -46,8 +46,14 @@ type writeDBProvider interface {
 	WriteDB() *sql.DB
 }
 
-// guardedSQLAuditTx keeps WriteDB visible through the guard so the postgres
-// auditor locker can still reach the underlying *sql.DB.
+// skipCreateTableProvider mirrors locker.SkipCreateTableProvider.
+type skipCreateTableProvider interface {
+	SkipCreateTable() bool
+}
+
+// guardedSQLAuditTx keeps WriteDB and SkipCreateTable visible through the guard
+// so the postgres auditor locker can still reach the underlying *sql.DB and
+// honour the store's skipCreateTable flag.
 type guardedSQLAuditTx struct {
 	*guardedAuditTx
 	db writeDBProvider
@@ -55,6 +61,16 @@ type guardedSQLAuditTx struct {
 
 func (g *guardedSQLAuditTx) WriteDB() *sql.DB {
 	return g.db.WriteDB()
+}
+
+// SkipCreateTable delegates to the wrapped store. It returns false when the
+// wrapped store does not report the flag, the locker's default.
+func (g *guardedSQLAuditTx) SkipCreateTable() bool {
+	if s, ok := g.AuditTransactionStore.(skipCreateTableProvider); ok {
+		return s.SkipCreateTable()
+	}
+
+	return false
 }
 
 type guardedOwnerTx struct {

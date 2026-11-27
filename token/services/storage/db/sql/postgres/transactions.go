@@ -29,11 +29,18 @@ type AuditTransactionStore struct {
 	writeDB *sql.DB
 	lockID  int64
 	claims  *recoveryClaimStore
+	// skipCreateTable is the persistence config's SkipCreateTable flag.
+	skipCreateTable bool
 }
 
 // WriteDB returns the underlying write *sql.DB.
 // Used by the auditor distributed locker to share the connection pool.
 func (s *AuditTransactionStore) WriteDB() *sql.DB { return s.writeDB }
+
+// SkipCreateTable reports whether the persistence config this store was built
+// from disables schema creation. The auditor distributed locker reads it so its
+// lease table follows the same rule.
+func (s *AuditTransactionStore) SkipCreateTable() bool { return s.skipCreateTable }
 
 // GetSchema overrides the base GetSchema to prefix with advisory lock
 func (s *AuditTransactionStore) GetSchema() string {

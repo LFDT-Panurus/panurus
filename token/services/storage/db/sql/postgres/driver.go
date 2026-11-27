@@ -92,7 +92,7 @@ func newDriver(config driver3.Config, dbProvider fscPostgres.DbProvider, sampler
 	d.Identity = newIdentityStoreProvider(dbProvider, tableNamesConfig, limits)
 	d.Wallet = newWalletStoreProvider(d, dbProvider, tableNamesConfig, limits)
 	d.Token = newTokenStoreProvider(dbProvider, tableNamesConfig, limits)
-	d.AuditTx = newProviderWithKeyMapper(dbProvider, NewAuditTransactionStore, "audittx", tableNamesConfig, limits)
+	d.AuditTx = newAuditTransactionStoreProvider(dbProvider, tableNamesConfig, limits)
 	d.OwnerTx = newTransactionStoreProvider(dbProvider, tableNamesConfig, limits)
 	d.Endorser = newEndorserStoreProvider(dbProvider, tableNamesConfig, limits)
 	d.KeyStore = newProviderWithKeyMapper(dbProvider, NewKeystoreStore, "keystore", tableNamesConfig, limits)
@@ -127,6 +127,34 @@ func newTokenStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfig c
 			return nil, err
 		}
 		p.ApplyLimits(limits)
+		if !o.SkipCreateTable {
+			if err := p.CreateSchema(); err != nil {
+				return nil, err
+			}
+		}
+
+		return p, nil
+	})
+}
+
+// newAuditTransactionStoreProvider returns a lazy provider for AuditTransactionStore.
+// The store records o.SkipCreateTable so the auditor locker can honour it too.
+func newAuditTransactionStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfig common3.TableNamesConfig, limits common3.Limits) lazy.Provider[fscPostgres.Config, *AuditTransactionStore] {
+	return lazy.NewProviderWithKeyMapper(key, func(o fscPostgres.Config) (*AuditTransactionStore, error) {
+		dbs, err := dbProvider.Get(o.Opts())
+		if err != nil {
+			return nil, err
+		}
+		tableNames, err := common3.GetTableNamesWithOverrides(o.TablePrefix, tableNamesConfig, o.TableNameParams...)
+		if err != nil {
+			return nil, err
+		}
+		p, err := NewAuditTransactionStore(dbs, tableNames)
+		if err != nil {
+			return nil, err
+		}
+		p.skipCreateTable = o.SkipCreateTable
+		common3.ApplyLimits(p, limits)
 		if !o.SkipCreateTable {
 			if err := p.CreateSchema(); err != nil {
 				return nil, err
@@ -395,8 +423,8 @@ func newProviderWithKeyMapper[V common.DBObject](
 		if err != nil {
 			return utils.Zero[V](), err
 		}
-		// KeyStore (bounded Put) implements LimitsConfigurable; TokenLock and
-		// AuditTx do not and this is a no-op for them.
+		// KeyStore (bounded Put) implements LimitsConfigurable; TokenLock does
+		// not and this is a no-op for it.
 		common3.ApplyLimits(p, limits)
 		if !o.SkipCreateTable {
 			if err := p.CreateSchema(); err != nil {

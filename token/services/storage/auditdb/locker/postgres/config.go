@@ -63,6 +63,10 @@ type Config struct {
 	// Defaults to the FSC node ID when empty; locker construction fails when
 	// both this field and the node ID are empty or blank.
 	Owner string `yaml:"owner"`
+	// SkipCreateTable disables creation of the lease table and its indexes.
+	// It is not a user option: the locker factory copies it from the audit
+	// store's persistence config (skipCreateTable).
+	SkipCreateTable bool `yaml:"-"`
 }
 
 func (c Config) withDefaults(owner string) Config {
