@@ -46,7 +46,9 @@ type lockSession struct {
 }
 
 // New creates a Postgres-backed distributed Locker.
-// The table is created if it does not exist. db must be a *sql.DB connected to Postgres.
+// The table is created if it does not exist, unless cfg.SkipCreateTable is set;
+// then the table and its indexes must already exist. db must be a *sql.DB
+// connected to Postgres.
 //
 // cfg.Owner defaults to the identifier reported by replicaID (the FSC node ID in
 // production). It returns an error wrapping errs.ErrLockerOwnerRequired when the
@@ -73,8 +75,10 @@ func New(db *sql.DB, table string, cfg Config, replicaID id.ReplicaIDProvider) (
 		ci:       pgcond.NewConditionInterpreter(),
 		sessions: make(map[string]*lockSession),
 	}
-	if err := l.createSchema(); err != nil {
-		return nil, err
+	if !cfg.SkipCreateTable {
+		if err := l.createSchema(); err != nil {
+			return nil, err
+		}
 	}
 	logger.Infof("postgres auditor locker for table [%s] locking as owner [%s]", table, cfg.Owner)
 

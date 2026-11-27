@@ -23,8 +23,19 @@ type WriteDBProvider interface {
 	WriteDB() *sql.DB
 }
 
-// The postgres audit store must keep satisfying WriteDBProvider; both ends match dynamically.
-var _ WriteDBProvider = (*sqlpostgres.AuditTransactionStore)(nil)
+// SkipCreateTableProvider is an optional interface that SQL-backed
+// AuditTransactionStore implementations may satisfy to report whether their
+// persistence config disables schema creation.
+type SkipCreateTableProvider interface {
+	SkipCreateTable() bool
+}
+
+// The postgres audit store must keep satisfying WriteDBProvider and
+// SkipCreateTableProvider; both ends match dynamically.
+var (
+	_ WriteDBProvider         = (*sqlpostgres.AuditTransactionStore)(nil)
+	_ SkipCreateTableProvider = (*sqlpostgres.AuditTransactionStore)(nil)
+)
 
 // NewFromConfig builds the appropriate Locker based on cfg.
 func NewFromConfig(cfg Config, store any, replicaID id.ReplicaIDProvider) (Locker, error) {
@@ -39,10 +50,15 @@ func NewFromConfig(cfg Config, store any, replicaID id.ReplicaIDProvider) (Locke
 			return nil, errors.New("postgres locker backend requires an AuditTransactionStore")
 		}
 
+		pgCfg := cfg.Postgres
+		if scp, ok := store.(SkipCreateTableProvider); ok {
+			pgCfg.SkipCreateTable = scp.SkipCreateTable()
+		}
+
 		return lockerpostgres.New(
 			dbp.WriteDB(),
 			ats.PrefixedTableName("eid_leases"),
-			cfg.Postgres,
+			pgCfg,
 			replicaID,
 		)
 	case BackendMemory, "":

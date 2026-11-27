@@ -190,7 +190,7 @@ and the default table name pattern it produces (before any override is applied).
 | `id_info` | `IdentityInfo` | `fsc_id_info_<prefix>_<params>` |
 | `id_signers` | `Signers` | `fsc_id_signers_<prefix>_<params>` |
 | `key_store` | `KeyStore` | `fsc_key_store_<prefix>_<params>` |
-| `eid_leases` | `EIDLeases` | `fsc_eid_leases_<prefix>_<params>` |
+| `eid_leases` | `EIDLeases` | `fsc_eid_leases_<prefix>_<params>` (`tableNames` override ignored; see [auditor](auditor.md)) |
 | `tkn_ski_cleanups` | `TokenSKICleanups` | `fsc_tkn_ski_cleanups_<prefix>_<params>` |
 
 > **Note:** When no `TablePrefix` is configured (empty string) and no `TableNameParams` are
