@@ -4,23 +4,43 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 */
 
-package ownedskis
+package skis
 
 import (
 	"context"
 
-	"github.com/LFDT-Panurus/panurus/cmd/skicleanup/cobra/signers"
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/json"
 	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/boolpolicy"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemixnym"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/multisig"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/x509"
 	"github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/services/cleanup"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
+
+// LegacyPolicyOwnerType is the owner_type that Tokens rows carry for policy owners
+// stored before identity.TypeToString returned "policy" for them.
+const LegacyPolicyOwnerType = "Type (6)"
+
+// NewSKIExtractor returns the SKI extractor shared by the skicleanup commands.
+// It registers idemix, idemixnym (backed by identityStore) and a no-op for x509, as the
+// runtime cleanup service does. Other types, composites included, use the SHA-256 fallback;
+// the runtime registers a no-op for composites instead.
+func NewSKIExtractor(identityStore idemixnym.IdentityStoreService) *cleanup.SKIExtractor {
+	extractor := cleanup.NewSKIExtractor()
+	extractor.RegisterProvider(idemix.IdentityTypeString, idemix.NewSKIProvider())
+	extractor.RegisterProvider(idemixnym.IdentityTypeString, idemixnym.NewSKIProvider(identityStore))
+	// X.509 deliberately derives no SKIs: an X.509 key belongs to the wallet,
+	// not to a single token. See cleanup.NoopSKIProvider.
+	extractor.RegisterProvider(x509.IdentityTypeString, cleanup.NewNoopSKIProvider())
+
+	return extractor
+}
 
 // signerInfoStore is the identity store view the owned-skis extractor needs.
 type signerInfoStore interface {
@@ -28,17 +48,17 @@ type signerInfoStore interface {
 	SignerInfoExists(ctx context.Context, id []byte) (bool, error)
 }
 
-// newSKIExtractor returns the owned-skis extractor: the signers extractor plus
+// NewOwnedSKIExtractor returns the owned-skis extractor: NewSKIExtractor plus
 // providers that unwrap htlc, multisig and policy owners into their components.
 // Composites are unwrapped here only: a keep-list is safe with more SKIs, a delete path is not.
 // A top-level idemixnym owner stays strict. Components go through an inner extractor that
 // skips idemixnym components with no signer info row: they belong to a counterparty.
-func newSKIExtractor(store signerInfoStore) *cleanup.SKIExtractor {
-	inner := signers.NewSKIExtractor(store)
+func NewOwnedSKIExtractor(store signerInfoStore) *cleanup.SKIExtractor {
+	inner := NewSKIExtractor(store)
 	inner.RegisterProvider(idemixnym.IdentityTypeString, &componentNymSKIProvider{store: store, delegate: idemixnym.NewSKIProvider(store)})
 	registerComposites(inner, inner)
 
-	top := signers.NewSKIExtractor(store)
+	top := NewSKIExtractor(store)
 	registerComposites(top, inner)
 
 	return top
@@ -51,7 +71,7 @@ func registerComposites(extractor *cleanup.SKIExtractor, components SKIExtractor
 	policy := &compositeSKIProvider{extractor: components, components: policyComponents}
 	extractor.RegisterProvider(identity.TypeToString(boolpolicy.Policy), policy)
 	// Rows stored before identity.TypeToString gained the policy case carry this type.
-	extractor.RegisterProvider(signers.LegacyPolicyOwnerType, policy)
+	extractor.RegisterProvider(LegacyPolicyOwnerType, policy)
 }
 
 // componentNymSKIProvider extracts the SKIs of an idemixnym composite component.

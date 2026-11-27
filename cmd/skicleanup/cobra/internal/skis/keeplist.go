@@ -4,7 +4,8 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 */
 
-package ownedskis
+// Package skis derives SKIs from identities for the skicleanup commands.
+package skis
 
 import (
 	"context"
@@ -79,11 +80,11 @@ func (s *SQLOwnerSource) ForEachOwner(ctx context.Context, fn func(Owner) error)
 	return nil
 }
 
-// Run returns the sorted, de-duplicated SKIs of all owners in src.
+// KeepList returns the sorted, de-duplicated SKIs of all owners in src.
 // Warnings and statistics go to errOut. If any owner fails SKI extraction,
-// Run reports every failure on errOut and returns an error with no list,
+// KeepList reports every failure on errOut and returns an error with no list,
 // so a caller never sees a partial list.
-func Run(ctx context.Context, src OwnerSource, extractor SKIExtractor, errOut io.Writer) ([]string, error) {
+func KeepList(ctx context.Context, src OwnerSource, extractor SKIExtractor, errOut io.Writer) ([]string, error) {
 	skiSet := map[string]struct{}{}
 	owners, failures := 0, 0
 

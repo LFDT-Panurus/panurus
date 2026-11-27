@@ -28,6 +28,8 @@ No flags required.
 
 Iterates all entries in the `Signers` table in batches, unmarshals each identity, and checks whether it appears in the `Tokens` table. For every orphaned signer (not found in `Tokens`), the command prints the identity hash and the derived Subject Key Identifiers (SKIs) to stdout.
 
+`signers` first builds the `owned-skis` list and excludes its SKIs, so a signer that is a component of a composite token owner is not reported. A signer whose SKIs are all in the list is not printed and is counted as `Kept by owned-skis`; otherwise only the SKIs outside the list are printed. The `owned-skis` statistics and errors go to stderr. If the list cannot be built, the command fails and prints no orphan.
+
 This is a **read-only** operation. No data is modified or deleted.
 
 ```bash
@@ -44,7 +46,7 @@ skicleanup signers --config <path-to-config.yaml> [--batch-size <n>]
 **Output format** (one line per orphaned signer):
 
 ```
-<identity-hash>: [<ski1>, <ski2>, ...]
+[<identity-hash>][<owner-type>]: [<ski1>, <ski2>, ...]
 ```
 
 ### `owned-skis`
@@ -164,7 +166,7 @@ SKIs are derived from each identity (orphaned signers for `signers`, token owner
 | `idemix` | Extracts SKI from the Idemix NymPublicKey |
 | `idemixnym` | Looks up signer info in the identity store, then extracts SKI from the embedded Idemix signature |
 | `x509` | Returns no SKIs (X.509 key material is not stored in the Panurus keystore) |
-| `htlc`, `multisig`, policy | `owned-skis` only: unwraps the components (htlc sender and recipient, all multisig and policy components) and extracts each by its own type. An `idemixnym` component with no signer info row is a counterparty's and yields no SKIs; a row with empty or invalid info is an error. Malformed bytes or exceeded limits are an error. `signers` and the runtime use the fallback. |
+| `htlc`, `multisig`, policy | `owned-skis` only: unwraps the components (htlc sender and recipient, all multisig and policy components) and extracts each by its own type. An `idemixnym` component with no signer info row is a counterparty's and yields no SKIs; a row with empty or invalid info is an error. Malformed bytes or exceeded limits are an error. `signers` uses the fallback for the composite row itself. The runtime cleanup derives no SKIs: components may still own live tokens. |
 | Any other type | SHA-256 hash of the raw identity bytes (fallback) |
 
 The Tokens table stores policy owners with type `policy`. Rows written before `identity.TypeToString` gained the policy case carry `Type (6)`. `owned-skis` accepts both.

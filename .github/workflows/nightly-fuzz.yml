@@ -285,7 +285,7 @@ jobs:
             func: FuzzNormalizeIDRoundTrip
           - name: skicleanup-composite-ski-provider
             dir: ./cmd/skicleanup
-            pkg: ./cobra/ownedskis
+            pkg: ./cobra/internal/skis
             func: FuzzCompositeSKIProviderNoPanic
 
     steps:

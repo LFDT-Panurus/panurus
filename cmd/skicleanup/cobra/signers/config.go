@@ -7,10 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 package signers
 
 import (
-	"errors"
-	"fmt"
 	"strings"
 
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/spf13/viper"
 )
 
@@ -42,16 +41,16 @@ func LoadConfig(path string) (Config, error) {
 	v.AutomaticEnv()
 
 	if err := v.ReadInConfig(); err != nil {
-		return Config{}, fmt.Errorf("failed to read config file %q: %w", path, err)
+		return Config{}, errors.Wrapf(err, "failed to read config file %q", path)
 	}
 
 	var cfg Config
 	if err := v.Unmarshal(&cfg); err != nil {
-		return Config{}, fmt.Errorf("failed to unmarshal config: %w", err)
+		return Config{}, errors.Wrap(err, "failed to unmarshal config")
 	}
 
 	if cfg.Driver != "sqlite" && cfg.Driver != "postgres" {
-		return Config{}, fmt.Errorf("unsupported driver %q: must be \"sqlite\" or \"postgres\"", cfg.Driver)
+		return Config{}, errors.Errorf("unsupported driver %q: must be \"sqlite\" or \"postgres\"", cfg.Driver)
 	}
 	if cfg.DataSource == "" {
 		return Config{}, errors.New("dataSource must not be empty")

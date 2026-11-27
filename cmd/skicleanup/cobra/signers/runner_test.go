@@ -8,16 +8,16 @@ package signers
 
 import (
 	"context"
-	"math/big"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/cmd/skicleanup/cobra/internal/skis"
+	"github.com/LFDT-Panurus/panurus/cmd/skicleanup/cobra/internal/skistest"
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/boolpolicy"
 	identitydriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
-	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -35,25 +35,6 @@ func newTestStores(t *testing.T) *Stores {
 	require.NoError(t, stores.Token.CreateSchema())
 
 	return stores
-}
-
-func storeToken(t *testing.T, stores *Stores, ownerType string, ownerIdentity []byte) {
-	t.Helper()
-	require.NoError(t, stores.Token.StoreToken(context.Background(), driver.TokenRecord{
-		TxID:           "tx1",
-		OwnerRaw:       ownerIdentity,
-		OwnerType:      ownerType,
-		OwnerIdentity:  ownerIdentity,
-		OwnerWalletID:  "w",
-		IssuerRaw:      []byte("issuer"),
-		Ledger:         []byte("ledger"),
-		LedgerFormat:   "fmt",
-		LedgerMetadata: []byte("meta"),
-		Quantity:       "0x01",
-		Type:           "USD",
-		Amount:         big.NewInt(1),
-		Owner:          true,
-	}, nil))
 }
 
 // A policy signer entry is matched against token rows with the current ("policy") and the
@@ -74,17 +55,17 @@ func TestProcessEntry_PolicyOwnerTypes(t *testing.T) {
 		storeAnyToken bool
 	}{
 		{name: "current type", ownerType: boolpolicy.PolicyString, storeAnyToken: true},
-		{name: "legacy type", ownerType: LegacyPolicyOwnerType, storeAnyToken: true},
+		{name: "legacy type", ownerType: skis.LegacyPolicyOwnerType, storeAnyToken: true},
 		{name: "no token", wantOrphaned: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			stores := newTestStores(t)
 			if tc.storeAnyToken {
-				storeToken(t, stores, tc.ownerType, typed.Identity)
+				skistest.StoreToken(t, stores.Token, "tx1", tc.ownerType, typed.Identity, true, nil)
 			}
 
-			res, err := processEntry(context.Background(), entry, stores, NewSKIExtractor(stores.Identity))
+			res, err := processEntry(context.Background(), entry, stores, skis.NewSKIExtractor(stores.Identity), nil)
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantOrphaned, res.notInToken)
 		})

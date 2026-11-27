@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/LFDT-Panurus/panurus/cmd/skicleanup/cobra/internal/skis"
 	"github.com/LFDT-Panurus/panurus/cmd/skicleanup/cobra/signers"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/spf13/cobra"
@@ -79,18 +80,18 @@ func (c *command) run(cmd *cobra.Command, _ []string) error {
 		}
 	}()
 
-	src := &SQLOwnerSource{
+	src := &skis.SQLOwnerSource{
 		DB:              stores.ReadDB,
 		TokensTable:     stores.TableNames.Tokens,
 		CondInterpreter: stores.CondInterpreter,
 	}
-	skis, err := Run(cmd.Context(), src, newSKIExtractor(stores.Identity), cmd.ErrOrStderr())
+	keepList, err := skis.KeepList(cmd.Context(), src, skis.NewOwnedSKIExtractor(stores.Identity), cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
 
 	var buf bytes.Buffer
-	for _, ski := range skis {
+	for _, ski := range keepList {
 		buf.WriteString(ski)
 		buf.WriteByte('\n')
 	}
