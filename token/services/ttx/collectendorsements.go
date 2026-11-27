@@ -811,15 +811,6 @@ func (c *CollectEndorsementsView) addPartyToDistributionList(context view.Contex
 	}
 	logger.DebugfContext(context.Context(), "searching for long term identity [%s]", longTermIdentity)
 
-	var eIDs []string
-	if !isMe {
-		eID, err := c.tx.TokenService().WalletManager().GetEnrollmentID(context.Context(), party)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed getting enrollment ID for [%s]", party.UniqueID())
-		}
-		eIDs = []string{eID}
-	}
-
 	for i := range distributionListCompressed {
 		entry := &distributionListCompressed[i]
 		if !longTermIdentity.Equal(entry.LongTerm) {
@@ -827,14 +818,33 @@ func (c *CollectEndorsementsView) addPartyToDistributionList(context view.Contex
 		}
 		// The same remote node can host owners with different enrollment IDs:
 		// it must receive the metadata of all of them.
-		if !isMe && !entry.IsMe && !entry.Auditor && !slices.Contains(entry.EIDs, eIDs[0]) {
-			logger.DebugfContext(context.Context(), "adding enrollment ID of [%s] to distribution list entry [%s]", party, entry.ID)
-			entry.EIDs = append(entry.EIDs, eIDs[0])
-		} else {
+		if isMe || entry.IsMe || entry.Auditor {
 			logger.DebugfContext(context.Context(), "skip adding [%s] to distribution list, already added", party)
+
+			return distributionListCompressed, nil
+		}
+		eID, err := c.tx.TokenService().WalletManager().GetEnrollmentID(context.Context(), party)
+		if err != nil {
+			// The node is already in the list, as before #2713.
+			logger.DebugfContext(context.Context(), "skip adding [%s] to distribution list, already added, no enrollment ID: %s", party, err)
+
+			return distributionListCompressed, nil
+		}
+		if !slices.Contains(entry.EIDs, eID) {
+			logger.DebugfContext(context.Context(), "adding enrollment ID of [%s] to distribution list entry [%s]", party, entry.ID)
+			entry.EIDs = append(entry.EIDs, eID)
 		}
 
 		return distributionListCompressed, nil
+	}
+
+	var eIDs []string
+	if !isMe {
+		eID, err := c.tx.TokenService().WalletManager().GetEnrollmentID(context.Context(), party)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed getting enrollment ID for [%s]", party.UniqueID())
+		}
+		eIDs = []string{eID}
 	}
 
 	logger.DebugfContext(context.Context(), "adding [%s] to distribution list", party)

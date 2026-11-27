@@ -174,6 +174,31 @@ func TestAddPartyToDistributionList_SameEIDNotDuplicated(t *testing.T) {
 	assert.Equal(t, []string{"alice"}, list[0].EIDs)
 }
 
+// TestAddPartyToDistributionList_KnownNodeEIDLookupFails verifies that a party on a node that is
+// already in the list is skipped when its enrollment ID cannot be read (e.g. nil audit info).
+func TestAddPartyToDistributionList_KnownNodeEIDLookupFails(t *testing.T) {
+	c := newDistributionListTestContext(t, view.Identity("remote-node-id"))
+	alice, other := view.Identity("alice-pseudonym"), view.Identity("no-audit-info-pseudonym")
+	c.eIDs[string(alice)] = "alice"
+
+	list := c.add(t, collections.NewSet[string](), alice, other)
+
+	require.Len(t, list, 1)
+	assert.Equal(t, alice, list[0].ID)
+	assert.Equal(t, []string{"alice"}, list[0].EIDs)
+}
+
+// TestAddPartyToDistributionList_NewNodeEIDLookupFails verifies that a party on a new remote node
+// fails when its enrollment ID cannot be read.
+func TestAddPartyToDistributionList_NewNodeEIDLookupFails(t *testing.T) {
+	c := newDistributionListTestContext(t, view.Identity("remote-node-id"))
+	party := view.Identity("no-audit-info-pseudonym")
+
+	list, err := c.view.addPartyToDistributionList(c.ctx, party, collections.NewSet[string](), nil)
+	require.ErrorContains(t, err, "failed getting enrollment ID for")
+	assert.Nil(t, list)
+}
+
 // TestAddPartyToDistributionList_LocalParties verifies that local parties share one entry
 // without enrollment IDs, as before.
 func TestAddPartyToDistributionList_LocalParties(t *testing.T) {
