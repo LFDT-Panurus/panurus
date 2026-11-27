@@ -540,7 +540,7 @@ In this format, cryptographic materials are stored in binary protobuf format (ge
 │   ├── IssuerPublicKey      # Issuer Public Key (binary protobuf)
 │   └── RevocationPublicKey  # (Optional) Revocation Public Key (PEM)
 └── user/
-    ├── SignerConfig         # Signer configuration (binary protobuf)
+    ├── SignerConfig         # Signer configuration (binary protobuf, idemix `IdemixMSPSignerConfig`)
     └── SignerConfigFull     # (Optional) Full signer config with secret keys
 ```
 > [!NOTE]

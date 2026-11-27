@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 
 	idemixmsp "github.com/IBM/idemix/msp"
+	idemixconfig "github.com/IBM/idemix/msp/config"
 	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/json"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto/protos-go/config"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
@@ -144,8 +145,7 @@ func NewIdemixConfig(issuerPublicKey []byte, dir string, ignoreVerifyOnlyWallet 
 	var signer *config.IdemixSignerConfig
 	signerBytes, err := os.ReadFile(signerConfigPath)
 	if err == nil {
-		signer = &config.IdemixSignerConfig{}
-		err = proto.Unmarshal(signerBytes, signer)
+		signer, err = unmarshalIdemixSignerConfig(signerBytes)
 		if err != nil {
 			return nil, err
 		}
@@ -160,6 +160,27 @@ func NewIdemixConfig(issuerPublicKey []byte, dir string, ignoreVerifyOnlyWallet 
 	}
 
 	return assembleConfig(issuerPublicKey, signer, revocationPK)
+}
+
+// unmarshalIdemixSignerConfig decodes a signer config written by idemix tooling (e.g. idemixgen).
+// The file uses idemix's IdemixMSPSignerConfig, whose field numbers differ from the Panurus
+// IdemixSignerConfig (field 8 is curve_id there, ski here), so it must not be decoded directly.
+func unmarshalIdemixSignerConfig(raw []byte) (*config.IdemixSignerConfig, error) {
+	si := &idemixconfig.IdemixMSPSignerConfig{}
+	if err := proto.Unmarshal(raw, si); err != nil {
+		return nil, errors.Wrapf(err, "failed to unmarshal idemix signer config")
+	}
+
+	return &config.IdemixSignerConfig{
+		Cred:                            si.Cred,
+		Sk:                              si.Sk,
+		OrganizationalUnitIdentifier:    si.OrganizationalUnitIdentifier,
+		Role:                            si.Role,
+		EnrollmentId:                    si.EnrollmentId,
+		CredentialRevocationInformation: si.CredentialRevocationInformation,
+		RevocationHandle:                si.RevocationHandle,
+		Schema:                          si.Schema,
+	}, nil
 }
 
 // NewFabricCAIdemixConfig creates a new config from Fabric-CA files (JSON format).

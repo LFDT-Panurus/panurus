@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	idemixmsp "github.com/IBM/idemix/msp"
+	idemixconfig "github.com/IBM/idemix/msp/config"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto/protos-go/config"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
 	"github.com/stretchr/testify/assert"
@@ -229,6 +230,42 @@ func TestNewIdemixConfig(t *testing.T) {
 		assert.Equal(t, issuerPublicKey, result.Ipk)
 		assert.NotNil(t, result.Signer)
 		assert.Equal(t, "user2", result.Signer.EnrollmentId)
+	})
+
+	// idemixgen writes idemix's IdemixMSPSignerConfig, where field 8 is curve_id.
+	// It must not be decoded as the Panurus ski (also field 8).
+	t.Run("idemixgen signer config with curve id", func(t *testing.T) {
+		dir := filepath.Join(tmpDir, "idemixgen-signer")
+		userDir := filepath.Join(dir, "user")
+		require.NoError(t, os.MkdirAll(userDir, 0750))
+
+		signerConfig := &idemixconfig.IdemixMSPSignerConfig{
+			Cred:                            []byte("credential"),
+			Sk:                              []byte("secret-key"),
+			OrganizationalUnitIdentifier:    "org1",
+			Role:                            1,
+			EnrollmentId:                    "user1",
+			CredentialRevocationInformation: []byte("cri"),
+			RevocationHandle:                "rh",
+			CurveId:                         "BLS12_381_BBS_GURVY",
+			Schema:                          "schema",
+		}
+		signerBytes, err := proto.Marshal(signerConfig)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(userDir, idemixmsp.IdemixConfigFileSigner), signerBytes, 0600))
+
+		result, err := NewIdemixConfig(issuerPublicKey, dir, false)
+		require.NoError(t, err)
+		require.NotNil(t, result.Signer)
+		assert.Empty(t, result.Signer.Ski)
+		assert.Equal(t, signerConfig.Cred, result.Signer.Cred)
+		assert.Equal(t, signerConfig.Sk, result.Signer.Sk)
+		assert.Equal(t, signerConfig.OrganizationalUnitIdentifier, result.Signer.OrganizationalUnitIdentifier)
+		assert.Equal(t, signerConfig.Role, result.Signer.Role)
+		assert.Equal(t, signerConfig.EnrollmentId, result.Signer.EnrollmentId)
+		assert.Equal(t, signerConfig.CredentialRevocationInformation, result.Signer.CredentialRevocationInformation)
+		assert.Equal(t, signerConfig.RevocationHandle, result.Signer.RevocationHandle)
+		assert.Equal(t, signerConfig.Schema, result.Signer.Schema)
 	})
 }
 
