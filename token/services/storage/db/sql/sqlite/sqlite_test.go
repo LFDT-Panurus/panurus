@@ -54,16 +54,16 @@ func TestEndorser(t *testing.T) {
 // which SQLite would read as the start of a URI fragment.
 func sqliteCfg(tempDir string, name string) *mock.ConfigProvider {
 	return multiplexed.MockTypeConfig(fscSqlite.Persistence, fscSqlite.Config{
-		DataSource:   sqliteDSN(path.Join(tempDir, "db.sqlite")),
+		DataSource:   sqliteDataSource(path.Join(tempDir, "db.sqlite"), "_pragma=busy_timeout(20000)"),
 		TablePrefix:  name,
 		MaxOpenConns: 10,
 	})
 }
 
-func sqliteDSN(dbPath string) string {
-	u := url.URL{Scheme: "file", Path: dbPath, RawQuery: "_pragma=busy_timeout(20000)"}
-
-	return u.String()
+// sqliteDataSource returns a file URI for dbPath with the given raw query. It
+// escapes the path, so a '#' or '?' in it cannot truncate the file name.
+func sqliteDataSource(dbPath, query string) string {
+	return (&url.URL{Scheme: "file", Path: dbPath, RawQuery: query}).String()
 }
 
 // TestSqliteCfgEscapesPath checks that a TempDir path with '#' or '%' keeps

@@ -10,6 +10,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
+	"path"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -31,7 +33,7 @@ const benchSeededTxs = 1024
 func openBenchTransactionsStore(b *testing.B) *sqlcommon.TransactionStore {
 	b.Helper()
 	dir := b.TempDir()
-	dsn := fmt.Sprintf("file:%s/bench.sqlite?_pragma=busy_timeout(20000)", dir)
+	dsn := (&url.URL{Scheme: "file", Path: path.Join(dir, "bench.sqlite"), RawQuery: "_pragma=busy_timeout(20000)"}).String()
 	readDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		b.Fatal(err)

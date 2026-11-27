@@ -23,7 +23,7 @@ import (
 func openSQLiteDB(t *testing.T) *sql.DB {
 	t.Helper()
 
-	db, err := sql.Open("sqlite", "file:"+path.Join(t.TempDir(), "test.sqlite"))
+	db, err := sql.Open("sqlite", sqliteDataSource(path.Join(t.TempDir(), "test.sqlite"), ""))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 

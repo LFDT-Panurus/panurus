@@ -6,7 +6,7 @@ package sqlite
 
 import (
 	"database/sql"
-	"fmt"
+	"path"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -17,7 +17,7 @@ import (
 func openBenchTokenStore(b *testing.B) (*sqlcommon.TokenStore, func()) {
 	b.Helper()
 	dir := b.TempDir()
-	dsn := fmt.Sprintf("file:%s/bench.sqlite?_pragma=busy_timeout(20000)", dir)
+	dsn := sqliteDataSource(path.Join(dir, "bench.sqlite"), "_pragma=busy_timeout(20000)")
 	readDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		b.Fatal(err)
