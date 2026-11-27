@@ -3,7 +3,7 @@ module github.com/LFDT-Panurus/panurus/cmd/profiler
 go 1.27.4
 
 require (
-	github.com/hyperledger-labs/fabric-smart-client v0.29.1
+	github.com/hyperledger-labs/fabric-smart-client v0.29.2
 	github.com/stretchr/testify v1.12.1
 )
 
