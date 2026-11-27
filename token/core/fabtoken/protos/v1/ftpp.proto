@@ -6,9 +6,9 @@
 
 syntax = "proto3";
 
-package fabric_token_sdk.token.fabtoken.v1;
+package panurus.token.fabtoken.v1;
 
-import "common.proto";
+import "token/driver/protos/v1/common.proto";
 
 option go_package = "github.com/LFDT-Panurus/panurus/token/core/fabtoken/protos-go/v1/pp";
 
@@ -21,9 +21,9 @@ message PublicParameters {
   // token_driver_version is the protocol version of the token driver
   uint32 token_driver_version = 2;
   // auditor is the serialized identity of the auditor who can view all token operations
-  fabric_token_sdk.token.driver.v1.Identity auditor = 3;
+  panurus.token.driver.v1.Identity auditor = 3;
   // issuers is the list of authorized issuer identities who can create new tokens
-  repeated fabric_token_sdk.token.driver.v1.Identity issuers = 4;
+  repeated panurus.token.driver.v1.Identity issuers = 4;
   // max_token is the maximum quantity value a single token can hold
   uint64 max_token = 5;
   // quantity_precision is the number of decimal places supported for token quantities
