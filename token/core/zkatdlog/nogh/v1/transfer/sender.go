@@ -61,6 +61,16 @@ func (s *Sender) GenerateZKTransfer(ctx context.Context, values []uint64, owners
 	if len(s.InputInformation) == 0 {
 		return nil, nil, errors.Wrap(ErrInvalidInputs, "cannot generate transfer: no inputs")
 	}
+	for i, input := range s.Inputs {
+		if input == nil {
+			return nil, nil, errors.Wrapf(ErrEmptyInputToken, "cannot generate transfer: input [%d]", i)
+		}
+	}
+	for i, inf := range s.InputInformation {
+		if inf == nil {
+			return nil, nil, errors.Wrapf(ErrInvalidTokenWitness, "cannot generate transfer: nil metadata for input [%d]", i)
+		}
+	}
 	logger.DebugfContext(ctx, "Get token data for %d inputs", len(s.Inputs))
 	in := getTokenData(s.Inputs)
 	intw := make([]*token.Metadata, len(s.InputInformation))

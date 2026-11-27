@@ -62,6 +62,14 @@ func NewAuditorService(
 
 // AuditorCheck verifies if the passed tokenRequest matches the tokenRequestMetadata
 func (s *AuditorService) AuditorCheck(ctx context.Context, request *driver.TokenRequest, metadata *driver.TokenRequestMetadata, anchor driver.TokenRequestAnchor) error {
+	if metadata == nil {
+		return errors.Errorf("metadata cannot be nil for tx [%s]", anchor)
+	}
+	for i, action := range metadata.Actions {
+		if action == nil {
+			return errors.Errorf("nil action metadata at index [%d] for tx [%s]", i, anchor)
+		}
+	}
 	s.Logger.DebugfContext(ctx, "[%s] check token request validity, number of transfer actions [%d]...", anchor, metadata.NumTransfers())
 
 	// Extract all TokenIDs from both transfer and issue actions in metadata and check for duplicates

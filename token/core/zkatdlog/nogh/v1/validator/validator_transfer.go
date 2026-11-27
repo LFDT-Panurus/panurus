@@ -164,6 +164,9 @@ func TransferSignatureValidate(c context.Context, ctx *Context) error {
 // non-empty. An empty (nil or zero-length) owner on either side is rejected with
 // ErrOwnersMismatch to prevent a free-claim of ownerless tokens via upgrade.
 func validateInputUpgradeWitness(ctx *Context, input *transfer.ActionInput) error {
+	if input == nil {
+		return errors.New("nil transfer input")
+	}
 	witness := input.UpgradeWitness
 	if witness == nil {
 		return nil
@@ -181,6 +184,9 @@ func validateInputUpgradeWitness(ctx *Context, input *transfer.ActionInput) erro
 	tokens, _, err := token.GetTokensWithWitnessAndBF([]uint64{q.ToBigInt().Uint64()}, []*math.Zr{witness.BlindingFactor}, witness.FabToken.Type, ctx.PP.PedersenGenerators, math.Curves[ctx.PP.Curve])
 	if err != nil {
 		return errors.Wrapf(err, "failed to compute commitment")
+	}
+	if input.Token == nil || input.Token.Data == nil {
+		return errors.Wrap(ErrCommitmentMismatch, "input token commitment is missing")
 	}
 	if !input.Token.Data.Equals(tokens[0]) {
 		return ErrCommitmentMismatch

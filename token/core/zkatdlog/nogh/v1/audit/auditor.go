@@ -74,6 +74,10 @@ func NewInspectableToken(
 	value *math.Zr,
 	bf *math.Zr,
 ) (*InspectableToken, error) {
+	if token == nil {
+		return nil, errors.New("cannot create inspectable token: nil token")
+	}
+
 	return &InspectableToken{
 		Identity: InspectableIdentity{
 			Identity:  token.Owner,
@@ -726,8 +730,14 @@ func validateOutputReceiver(ctx context.Context, infoMatcher InfoMatcher, receiv
 // InspectOutput verifies that the commitments in an output token of a given index
 // match the information provided in the clear.
 func InspectOutput(ctx context.Context, infoMatcher InfoMatcher, pedersenParams []*math.G1, curve *math.Curve, output *InspectableToken, index int) error {
-	if output == nil || output.Data.Data == nil {
+	if output == nil || output.Data.Data == nil || output.Data.Value == nil || output.Data.BF == nil {
 		return errors.Errorf("invalid output at index [%d]", index)
+	}
+	if curve == nil {
+		return errors.Errorf("cannot inspect output at index [%d]: nil curve", index)
+	}
+	if len(pedersenParams) < 3 || pedersenParams[0] == nil || pedersenParams[1] == nil || pedersenParams[2] == nil {
+		return errors.Errorf("cannot inspect output at index [%d]: invalid pedersen parameters", index)
 	}
 	// Recompute commitment from provided cleartext data
 	tokenComm := commit([]*math.Zr{
@@ -751,7 +761,7 @@ func InspectOutput(ctx context.Context, infoMatcher InfoMatcher, pedersenParams 
 
 // InspectIdentity verifies that the audit info matches the token owner.
 func InspectIdentity(ctx context.Context, matcher InfoMatcher, identity *InspectableIdentity, index int) error {
-	if identity.Identity.IsNone() {
+	if identity == nil || identity.Identity.IsNone() {
 		return errors.Errorf("identity at index [%d] is nil, cannot inspect it", index)
 	}
 	if len(identity.AuditInfo) == 0 {
@@ -765,6 +775,9 @@ func InspectIdentity(ctx context.Context, matcher InfoMatcher, identity *Inspect
 		}
 	}
 	// Use InfoMatcher to verify that AuditInfo corresponds to the Identity
+	if matcher == nil {
+		return errors.Errorf("failed to inspect identity at index [%d]: nil info matcher", index)
+	}
 	if err := matcher.MatchIdentity(ctx, identity.Identity, identity.AuditInfo); err != nil {
 		return errors.Wrapf(err, "owner at index [%d] does not match the provided opening", index)
 	}

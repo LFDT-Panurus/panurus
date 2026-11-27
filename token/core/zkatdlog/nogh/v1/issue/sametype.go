@@ -187,6 +187,9 @@ func NewSameTypeVerifier(tokens []*math.G1, pp []*math.G1, c *math.Curve) *SameT
 
 // Verify checks the validity of the SameType proof.
 func (v *SameTypeVerifier) Verify(proof *SameType) error {
+	if proof == nil || proof.Type == nil || proof.BlindingFactor == nil || proof.CommitmentToType == nil || proof.Challenge == nil {
+		return ErrInvalidSameTypeProof
+	}
 	// Recompute the commitment to randomness from the proof responses.
 	com := v.PedParams[0].Mul(proof.Type)
 	com.Add(v.PedParams[2].Mul(proof.BlindingFactor))

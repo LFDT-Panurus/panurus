@@ -96,7 +96,7 @@ func NewCSPBasedProver(inputWitness, outputWitness []*token.Metadata, inputs, ou
 	}
 	typeBF := c.NewRandomZr(rand)
 	for i := range outputWitness {
-		if outputWitness[i] == nil || outputWitness[i].BlindingFactor == nil {
+		if outputWitness[i] == nil || outputWitness[i].BlindingFactor == nil || outputWitness[i].Value == nil {
 			return nil, ErrInvalidTokenWitness
 		}
 		outW[i] = outputWitness[i].Clone()
@@ -120,6 +120,9 @@ func NewCSPBasedProver(inputWitness, outputWitness []*token.Metadata, inputs, ou
 		coms := make([]*math.G1, len(outputs))
 		// The range prover takes as input commitments outputs[i]/commitmentToType
 		for i := range outputs {
+			if outputs[i] == nil {
+				return nil, ErrEmptyOutputToken
+			}
 			coms[i] = outputs[i].Copy()
 			coms[i].Sub(commitmentToType)
 		}

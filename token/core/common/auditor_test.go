@@ -149,6 +149,15 @@ func TestExtractTokenIDsAndCheckDuplicates(t *testing.T) {
 		assert.Len(t, ids, 1)
 		assert.Equal(t, id1, ids[0])
 	})
+
+	t.Run("NilActionRejected", func(t *testing.T) {
+		metadata := &driver.TokenRequestMetadata{
+			Actions: []*driver.ActionMetadataEntry{nil},
+		}
+		var err error
+		require.NotPanics(t, func() { _, err = ExtractTokenIDsAndCheckDuplicates(metadata, anchor) })
+		require.ErrorContains(t, err, "nil action metadata at index [0]")
+	})
 }
 
 func TestRetrieveAuditTokens(t *testing.T) {

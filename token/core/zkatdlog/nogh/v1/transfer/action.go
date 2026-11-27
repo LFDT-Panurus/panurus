@@ -292,7 +292,7 @@ func (t *Action) IsRedeemAt(index int) bool {
 // IsRedeem checks if this action contains any redeemed outputs
 func (t *Action) IsRedeem() bool {
 	for _, output := range t.Outputs {
-		if output.IsRedeem() {
+		if output != nil && output.IsRedeem() {
 			return true
 		}
 	}
@@ -599,6 +599,9 @@ func (t *Action) GetOutputCommitments() []*math.G1 {
 func (t *Action) InputTokens() []*token.Token {
 	tokens := make([]*token.Token, len(t.Inputs))
 	for i, in := range t.Inputs {
+		if in == nil {
+			continue
+		}
 		tokens[i] = in.Token
 	}
 
