@@ -974,3 +974,13 @@ func TestMetadataDeserializeRejectsWrongCurve(t *testing.T) {
 		})
 	}
 }
+
+// TestToken_ToClear_NilData checks that ToClear rejects a token with nil Data instead of panicking.
+func TestToken_ToClear_NilData(t *testing.T) {
+	c := math.Curves[math.BN254]
+	pp := &noghv1.PublicParams{Curve: math.BN254, PedersenGenerators: []*math.G1{c.GenG1, c.GenG1, c.GenG1}}
+	meta := &Metadata{Type: "COIN", Value: c.NewZrFromUint64(1), BlindingFactor: c.NewZrFromUint64(1)}
+
+	_, err := (&Token{Owner: []byte("owner")}).ToClear(meta, pp)
+	require.ErrorIs(t, err, ErrEmptyTokenData)
+}

@@ -74,6 +74,9 @@ func (t *Token) Deserialize(bytes []byte, curve math.CurveID) error {
 // ToClear verifies the token commitment against the provided metadata and public parameters.
 // If valid, it returns the token in cleartext (type, quantity, and owner).
 func (t *Token) ToClear(meta *Metadata, pp *noghv1.PublicParams) (*token.Token, error) {
+	if t.Data == nil {
+		return nil, ErrEmptyTokenData
+	}
 	com, err := commit([]*math.Zr{
 		math.Curves[pp.Curve].HashToZr([]byte(meta.Type)),
 		meta.Value,
