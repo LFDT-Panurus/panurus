@@ -777,7 +777,7 @@ See also FSC's
 ### FSC v0.28 to v0.29
 
 - **Stop all replicas of a node before upgrading it**: v0.28 and v0.29 replicas cannot run side by
-  side. Organizations still upgrade independently; v0.29.0 to v0.29.1 is rolling.
+  side. Organizations still upgrade independently; upgrades within v0.29 (v0.29.0 to v0.29.2) are rolling.
 - **No schema step**: roll back by running v0.28 on the same database. `node migrate --contract`
   is not required for v0.29.
 - **WebSocket P2P TLS**: under `fsc.p2p.opts.websocket.tls`, `enabled`/`clientAuth*: false` or a
@@ -786,9 +786,12 @@ See also FSC's
 - **Readiness**: alert on the `/readyz` reason `grpc server stopped` (`/healthz` stays 200) and
   restart the node.
 - **Chaguar**: the ledger retries an `Unavailable` call once on another committer.
+- **Chaguar recovery (v0.29.2)**: the ledger reports "tx not found" only when the committer answers
+  `NotFound`. An unreachable committer no longer marks a committed transaction `Orphan`; recovery
+  retries it on the next sweep.
 
 See FSC's
-[v0.28 to v0.29 upgrade guide](https://github.com/hyperledger-labs/fabric-smart-client/blob/v0.29.1/docs/upgrade/v0.28-to-v0.29.md).
+[v0.28 to v0.29 upgrade guide](https://github.com/hyperledger-labs/fabric-smart-client/blob/v0.29.2/docs/upgrade/v0.28-to-v0.29.md).
 
 ---
 

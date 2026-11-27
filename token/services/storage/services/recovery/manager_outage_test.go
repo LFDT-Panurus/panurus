@@ -171,7 +171,9 @@ func TestManager_ChaguarCommitterUnavailableEndToEnd(t *testing.T) {
 		assert.Equal(t, 2, sidecar.calls, "FSC retries Unavailable once")
 		assert.Equal(t, codes.Unavailable, status.Code(err))
 
+		before := sidecar.calls
 		assertNotOrphan(t, runOneSweep(t, "txE2E", handler))
+		assert.Greater(t, sidecar.calls, before, "the sweep did not query the committer")
 	})
 
 	t.Run("deadline exceeded", func(t *testing.T) {
@@ -183,11 +185,15 @@ func TestManager_ChaguarCommitterUnavailableEndToEnd(t *testing.T) {
 	})
 
 	t.Run("no committer reachable", func(t *testing.T) {
+		picks := 0
 		handler := newTTXHandler(func(string) (committerpb.SidecarServiceClient, string, error) {
+			picks++
+
 			return nil, "", errors.New("expected at least one endpoint")
 		})
 
 		assertNotOrphan(t, runOneSweep(t, "txNoCommitter", handler))
+		assert.GreaterOrEqual(t, picks, 1, "the sweep did not ask for a committer")
 	})
 
 	t.Run("genuine not found promotes", func(t *testing.T) {
