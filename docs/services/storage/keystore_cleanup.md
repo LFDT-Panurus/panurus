@@ -54,7 +54,8 @@ The SKI (Subject Key Identifier) extraction system uses a pluggable provider arc
    - **IdemixSKIProvider**: Extracts SKI from Idemix NymPublicKey
    - **IdemixNymSKIProvider**: Extracts SKI from Idemix pseudonym identities
    - **NoopSKIProvider**: Derives no SKIs, marking an identity type as deliberately excluded from
-     cleanup. Registered for X.509 — see [X.509 is intentionally out of scope](#x509-is-intentionally-out-of-scope)
+     cleanup. Registered for X.509 — see [X.509 is intentionally out of scope](#x509-is-intentionally-out-of-scope) —
+     and for composite owners — see [Composite owners are out of scope](#composite-owners-are-out-of-scope)
    - **FallbackSKIProvider**: Computes SHA256 hash of identity bytes as SKI (default)
 
 **Provider Registration:**
@@ -64,6 +65,10 @@ extractor.RegisterProvider("idemix", idemix.NewSKIProvider())
 extractor.RegisterProvider("idemixnym", idemixnym.NewSKIProvider(identityStore))
 // X.509 keys belong to the wallet, not to individual tokens: deliberately never cleaned up
 extractor.RegisterProvider("x509", NewNoopSKIProvider())
+// Composite owners: component keys may still own live tokens
+for _, t := range []string{"htlc", "multisig", "policy", "Type (6)"} {
+    extractor.RegisterProvider(t, NewNoopSKIProvider())
+}
 // Fallback provider is used for any unregistered types
 ```
 
@@ -102,6 +107,18 @@ together.
 it records a completed deletion. For X.509 that row means *nothing to clean*, not *keys were
 removed*. Do not read the `token_ski_cleanups` table as evidence that X.509 key material was
 purged.
+
+### Composite owners are out of scope
+
+The runtime cleanup derives no SKIs for composite owners: `htlc`, `multisig` and `policy`
+(also the legacy `Type (6)`, stored for policy rows before `TypeToString` mapped it). They are
+registered with `NoopSKIProvider`, so the keys of their component identities are not removed.
+
+A component identity can still own live tokens. For example, an HTLC claim pays
+`script.Recipient` and a reclaim pays `script.Sender`. Deleting component keys when the
+composite token is deleted could make those tokens unspendable.
+
+As for X.509, the `token_ski_cleanups` row of such a token means *nothing to clean*.
 
 ### Interfaces
 
@@ -281,7 +298,7 @@ cleanupManager := cleanup.NewServiceManager(
 
 // Service manager automatically:
 // - Creates cleanup manager per TMS
-// - Registers built-in SKI providers (idemix, idemixnym, x509)
+// - Registers built-in SKI providers (idemix, idemixnym, x509, htlc, multisig, policy)
 // - Sets up storage and keystore adapters
 // - Starts the cleanup manager
 ```
@@ -323,8 +340,9 @@ Key deletion is **all-or-nothing** per token:
   `errors.Is`/`errors.As`
 - **All keys deleted**: Token IS marked as cleaned
 - **No SKIs derived**: Token IS marked as cleaned to avoid infinite retries; logs warning. This is
-  the normal path for X.509 — see
-  [X.509 is intentionally out of scope](#x509-is-intentionally-out-of-scope)
+  the normal path for X.509 and composite owners — see
+  [X.509 is intentionally out of scope](#x509-is-intentionally-out-of-scope) and
+  [Composite owners are out of scope](#composite-owners-are-out-of-scope)
 
 ### Rationale
 

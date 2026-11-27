@@ -13,7 +13,7 @@ import (
 // NoopSKIProvider derives no SKIs at all. It marks an identity type as deliberately excluded
 // from keystore cleanup, as opposed to one that is merely not implemented yet.
 //
-// It is registered for X.509 (see NewServiceManager). X.509 key material is intentionally out
+// It is registered for X.509 and for composite owners (see newSKIExtractor). X.509 key material is intentionally out
 // of scope for token-driven cleanup: an X.509 owner identity is a long-lived, non-anonymous
 // certificate (x509.KeyManager.Anonymous() returns false and it always serves the same identity
 // descriptor), so its private key belongs to the wallet, not to any individual token. The same
