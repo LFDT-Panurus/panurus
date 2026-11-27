@@ -14,6 +14,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/driver/mock"
+	mock2 "github.com/LFDT-Panurus/panurus/token/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
@@ -663,4 +664,82 @@ func TestIssueMetadata_Match(t *testing.T) {
 			}
 		})
 	}
+}
+
+// newFilterMetadataByRequest returns a request paying Bob and Charlie in one transfer.
+// The wallet service resolves each receiver's enrollment ID from its audit info.
+func newFilterMetadataByRequest(t *testing.T) (*token.Request, *driver.TransferMetadata) {
+	t.Helper()
+	transfer := &driver.TransferMetadata{
+		Inputs: []*driver.TransferInputMetadata{
+			{
+				TokenID: &token2.ID{TxId: "pineapple", Index: 0},
+				Senders: []*driver.AuditableIdentity{{Identity: token.Identity("Alice"), AuditInfo: []byte("Alice")}},
+			},
+		},
+		Outputs: []*driver.TransferOutputMetadata{
+			{
+				OutputMetadata: []byte("Bob's output's token metadata"),
+				Receivers:      []*driver.AuditableIdentity{{Identity: token.Identity("Bob"), AuditInfo: []byte("Bob")}},
+			},
+			{
+				OutputMetadata: []byte("Charlie's output's token metadata"),
+				Receivers:      []*driver.AuditableIdentity{{Identity: token.Identity("Charlie"), AuditInfo: []byte("Charlie")}},
+			},
+		},
+	}
+
+	ws := &mock.WalletService{}
+	ws.GetEnrollmentIDStub = func(_ context.Context, _ driver.Identity, auditInfo []byte) (string, error) {
+		return string(auditInfo), nil
+	}
+	tms := &mock.TokenManagerService{}
+	tms.WalletServiceReturns(ws)
+	ppm := &mock.PublicParamsManager{}
+	ppm.PublicParametersReturns(&mock.PublicParameters{})
+	tms.PublicParamsManagerReturns(ppm)
+	vault := &mock.Vault{}
+	vault.QueryEngineReturns(&mock.QueryEngine{})
+	vp := &mock2.VaultProvider{}
+	vp.VaultReturns(vault, nil)
+	ms, err := token.NewManagementService(token.TMSID{Network: "n", Channel: "c", Namespace: "ns"}, tms, logging.MustGetLogger(), vp, nil, nil)
+	require.NoError(t, err)
+
+	req := token.NewRequest(ms, "an_anchor")
+	req.Metadata.Actions = []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: transfer}}
+
+	return req, transfer
+}
+
+// TestRequest_FilterMetadataBy_MultipleEIDs verifies that FilterMetadataBy keeps the metadata
+// of every passed enrollment ID, as Metadata.FilterBy does (issue #2713).
+func TestRequest_FilterMetadataBy_MultipleEIDs(t *testing.T) {
+	req, transfer := newFilterMetadataByRequest(t)
+
+	filtered, err := req.FilterMetadataBy(t.Context(), "Bob", "Charlie")
+	require.NoError(t, err)
+	require.Len(t, filtered.Metadata.Actions, 1)
+	assertEqualTransferMetadata(t, transfer, filtered.Metadata.Actions[0].TransferMetadata, true)
+
+	filtered, err = req.FilterMetadataBy(t.Context(), "Charlie")
+	require.NoError(t, err)
+	got := filtered.Metadata.Actions[0].TransferMetadata
+	require.Len(t, got.Outputs, 2)
+	assert.Nil(t, got.Outputs[0])
+	assert.Equal(t, transfer.Outputs[1], got.Outputs[1])
+}
+
+// TestRequest_FilterMetadataBy_NoEIDs verifies that FilterMetadataBy does not panic without
+// enrollment IDs and, like Metadata.FilterBy, returns the metadata unfiltered.
+func TestRequest_FilterMetadataBy_NoEIDs(t *testing.T) {
+	req, transfer := newFilterMetadataByRequest(t)
+
+	var filtered *token.Request
+	var err error
+	require.NotPanics(t, func() {
+		filtered, err = req.FilterMetadataBy(t.Context())
+	})
+	require.NoError(t, err)
+	require.Len(t, filtered.Metadata.Actions, 1)
+	assert.Equal(t, transfer, filtered.Metadata.Actions[0].TransferMetadata)
 }

@@ -574,6 +574,8 @@ returned, no further signatures are served on that stream.
 
 Once fully endorsed, the transaction metadata is distributed to all recipients so they can track and spend their new tokens. The initiator then uses the `OrderingView` to broadcast the transaction envelope to the network's ordering service.
 
+Each remote node receives the metadata filtered by enrollment ID. Parties that resolve to the same long-term identity share one distribution entry. That entry collects the enrollment IDs of all those parties, so a node that hosts several recipients receives the metadata of all their outputs. Auditors receive the full metadata.
+
 ## Finality and Discovery
 
 The `FinalityView` allows applications to wait for a transaction to be committed to the ledger. Internally, Panurus's **Network Service** listens for ledger events. When a transaction reaches finality, the Network Service notifies Panurus, which then updates the local `Transactions DB` and `Tokens DB` to reflect the new state.
