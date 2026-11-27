@@ -56,8 +56,23 @@ type TMSProvider struct {
 	callback                CallbackFunc
 	tokenDriverService      *TokenDriverService
 
+	// lock guards services only. It is never held while a TMS is built.
 	lock     sync.RWMutex
 	services map[driver.TMSID]driver.TokenManagerService
+	// building serialises the creation and the update of each TMS, one key at a time.
+	building keyedMutex
+}
+
+// keyedMutex hands out one mutex per key. Mutexes are never removed.
+type keyedMutex struct{ m sync.Map }
+
+// lock locks the mutex of key and returns its unlock function.
+func (k *keyedMutex) lock(key any) func() {
+	v, _ := k.m.LoadOrStore(key, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+
+	return mu.Unlock
 }
 
 func NewTMSProvider(
@@ -99,10 +114,11 @@ func (m *TMSProvider) GetTokenManagerService(opts driver.ServiceOptions) (servic
 
 	logger.Debugf("lock to create token manager service for [%s] with key [%s]", opts, key)
 
-	m.lock.Lock()
-	defer m.lock.Unlock()
+	defer m.building.lock(key)()
 
+	m.lock.RLock()
 	service, ok = m.services[key]
+	m.lock.RUnlock()
 	if ok {
 		logger.Debugf("token manager service for [%s] with key [%s] exists, return it", opts, key)
 
@@ -114,7 +130,9 @@ func (m *TMSProvider) GetTokenManagerService(opts driver.ServiceOptions) (servic
 	if err != nil {
 		return nil, err
 	}
+	m.lock.Lock()
 	m.services[key] = service
+	m.lock.Unlock()
 
 	return service, nil
 }
@@ -139,7 +157,8 @@ func (m *TMSProvider) NewTokenManagerService(opts driver.ServiceOptions) (driver
 }
 
 // Update updates the public parameters for the specified TMS.
-// If the service is already cached and the public parameters are different, it unloads the old service and reloads it.
+// If the service is already cached and the public parameters are different, it caches the replacement
+// before unloading the old service. If unloading fails, it returns the error and retains the replacement.
 // The TMS is rebuilt from the public parameters carried by the update and from nothing else: if the
 // driver rejects them, Update fails and the currently cached service is left untouched.
 func (m *TMSProvider) Update(opts driver.ServiceOptions) (err error) {
@@ -156,9 +175,11 @@ func (m *TMSProvider) Update(opts driver.ServiceOptions) (err error) {
 	key := tmsKey(opts)
 	logger.Debugf("update tms for [%s] with key [%s]", opts, key)
 
-	m.lock.Lock()
-	defer m.lock.Unlock()
+	defer m.building.lock(key)()
+
+	m.lock.RLock()
 	service, ok := m.services[key]
+	m.lock.RUnlock()
 	if !ok {
 		logger.Debugf("no service found, instantiate token management system for [%s:%s:%s] for key [%s]", opts.Network, opts.Channel, opts.Namespace, key)
 	} else {
@@ -176,18 +197,21 @@ func (m *TMSProvider) Update(opts driver.ServiceOptions) (err error) {
 	// create the service for the new public params. Only the public params carried by the update
 	// are eligible: see updatePublicParamsSources.
 	newService, err := m.getTokenManagerService(opts, m.updatePublicParamsSources())
-	if err == nil {
-		// unload the old service, if set
-		if service != nil {
-			if err := service.Done(); err != nil {
-				return errors.WithMessagef(err, "failed to unload token service")
-			}
+	if err != nil {
+		return err
+	}
+	// register the new service before the old one is unloaded, so that no lookup gets an unloaded service
+	m.lock.Lock()
+	m.services[key] = newService
+	m.lock.Unlock()
+	// unload the old service, if set
+	if service != nil {
+		if err := service.Done(); err != nil {
+			return errors.WithMessagef(err, "failed to unload token service")
 		}
-		// register the new service
-		m.services[key] = newService
 	}
 
-	return err
+	return nil
 }
 
 // SetCallback sets the callback function to be invoked when a new TMS is created.
