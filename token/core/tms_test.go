@@ -845,3 +845,20 @@ func TestTMSProviderConfigurationFor(t *testing.T) {
 	_, err = c.provider.ConfigurationFor("n1", "c1", "ns1")
 	require.Error(t, err)
 }
+
+// TestTMSProviderKeysDoNotCollide verifies that TMSs whose concatenated coordinates are equal get distinct services (#2851).
+func TestTMSProviderKeysDoNotCollide(t *testing.T) {
+	c := newPPFallbackContext(t)
+	c.fetcher.FetchReturns(c.pubParams(t, "ok"), nil)
+
+	for _, id := range []driver.TMSID{{Network: "ab", Channel: "", Namespace: "c"}, {Network: "a", Channel: "b", Namespace: "c"}} {
+		_, err := c.provider.GetTokenManagerService(driver.ServiceOptions{
+			Network:             id.Network,
+			Channel:             id.Channel,
+			Namespace:           id.Namespace,
+			PublicParamsFetcher: c.fetcher,
+		})
+		require.NoError(t, err)
+	}
+	assert.Equal(t, 2, c.driver.NewTokenServiceCallCount(), "each TMS must get its own service")
+}

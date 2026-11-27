@@ -25,7 +25,7 @@ type Provider struct {
 	auditStoreServiceManager auditdb.StoreServiceManager
 
 	vaultCacheLock sync.RWMutex
-	vaultCache     map[string]driver.Vault
+	vaultCache     map[driver.TMSID]driver.Vault
 }
 
 // NewVaultProvider creates a vault provider with the given storage managers.
@@ -38,14 +38,14 @@ func NewVaultProvider(
 		ttxStoreServiceManager:   ttxStoreServiceManager,
 		tokenStoreServiceManager: tokenStoreServiceManager,
 		auditStoreServiceManager: auditStoreServiceManager,
-		vaultCache:               make(map[string]driver.Vault),
+		vaultCache:               make(map[driver.TMSID]driver.Vault),
 	}
 }
 
 // Vault returns a cached or newly created vault for the given TMS coordinates.
 // It uses double-checked locking to ensure thread-safe cache access.
 func (v *Provider) Vault(network string, channel string, namespace string) (driver.Vault, error) {
-	k := network + channel + namespace
+	k := driver.TMSID{Network: network, Channel: channel, Namespace: namespace}
 	// Check cache
 	v.vaultCacheLock.RLock()
 	res, ok := v.vaultCache[k]
