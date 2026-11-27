@@ -662,6 +662,7 @@ Located in `token/services/identity/multisig`.
     - `Identities` (array of `TypedIdentity` bytes): The constituent identities.
 *   **Audit Info**: JSON-encoded `AuditInfo` structure.
     - `IdentityAuditInfos` (array of `IdentityAuditInfo`): A list of audit information blobs for each constituent identity.
+*   **Enrollment ID**: When the audit-info deserializer is built with the parent multiplex deserializer (`multisig.NewAuditInfoDeserializer(inner)`), the multisig identity reports the enrollment ID shared by all members. The fabtoken and zkatdlog drivers register it this way. The enrollment ID is empty when members span enrollment IDs, a member has no enrollment ID of its own (e.g. a nested composite spanning enrollments), a member's audit info is missing (e.g. an identity not registered locally), or `inner` is nil. A member count mismatch, zero members, an invalid identity, a non-empty member audit info that `inner` cannot resolve, or exceeding the composite depth or fan-out limits is an error. The enrollment ID is not serialized; the revocation handle stays empty.
 *   **Encoding**:
     - `TypedIdentity` payload: ASN.1.
     - Audit Info: JSON.

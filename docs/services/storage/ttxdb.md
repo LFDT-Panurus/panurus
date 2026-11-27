@@ -120,3 +120,19 @@ aggregation counts each `(token ID, enrollment ID)` pair once
 filtered out of the metadata. Positional deduplication applies only to inputs
 built through `token.NewInput`, which marks the position as known; a
 literal-built input without a token ID keeps the previous keep-all behavior.
+
+`Movements` credits a composite-owned output to an enrollment ID only when
+every member row of that output (rows with a non-empty `Owner` that differs
+from `Token.Owner`, grouped by action type, action index and output index) carries
+the same enrollment ID. The member rows of an output whose members carry more
+than one distinct enrollment ID are not credited; an empty enrollment ID
+counts as distinct. This is the rule the spend of that output resolves its
+input through, so every credit has a matching debit: members sharing an
+enrollment ID are credited once and debited once, and members spanning
+enrollment IDs are credited and debited nothing. A single-row output whose
+`Owner` differs from `Token.Owner`, such as an HTLC script recipient, is
+credited as before.
+
+The rule applies to `Movements` only. `TransactionRecords` still keeps one
+record per member recipient (see #2242), and the audit record itself is not
+altered.

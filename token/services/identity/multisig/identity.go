@@ -163,6 +163,10 @@ type IdentityAuditInfo struct {
 // The order of the audit infos is the same as the order of the identities.
 type AuditInfo struct {
 	IdentityAuditInfos []IdentityAuditInfo
+
+	// eid is the enrollment ID shared by all members, derived at
+	// deserialization time; it is not serialized.
+	eid string
 }
 
 // WrapAuditInfo wraps the given audit infos into a multisig audit info
@@ -198,10 +202,16 @@ func UnwrapAuditInfo(info []byte) (bool, [][]byte, error) {
 	return true, recipients, nil
 }
 
+// EnrollmentID returns the enrollment ID shared by all members of the
+// multisig identity, as derived by AuditInfoDeserializer. It is empty when the
+// members span enrollment IDs, when a member's audit info is missing, or when
+// the audit info was not obtained through a deserializer with an inner one.
 func (ei *AuditInfo) EnrollmentID() string {
-	return ""
+	return ei.eid
 }
 
+// RevocationHandle returns the empty string: a multisig identity has no
+// revocation handle of its own.
 func (ei *AuditInfo) RevocationHandle() string {
 	return ""
 }

@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package ttxdb
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"math/big"
@@ -619,9 +620,15 @@ func recordActions(record *token.AuditRecord) []recordAction {
 
 // Movements converts an AuditRecord to MovementRecords for storage in the database.
 // A positive movement Amount means incoming tokens, and negative means outgoing tokens from the enrollment ID.
+//
+// A composite-owned output (multisig, policy) is credited only to the
+// enrollment ID all its members share, see creditedOutputs. This is the rule
+// the spend of that output resolves its input through, so every credit has a
+// matching debit (#2660).
 func Movements(ctx context.Context, record *token.AuditRecord, created time.Time) (mv []MovementRecord, err error) {
 	inputs := record.Inputs
 	outputs := record.Outputs
+	credited := creditedOutputs(outputs)
 	// we need to consider both inputs and outputs enrollment IDs because the record can refer to a redeem
 	eIDs := joinIOEIDs(record)
 	logger.DebugfContext(ctx, "eIDs [%v]", eIDs)
@@ -629,7 +636,7 @@ func Movements(ctx context.Context, record *token.AuditRecord, created time.Time
 
 	for _, eID := range eIDs {
 		for _, tokenType := range tokenTypes {
-			received := outputs.ByEnrollmentID(eID).ByType(tokenType).UniquePerOutput().Sum()
+			received := credited.ByEnrollmentID(eID).ByType(tokenType).UniquePerOutput().Sum()
 			sent := inputs.ByEnrollmentID(eID).ByType(tokenType).UniquePerInput().Sum()
 			diff := new(big.Int).Sub(received, sent)
 			if sent.Cmp(received) == 0 {
@@ -650,6 +657,43 @@ func Movements(ctx context.Context, record *token.AuditRecord, created time.Time
 	logger.DebugfContext(ctx, "finished to parse sent movements for tx [%s]", record.Anchor)
 
 	return mv, err
+}
+
+// creditedOutputs returns the outputs Movements credits. A composite-owned
+// output is expanded into one member row per member (non-empty Owner that
+// differs from Token.Owner), all with the full quantity. Its spend resolves the input to
+// the enrollment ID all members share, and to none otherwise. To keep the
+// credit symmetric with that debit, the member rows of an output whose members
+// carry more than one distinct enrollment ID are dropped; the empty
+// enrollment ID counts as distinct. All other rows are kept unchanged (#2660).
+func creditedOutputs(outputs *token.OutputStream) *token.OutputStream {
+	type key struct {
+		actionType  request.ActionType
+		actionIndex int
+		index       uint64
+	}
+	isMember := func(o *token.Output) bool {
+		return len(o.Owner) != 0 && !bytes.Equal(o.Owner, o.Token.Owner)
+	}
+	eids := map[key]map[string]struct{}{}
+	for _, o := range outputs.Outputs() {
+		if !isMember(o) {
+			continue
+		}
+		k := key{actionType: o.ActionType, actionIndex: o.ActionIndex, index: o.Index}
+		if eids[k] == nil {
+			eids[k] = map[string]struct{}{}
+		}
+		eids[k][o.EnrollmentID] = struct{}{}
+	}
+
+	return outputs.Filter(func(o *token.Output) bool {
+		if !isMember(o) {
+			return true
+		}
+
+		return len(eids[key{actionType: o.ActionType, actionIndex: o.ActionIndex, index: o.Index}]) == 1
+	})
 }
 
 // joinIOEIDs joins enrollment IDs of inputs and outputs
