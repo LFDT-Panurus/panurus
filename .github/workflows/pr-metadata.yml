@@ -1,0 +1,55 @@
+name: PR metadata
+
+# Checks that a PR links an issue and carries its priority (docs/development/general.md#automation).
+# pull_request_target with the default checkout runs the workflow and script from the base branch,
+# so a PR cannot change its own check. No PR code is checked out or run, and the token is read-only.
+on:
+  pull_request_target:
+    types: [ opened, edited, reopened, synchronize, labeled, unlabeled ]
+    branches: [ main, feature/zkat-snark-driver ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-linked-issue:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    steps:
+      - name: Checkout base branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check linked issue
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: ci/scripts/pr-issue-check.sh link "$PR"
+
+  pr-priority:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    steps:
+      - name: Checkout base branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check priority label
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: ci/scripts/pr-issue-check.sh priority "$PR"

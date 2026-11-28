@@ -1,0 +1,19 @@
+name: Labeler
+
+# Adds component labels to PRs by changed path (map in .github/labeler.yml).
+# pull_request_target: config comes from the base branch and no PR code is checked out or run.
+on:
+  pull_request_target:
+    types: [ opened, reopened, synchronize ]
+    branches: [ main ]
+
+permissions: {}
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7.0.0

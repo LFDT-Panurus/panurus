@@ -120,6 +120,9 @@ To maintain clarity and traceability across contributions, all pull requests mus
 - **Associated Issue**: A GitHub Issue must be linked to the pull request.
   This should be done via the Development section of the GitHub PR interface (not just mentioned in the description) — e.g. include `Fixes #123` or `Closes #123` in the PR body, which GitHub links automatically on creation.
   This ensures the PR is formally connected to the issue for proper project tracking and status updates.
+  For partial work, `Part of #123` is accepted instead. It does not link or close the issue.
+  PRs labelled `needs-decision` and Dependabot PRs are exempt. The `pr-linked-issue` check enforces this rule (see [Automation](#automation)).
+- **Priority**: The PR carries the same `priority/*` label as the issue it fixes. A maintainer or triager sets it, because external contributors cannot set labels. The `pr-priority` check enforces this rule.
 - **One Approve Policy**: Each PR must receive at least one `approve` from the maintainers of the project before it can be merged.
 
 This ensures that all contributions are tracked, visible on the project board, and aligned with the roadmap.
@@ -139,6 +142,46 @@ gh pr create --title "Add user management (#123)" --base main \
 
 Note: GitHub's Issue Type field (Bug/Task/Feature) does **not** exist on pull requests — only on issues (see below). There is nothing to set on the PR for it.
 
+
+### Automation
+
+GitHub workflows apply part of the rules above:
+
+| Workflow | What it does |
+| :--- | :--- |
+| `labeler.yml` | Adds component labels to PRs that target `main`, by changed path. The map is in `.github/labeler.yml`. It only adds labels. |
+| `issue-triage.yml` | Adds `needs-triage` to every new issue. Triagers remove it. |
+| `pr-metadata.yml`, job `pr-linked-issue` | Fails if the PR body links no issue of this repository. |
+| `pr-metadata.yml`, job `pr-priority` | Fails if the PR `priority/*` label differs from its linked issues. |
+| `stale.yml` | Daily. Labels PRs with no update in 21 days as `stale` and comments once. The `stale` label is new; the action creates it on first use. Any update removes the label. It never closes PRs and does not touch issues. |
+
+Linked-issue rule:
+- Accepted forms, in any case, with an optional colon: GitHub's closing keywords (`Fixes`, `Closes`,
+  `Resolves` and their variants) followed by `#N`, and `Part of #N`.
+- `#N` must be an issue of this repository. Closed issues count. Pull requests and missing numbers are ignored with a warning.
+- Not counted: `owner/repo#N`, issue URLs, and other numbers in a list (`Fixes #1 and #2` counts only `#1`).
+  References in HTML comments or code blocks count.
+- At most 20 distinct references. A body with more fails the check, because each reference costs one API call.
+- Exempt: PRs labelled `needs-decision`, and PRs opened by Dependabot.
+
+Priority rule:
+- The expected priority is the highest one (lowest `P` number) among the issues the PR closes.
+  `Part of` issues (often epics) are used only when the PR closes no issue.
+- The PR must carry exactly one `priority/*` label, equal to the expected one.
+- If no linked issue has a priority, the check only warns: the issue needs triage first.
+- A maintainer or triager adds the PR label. The check re-runs on `labeled` and `unlabeled`.
+- A priority change on the issue does not re-run the check. Re-run the `pr-priority` job, or edit the PR.
+
+Both checks run on `pull_request_target` with a read-only token. The workflow and the script come
+from the base branch, so a PR cannot change its own check. Run a check locally, with `gh` logged in:
+
+```bash
+ci/scripts/pr-issue-check.sh link 123
+ci/scripts/pr-issue-check.sh priority 123
+ci/scripts/pr-issue-check.sh refs < body.md   # print the parsed references
+```
+
+`make pr-issue-check-test` tests the script offline.
 
 ### Merge Queue
 

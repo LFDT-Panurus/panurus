@@ -147,6 +147,9 @@ Full guidance: [docs/development/general.md](docs/development/general.md). Summa
   `updateIssueIssueType` (node IDs from `gh api orgs/LFDT-Panurus/issue-types`).
 - **Link the PR to its issue** with `Fixes #N` / `Closes #N` in the PR body — not just a
   mention — so GitHub connects them and the project board updates automatically.
+  For partial work, `Part of #N` is accepted; it does not link or close the issue. A maintainer
+  or triager gives the PR its issue's `priority/*` label. CI checks both (`pr-linked-issue`, `pr-priority`;
+  see [Automation](docs/development/general.md#automation)).
 - Never push directly or open a PR without the user's explicit go-ahead; confirm before
   `git push` and before `gh pr create`.
 

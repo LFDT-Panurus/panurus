@@ -31,6 +31,7 @@ The unit-test targets live in [unit-tests.mk](../../unit-tests.mk). There is one
 | `make unit-tests-cmd` | Every `cmd/*` module. |
 | `make unit-tests-check` | Fails if a tracked Go module has no target, if an exempt module (`tools`) has tests, or if the two CI workflows do not run exactly these targets with the same `docker` and `foundry` flags. Part of `make checks-fast`. |
 | `make unit-tests-mk-test` | Tests the targets above (`ci/scripts/unit-tests-mk-test.sh`). Part of `make checks-fast`. |
+| `make pr-issue-check-test` | Offline test of the PR metadata checks (`ci/scripts/pr-issue-check-test.sh`, see [Automation](general.md#automation)). Part of `make checks-fast`. |
 | `make test-evm-contracts` | Runs the EVM driver's Solidity tests (`forge test`) and `forge fmt --check`. Skips without `forge` or the `forge-std` submodule; set `EVM_CONTRACTS_REQUIRED=1` to fail instead. |
 
 Every unit-test target accepts `RACE=1`, which adds `-race` and sets `GORACE=history_size=7`. `unit-tests-main` and `unit-tests-evm` accept `COVERAGE=1`, which instruments every package of the module (`-coverpkg=./...`) and writes the profile to `COVERAGE_PROFILE` (default `profile.cov`). `unit-tests-main` fails if it finds no regression packages, instead of silently testing the repository root.
