@@ -86,6 +86,22 @@ To run the linter, use:
 make lint
 ```
 
+## API Compatibility
+
+### apidiff
+Reports the incompatible and compatible API changes between two versions of a module. `make api-report` uses it; see [API Compatibility Report](./api-compatibility.md).
+Reference: https://pkg.go.dev/golang.org/x/exp/cmd/apidiff
+```bash
+go install golang.org/x/exp/cmd/apidiff
+```
+
+### gorelease
+Checks a module's API changes against a published version and suggests the next version.
+Reference: https://pkg.go.dev/golang.org/x/exp/cmd/gorelease
+```bash
+go install golang.org/x/exp/cmd/gorelease
+```
+
 ## Testing & Mocking
 
 ### Ginkgo

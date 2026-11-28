@@ -152,6 +152,7 @@ nav:
       - Txgen (Load Generator): development/txgen.md
       - Tools: development/tools.md
       - Versioning: development/versioning.md
+      - API Compatibility Report: development/api-compatibility.md
       - Dependency License Dispositions: development/license-dispositions.md
       - AI Agents: development/ai_agents.md
       - Update FSC Dependency: development/update-fsc.md

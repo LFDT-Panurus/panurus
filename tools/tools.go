@@ -16,6 +16,8 @@ import (
 	_ "github.com/gordonklaus/ineffassign"
 	_ "github.com/maxbrunsfeld/counterfeiter/v6"
 	_ "github.com/onsi/ginkgo/v2/ginkgo"
+	_ "golang.org/x/exp/cmd/apidiff"
+	_ "golang.org/x/exp/cmd/gorelease"
 	_ "golang.org/x/perf/cmd/benchstat"
 	_ "golang.org/x/tools/cmd/goimports"
 	_ "golang.org/x/vuln/cmd/govulncheck"

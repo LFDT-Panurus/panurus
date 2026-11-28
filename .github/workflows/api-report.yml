@@ -1,0 +1,53 @@
+# Advisory API compatibility report (apidiff) for PRs into main.
+# Report-only: writes to the job summary and never fails on API changes.
+# See docs/development/api-compatibility.md.
+name: API report
+
+on:
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  api-report:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: "go.mod"
+          cache-dependency-path: "**/*.sum"
+
+      - name: Install apidiff
+        working-directory: tools
+        run: go install golang.org/x/exp/cmd/apidiff
+
+      - name: API report
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          report="$RUNNER_TEMP/api-report.md"
+          make api-report BASE="$(git merge-base "$BASE_SHA" HEAD)" >"$report"
+          cat "$report"
+          # The job summary is limited to 1 MiB; the full report stays in the log.
+          if [ "$(wc -c <"$report")" -gt 1000000 ]; then
+            head -c 1000000 "$report"
+            printf '\n\n**Truncated, see the job log for the full report.**\n'
+          else
+            cat "$report"
+          fi >>"$GITHUB_STEP_SUMMARY"

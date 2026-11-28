@@ -7,6 +7,7 @@ This page contains link to the development guidelines and more.
 - [Testing Guide](./testing.md): How to run the unit, fuzz, integration and Chaguar tests.
 - [Debugging Integration Tests](./debug-integration-tests.md): Runbook for diagnosing failing integration tests (log locations, Docker and network inspection, Ginkgo focus and skip).
 - [Best Practices for Versioning Go Projects](./versioning.md)
+- [API Compatibility Report](./api-compatibility.md)
 - [Development Tools](./tools.md)
 - [Linting](./linting.md)
 - [Monitoring](./monitoring.md)
