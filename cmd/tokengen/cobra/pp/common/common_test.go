@@ -423,6 +423,16 @@ func TestLoadCertificates(t *testing.T) {
 		require.Error(t, err)
 	})
 
+	t.Run("text_and_headers_dropped", func(t *testing.T) {
+		block, _ := pem.Decode(cert1)
+		withHeaders := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Headers: map[string]string{"k": "v"}, Bytes: block.Bytes})
+		exported := filepath.Join(dir, "exported.pem")
+		require.NoError(t, os.WriteFile(exported, append([]byte("subject=CN = root\nissuer=CN = root\n"), withHeaders...), 0600))
+		certs, err := LoadCertificates([]string{exported})
+		require.NoError(t, err)
+		assert.Equal(t, [][]byte{cert1}, certs)
+	})
+
 	t.Run("dir_with_invalid_entry", func(t *testing.T) {
 		mixedDir := filepath.Join(dir, "mixed")
 		require.NoError(t, os.MkdirAll(mixedDir, 0750))

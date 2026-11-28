@@ -7,6 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 package x509
 
 import (
+	"crypto/x509"
+	"sync"
 	"testing"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
@@ -185,4 +187,66 @@ func TestZeroValue_Unchanged(t *testing.T) {
 	ai, err = (&AuditInfoDeserializer{}).DeserializeAuditInfo(t.Context(), nil, forgedInfo)
 	require.NoError(t, err)
 	assert.Equal(t, "victim", ai.EnrollmentID())
+}
+
+func TestOwnerChainChecker_TrustedCache(t *testing.T) {
+	f := newOwnerFixture(t)
+
+	// untrusted certificates are never cached
+	_, err := f.checker.check(f.forged.PEM)
+	require.ErrorIs(t, err, identity.ErrUntrustedIdentity)
+	assert.Equal(t, 0, f.checker.trusted.len())
+
+	cert, err := f.checker.check(f.legit.PEM)
+	require.NoError(t, err)
+	assert.Equal(t, 1, f.checker.trusted.len())
+	cached, err := f.checker.check(f.legit.PEM)
+	require.NoError(t, err)
+	assert.Same(t, cert, cached)
+
+	// a cached certificate still goes through the audit info binding
+	require.ErrorIs(t, f.checker.bind(f.legit.PEM, "mallory", nil), identity.ErrUntrustedIdentity)
+}
+
+func TestCertLRU_Bounded(t *testing.T) {
+	l := newCertLRU(2)
+	a, b, c := &x509.Certificate{}, &x509.Certificate{}, &x509.Certificate{}
+	l.add("a", a)
+	l.add("b", b)
+	_, ok := l.get("a") // a becomes the most recent
+	require.True(t, ok)
+	l.add("c", c)
+	assert.Equal(t, 2, l.len())
+	_, ok = l.get("b")
+	assert.False(t, ok, "least recently used entry must be evicted")
+	got, ok := l.get("a")
+	require.True(t, ok)
+	assert.Same(t, a, got)
+}
+
+func TestOwnerChainChecker_ConcurrentCheck(t *testing.T) {
+	f := newOwnerFixture(t)
+	const n = 16
+	legitErrs, forgedErrs := make([]error, n), make([]error, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Go(func() {
+			_, legitErrs[i] = f.checker.check(f.legit.PEM)
+			_, forgedErrs[i] = f.checker.check(f.forged.PEM)
+		})
+	}
+	wg.Wait()
+	for i := range n {
+		require.NoError(t, legitErrs[i])
+		require.ErrorIs(t, forgedErrs[i], identity.ErrUntrustedIdentity)
+	}
+	assert.Equal(t, 1, f.checker.trusted.len())
+}
+
+// len returns the number of cached certificates.
+func (l *certLRU) len() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return l.order.Len()
 }

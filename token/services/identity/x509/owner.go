@@ -8,7 +8,9 @@ package x509
 
 import (
 	"bytes"
+	"container/list"
 	"crypto/x509"
+	"sync"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
@@ -22,7 +24,12 @@ type OwnerChainChecker struct {
 	cas *crypto.OwnerCAs
 	// exempt holds the raw x509 certificates that skip the chain and leaf-CA rules.
 	exempt map[string]struct{}
+	// trusted caches the certificates that passed check, keyed by their raw bytes.
+	trusted *certLRU
 }
+
+// trustedCacheSize bounds the number of certificates the checker caches.
+const trustedCacheSize = 1024
 
 // NewOwnerChainChecker returns a checker for the PEM owner roots and intermediates.
 // The x509 entries of exempt, typed identities such as the issuers and auditors of the public parameters,
@@ -46,11 +53,26 @@ func NewOwnerChainChecker(roots, intermediates [][]byte, exempt []driver.Identit
 		ex[string(ti.Identity)] = struct{}{}
 	}
 
-	return &OwnerChainChecker{cas: cas, exempt: ex}, nil
+	return &OwnerChainChecker{cas: cas, exempt: ex, trusted: newCertLRU(trustedCacheSize)}, nil
 }
 
 // check parses raw strictly and, unless it is exempt, verifies it chains to an owner root.
+// Only certificates that pass are cached, so untrusted input cannot fill the cache.
 func (c *OwnerChainChecker) check(raw []byte) (*x509.Certificate, error) {
+	if cert, ok := c.trusted.get(string(raw)); ok {
+		return cert, nil
+	}
+	cert, err := c.verify(raw)
+	if err != nil {
+		return nil, err
+	}
+	c.trusted.add(string(raw), cert)
+
+	return cert, nil
+}
+
+// verify parses raw strictly and, unless it is exempt, verifies it chains to an owner root.
+func (c *OwnerChainChecker) verify(raw []byte) (*x509.Certificate, error) {
 	cert, err := crypto.ParseOwnerCertificate(raw)
 	if err != nil {
 		return nil, errors.WithMessage(errors.Join(identity.ErrUntrustedIdentity, err), "invalid x509 owner certificate")
@@ -89,4 +111,50 @@ func bindCert(cert *x509.Certificate, eid string, rh []byte) error {
 	}
 
 	return nil
+}
+
+// certLRU is a thread-safe, bounded LRU cache of parsed certificates.
+type certLRU struct {
+	mu       sync.Mutex
+	capacity int
+	order    *list.List
+	items    map[string]*list.Element
+}
+
+// certEntry is a certLRU element.
+type certEntry struct {
+	key  string
+	cert *x509.Certificate
+}
+
+func newCertLRU(capacity int) *certLRU {
+	return &certLRU{capacity: capacity, order: list.New(), items: make(map[string]*list.Element, capacity)}
+}
+
+func (l *certLRU) get(key string) (*x509.Certificate, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	elem, ok := l.items[key]
+	if !ok {
+		return nil, false
+	}
+	l.order.MoveToFront(elem)
+
+	return elem.Value.(*certEntry).cert, true
+}
+
+func (l *certLRU) add(key string, cert *x509.Certificate) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if elem, ok := l.items[key]; ok {
+		l.order.MoveToFront(elem)
+
+		return
+	}
+	l.items[key] = l.order.PushFront(&certEntry{key: key, cert: cert})
+	if l.order.Len() > l.capacity {
+		oldest := l.order.Back()
+		l.order.Remove(oldest)
+		delete(l.items, oldest.Value.(*certEntry).key)
+	}
 }

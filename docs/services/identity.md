@@ -538,13 +538,14 @@ Commit-time validation is the same on upgraded and old nodes.
 
 **Owner certificate (leaf) rules.** The certificate must:
 
-*   be exactly one PEM `CERTIFICATE` block, with no headers and no trailing bytes;
+*   be exactly one PEM `CERTIFICATE` block, with no headers and no bytes before or after it;
 *   carry an ECDSA public key;
 *   not be a CA;
 *   chain to a root by signature, through at most 8 intermediates, honouring `MaxPathLen`.
 
 The audit info must match the certificate: its EID must equal the CN-derived EID, and its revocation handle must equal the one derived from the certificate key.
 The same parse serves the chain check and the EID/RH derivation.
+The checker caches up to 1024 certificates that passed the chain check. It never caches failures.
 
 **CA certificate rules.** `PublicParams.Validate` calls `crypto.NewOwnerCAs`. It requires:
 
@@ -588,6 +589,7 @@ When roots are set, the driver also logs a warning for each local owner identity
 
 *   Old nodes ignore the new field. They keep the old behaviour, so the protection holds on upgraded nodes only.
 *   Upgrade all node binaries before you publish public parameters with owner roots.
+*   With roots set, X.509 audit info must carry the revocation handle (`RH`). Audit info with only an `EID` fails. Panurus key managers always set it.
 *   Upgraded nodes run `Validate` on the owner certificates and reject public parameters that fail it. Old nodes accept them.
 *   To rotate a root, add the new root, re-enroll the owners, then remove the old root.
 *   Stored audit info is checked again at read time. Owners that do not chain to the current roots fail on every read.

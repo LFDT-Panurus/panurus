@@ -141,6 +141,7 @@ func GetCertificatesFromDir(dir string) ([][]byte, error) {
 // LoadCertificates returns the PEM-encoded certificates found at the given paths.
 // Each path is either a file with exactly one PEM certificate or a directory of such files.
 // Unlike GetCertificatesFromDir, any entry of a directory that is not such a file is an error.
+// Each certificate is returned as a plain PEM block, without the text or headers around it in the file.
 func LoadCertificates(paths []string) ([][]byte, error) {
 	var certs [][]byte
 	for _, path := range paths {
@@ -153,7 +154,7 @@ func LoadCertificates(paths []string) ([][]byte, error) {
 			if err != nil {
 				return nil, err
 			}
-			certs = append(certs, content)
+			certs = append(certs, canonicalCertificatePEM(content))
 
 			continue
 		}
@@ -169,11 +170,19 @@ func LoadCertificates(paths []string) ([][]byte, error) {
 			if err != nil {
 				return nil, errors.WithMessagef(err, "failed to load certificates from %s", path)
 			}
-			certs = append(certs, content)
+			certs = append(certs, canonicalCertificatePEM(content))
 		}
 	}
 
 	return certs, nil
+}
+
+// canonicalCertificatePEM re-encodes a PEM certificate checked by ReadSingleCertificateFromFile
+// as a plain PEM block.
+func canonicalCertificatePEM(raw []byte) []byte {
+	b, _ := pem.Decode(raw)
+
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: b.Bytes})
 }
 
 // LoadExtras parses strings in the format "key=file_path" and returns a map
