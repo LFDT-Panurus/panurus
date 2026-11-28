@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/boolpolicy"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/multisig"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
@@ -788,7 +789,14 @@ func resolveLongTermIdentity(context view.Context, party view.Identity, isMe boo
 // addPartyToDistributionList resolves party's long-term identity and, if not already present in
 // distributionListCompressed, appends a new (non-auditor) entry for it.
 // If a remote non-auditor entry has the same long-term identity, it adds party's enrollment ID to that entry.
-func (c *CollectEndorsementsView) addPartyToDistributionList(context view.Context, party view.Identity, mine collections.Set[string], distributionListCompressed []distributionListEntry) ([]distributionListEntry, error) {
+// auditInfos holds the audit infos carried in the token request, as returned by requestAuditInfos.
+func (c *CollectEndorsementsView) addPartyToDistributionList(
+	context view.Context,
+	party view.Identity,
+	mine collections.Set[string],
+	auditInfos map[string][][]byte,
+	distributionListCompressed []distributionListEntry,
+) ([]distributionListEntry, error) {
 	// For each party in the distribution list:
 	// - check if it is me
 	// - check if it is an auditor
@@ -823,7 +831,7 @@ func (c *CollectEndorsementsView) addPartyToDistributionList(context view.Contex
 
 			return distributionListCompressed, nil
 		}
-		eID, err := c.tx.TokenService().WalletManager().GetEnrollmentID(context.Context(), party)
+		eID, err := c.partyEnrollmentID(context.Context(), party, auditInfos)
 		if err != nil {
 			// The node is already in the list, as before #2713.
 			logger.DebugfContext(context.Context(), "skip adding [%s] to distribution list, already added, no enrollment ID: %s", party, err)
@@ -840,7 +848,7 @@ func (c *CollectEndorsementsView) addPartyToDistributionList(context view.Contex
 
 	var eIDs []string
 	if !isMe {
-		eID, err := c.tx.TokenService().WalletManager().GetEnrollmentID(context.Context(), party)
+		eID, err := c.partyEnrollmentID(context.Context(), party, auditInfos)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed getting enrollment ID for [%s]", party.UniqueID())
 		}
@@ -856,6 +864,146 @@ func (c *CollectEndorsementsView) addPartyToDistributionList(context view.Contex
 		EIDs:     eIDs,
 		Auditor:  false,
 	}), nil
+}
+
+// partyEnrollmentID returns the enrollment ID of party.
+// It reads the local audit info of party first.
+// If that gives no enrollment ID, it tries each audit info in auditInfos for party, in order.
+// It uses an audit info only if it matches party, because the request comes from other nodes.
+// It never returns an empty enrollment ID without an error.
+func (c *CollectEndorsementsView) partyEnrollmentID(ctx context.Context, party view.Identity, auditInfos map[string][][]byte) (string, error) {
+	tms := c.tx.TokenService()
+	eID, err := tms.WalletManager().GetEnrollmentID(ctx, party)
+	if err == nil && len(eID) != 0 {
+		return eID, nil
+	}
+	if err == nil {
+		err = errors.Errorf("empty enrollment ID in local audit info of [%s]", party.UniqueID())
+	}
+	errs := []error{err}
+	for _, auditInfo := range auditInfos[party.UniqueID()] {
+		if err := tms.SigService().MatchIdentity(ctx, party, auditInfo); err != nil {
+			errs = append(errs, errors.WithMessagef(err, "request audit info does not match [%s]", party.UniqueID()))
+
+			continue
+		}
+		eID, _, err := tms.WalletManager().GetEIDAndRH(ctx, party, auditInfo)
+		if err != nil {
+			errs = append(errs, errors.WithMessagef(err, "failed reading request audit info of [%s]", party.UniqueID()))
+
+			continue
+		}
+		if len(eID) == 0 {
+			errs = append(errs, errors.Errorf("empty enrollment ID in request audit info of [%s]", party.UniqueID()))
+
+			continue
+		}
+
+		return eID, nil
+	}
+
+	return "", errors.Join(errs...)
+}
+
+// requestAuditInfos maps the UniqueID of each issuer, sender and receiver in meta to the
+// non-empty audit infos that meta carries for it, in order and without duplicates.
+// Multisig and policy identities are replaced by their members, as in unwrapDistributionIDs,
+// each with its own audit info.
+// The audit infos are not verified: match them against the identity before use.
+func requestAuditInfos(ctx context.Context, meta *driver.TokenRequestMetadata) map[string][][]byte {
+	index := map[string][][]byte{}
+	if meta == nil {
+		return index
+	}
+	for _, action := range meta.Actions {
+		if action == nil {
+			continue
+		}
+		if issue := action.IssueMetadata; issue != nil {
+			indexAuditInfo(ctx, index, &issue.Issuer)
+			for _, output := range issue.Outputs {
+				if output != nil {
+					for _, receiver := range output.Receivers {
+						indexAuditInfo(ctx, index, receiver)
+					}
+				}
+			}
+		}
+		if transfer := action.TransferMetadata; transfer != nil {
+			for _, input := range transfer.Inputs {
+				if input != nil {
+					for _, sender := range input.Senders {
+						indexAuditInfo(ctx, index, sender)
+					}
+				}
+			}
+			for _, output := range transfer.Outputs {
+				if output != nil {
+					for _, receiver := range output.Receivers {
+						indexAuditInfo(ctx, index, receiver)
+					}
+				}
+			}
+		}
+	}
+
+	return index
+}
+
+// indexAuditInfo adds the audit info of party to index.
+// For a multisig or policy identity, it adds each member with its own audit info.
+// It skips the members if the audit info does not decode or has another member count.
+func indexAuditInfo(ctx context.Context, index map[string][][]byte, party *driver.AuditableIdentity) {
+	if party == nil || party.Identity.IsNone() || len(party.AuditInfo) == 0 {
+		return
+	}
+	members, unwrapAuditInfo := unwrapComposite(party.Identity)
+	if members == nil {
+		appendAuditInfo(index, party.Identity, party.AuditInfo)
+
+		return
+	}
+	_, memberAuditInfos, err := unwrapAuditInfo(party.AuditInfo)
+	if err != nil || len(memberAuditInfos) != len(members) {
+		logger.DebugfContext(ctx, "skip audit info of composite identity [%s]: members [%d], audit infos [%d], err [%v]", party.Identity, len(members), len(memberAuditInfos), err)
+
+		return
+	}
+	for i, member := range members {
+		if member.IsNone() || len(memberAuditInfos[i]) == 0 {
+			continue
+		}
+		appendAuditInfo(index, member, memberAuditInfos[i])
+	}
+}
+
+// unwrapComposite returns the members of a multisig or policy identity and the function that
+// unwraps its audit info. It returns nil members for any other identity.
+func unwrapComposite(id view.Identity) ([]view.Identity, func([]byte) (bool, [][]byte, error)) {
+	if members, ok, err := multisig.Unwrap(id); err == nil && ok {
+		return members, multisig.UnwrapAuditInfo
+	}
+	if pi, ok, err := boolpolicy.Unwrap(id); err == nil && ok {
+		members := make([]view.Identity, len(pi.Identities))
+		for i, b := range pi.Identities {
+			members[i] = token.Identity(b)
+		}
+
+		return members, boolpolicy.UnwrapAuditInfo
+	}
+
+	return nil, nil
+}
+
+// appendAuditInfo appends auditInfo to the audit infos of id in index, unless it is already there.
+func appendAuditInfo(index map[string][][]byte, id view.Identity, auditInfo []byte) {
+	key := id.UniqueID()
+	for _, existing := range index[key] {
+		if slices.Equal(existing, auditInfo) {
+			return
+		}
+	}
+	index[key] = append(index[key], auditInfo)
 }
 
 // addAuditorToDistributionList resolves party's long-term identity and appends an auditor entry
@@ -906,9 +1054,15 @@ func (c *CollectEndorsementsView) prepareDistributionList(context view.Context, 
 	mine.Add(remainingMine...)
 	logger.DebugfContext(context.Context(), "%d/%d ids were mine", mine.Length(), len(allIds))
 
+	var meta *driver.TokenRequestMetadata
+	if c.tx.Payload != nil && c.tx.TokenRequest != nil {
+		meta = c.tx.TokenRequest.Metadata
+	}
+	auditInfos := requestAuditInfos(context.Context(), meta)
+
 	var distributionListCompressed []distributionListEntry
 	for _, party := range distributionList {
-		distributionListCompressed, err = c.addPartyToDistributionList(context, party, mine, distributionListCompressed)
+		distributionListCompressed, err = c.addPartyToDistributionList(context, party, mine, auditInfos, distributionListCompressed)
 		if err != nil {
 			return nil, err
 		}

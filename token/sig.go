@@ -50,6 +50,11 @@ func (s *SignatureService) IssuerVerifier(ctx context.Context, id Identity) (Ver
 	return s.deserializer.GetIssuerVerifier(ctx, id)
 }
 
+// MatchIdentity returns an error if auditInfo is not the audit info of id.
+func (s *SignatureService) MatchIdentity(ctx context.Context, id Identity, auditInfo []byte) error {
+	return s.deserializer.MatchIdentity(ctx, id, auditInfo)
+}
+
 // GetSigner returns a signer bound to the given identity
 func (s *SignatureService) GetSigner(ctx context.Context, id Identity) (Signer, error) {
 	return s.identityProvider.GetSigner(ctx, id)
