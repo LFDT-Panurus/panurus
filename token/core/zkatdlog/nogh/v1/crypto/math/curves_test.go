@@ -151,30 +151,23 @@ func zrEquals(t *testing.T, a, b *mathlib.Zr) {
 // snapshotCaches creates shallow copies of the package caches so tests can
 // modify the global maps and restore them afterwards.
 func snapshotCaches() (map[mathlib.CurveID]map[uint64]*mathlib.Zr, map[mathlib.CurveID]map[uint64]*mathlib.Zr, map[mathlib.CurveID]map[uint64]*mathlib.Zr) {
-	v := make(map[mathlib.CurveID]map[uint64]*mathlib.Zr)
-	p := make(map[mathlib.CurveID]map[uint64]*mathlib.Zr)
-	s := make(map[mathlib.CurveID]map[uint64]*mathlib.Zr)
-	for k, vv := range valueCache {
-		m := make(map[uint64]*mathlib.Zr, len(vv))
-		maps.Copy(m, vv)
-		v[k] = m
-	}
-	for k, vv := range powerCache {
-		m := make(map[uint64]*mathlib.Zr, len(vv))
-		maps.Copy(m, vv)
-		p[k] = m
-	}
-	for k, vv := range sumOfPowerCache {
-		m := make(map[uint64]*mathlib.Zr, len(vv))
-		maps.Copy(m, vv)
-		s[k] = m
-	}
-
-	return v, p, s
+	return copyCache(valueCache), copyCache(powerCache), copyCache(sumOfPowerCache)
 }
 
+// restoreCaches installs copies of the snapshots, so that later changes to the caches leave the snapshots intact.
 func restoreCaches(v, p, s map[mathlib.CurveID]map[uint64]*mathlib.Zr) {
-	valueCache = v
-	powerCache = p
-	sumOfPowerCache = s
+	valueCache = copyCache(v)
+	powerCache = copyCache(p)
+	sumOfPowerCache = copyCache(s)
+}
+
+func copyCache(c map[mathlib.CurveID]map[uint64]*mathlib.Zr) map[mathlib.CurveID]map[uint64]*mathlib.Zr {
+	out := make(map[mathlib.CurveID]map[uint64]*mathlib.Zr, len(c))
+	for k, vv := range c {
+		m := make(map[uint64]*mathlib.Zr, len(vv))
+		maps.Copy(m, vv)
+		out[k] = m
+	}
+
+	return out
 }
