@@ -13,9 +13,12 @@ import (
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/config"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/boolpolicy"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemixnym"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/multisig"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/x509"
+	"github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/services"
@@ -74,13 +77,7 @@ func NewServiceManager(
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to get identity store for [%s]", tmsID)
 		}
-		extractor := NewSKIExtractor()
-		extractor.RegisterProvider(idemix.IdentityTypeString, idemix.NewSKIProvider())
-		extractor.RegisterProvider(idemixnym.IdentityTypeString, idemixnym.NewSKIProvider(identityStore))
-		// X.509 is deliberately excluded: its key is the wallet's long-lived enrollment key,
-		// shared by every token that wallet owns, so it must survive token deletion.
-		// See NoopSKIProvider for the full rationale.
-		extractor.RegisterProvider(x509.IdentityTypeString, NewNoopSKIProvider())
+		extractor := newSKIExtractor(identityStore)
 
 		manager := NewManager(
 			logger,
@@ -100,6 +97,32 @@ func NewServiceManager(
 
 		return manager, nil
 	})
+}
+
+// legacyPolicyTypeString is the owner type of policy rows stored before TypeToString mapped policy.
+const legacyPolicyTypeString = "Type (6)"
+
+// newSKIExtractor returns the extractor used by the runtime cleanup.
+func newSKIExtractor(identityStore idemixnym.IdentityStoreService) *SKIExtractor {
+	extractor := NewSKIExtractor()
+	extractor.RegisterProvider(idemix.IdentityTypeString, idemix.NewSKIProvider())
+	extractor.RegisterProvider(idemixnym.IdentityTypeString, idemixnym.NewSKIProvider(identityStore))
+	// X.509 is deliberately excluded: its key is the wallet's long-lived enrollment key,
+	// shared by every token that wallet owns, so it must survive token deletion.
+	// See NoopSKIProvider for the full rationale.
+	extractor.RegisterProvider(x509.IdentityTypeString, NewNoopSKIProvider())
+	// Composite owners are excluded too: their components may still own live tokens
+	// (e.g. an htlc claim pays the recipient), so their keys must not be deleted here.
+	for _, t := range []string{
+		identity.TypeToString(htlc.ScriptType),
+		identity.TypeToString(multisig.Multisig),
+		identity.TypeToString(boolpolicy.Policy),
+		legacyPolicyTypeString,
+	} {
+		extractor.RegisterProvider(t, NewNoopSKIProvider())
+	}
+
+	return extractor
 }
 
 // tmsKeystoreProvider adapts the TMS provider to provide keystore access

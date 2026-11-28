@@ -283,6 +283,10 @@ jobs:
             dir: ./token/services/storage/db/kvs/hashicorp
             pkg: .
             func: FuzzNormalizeIDRoundTrip
+          - name: skicleanup-composite-ski-provider
+            dir: ./cmd/skicleanup
+            pkg: ./cobra/internal/skis
+            func: FuzzCompositeSKIProviderNoPanic
 
     steps:
       - name: Checkout code

@@ -60,3 +60,23 @@ func TestWrapWithType(t *testing.T) {
 	assert.Equal(t, idType, unmarshaledTI.Type)
 	assert.Equal(t, id, unmarshaledTI.Identity)
 }
+
+func TestTypeToString(t *testing.T) {
+	tests := []struct {
+		typ  identity.Type
+		want string
+	}{
+		{driver.IdemixIdentityType, driver.IdemixIdentityTypeString},
+		{driver.IdemixNymIdentityType, driver.IdemixNymIdentityTypeString},
+		{driver.X509IdentityType, driver.X509IdentityTypeString},
+		{driver.MultiSigIdentityType, driver.MultiSigIdentityTypeString},
+		{driver.HTLCScriptIdentityType, driver.HTLCScriptIdentityTypeString},
+		{driver.PolicyIdentityType, driver.PolicyIdentityTypeString},
+		{identity.Type(100), "Type (100)"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.want, func(t *testing.T) {
+			assert.Equal(t, tc.want, identity.TypeToString(tc.typ))
+		})
+	}
+}

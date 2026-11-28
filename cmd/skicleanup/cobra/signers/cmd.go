@@ -24,7 +24,9 @@ func Cmd() *cobra.Command {
 		Short: "List orphaned signer entries and their derived SKIs.",
 		Long: `Iterates all entries in the Signers identity table.
 For each entry whose identity is not referenced by any token in the Tokens
-table, the command prints the identity hash and its derived SKIs to stdout.`,
+table, the command prints the identity hash and its derived SKIs to stdout.
+SKIs in the owned-skis list are excluded; if that list cannot be built,
+the command fails and prints no entry.`,
 		RunE: c.run,
 	}
 
@@ -67,5 +69,5 @@ func (c *command) run(cmd *cobra.Command, _ []string) error {
 		}
 	}()
 
-	return Run(context.Background(), stores, c.batchSize)
+	return Run(context.Background(), stores, c.batchSize, cmd.ErrOrStderr())
 }

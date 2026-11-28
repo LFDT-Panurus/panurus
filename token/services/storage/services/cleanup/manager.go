@@ -327,7 +327,7 @@ func (m *Manager) cleanupToken(ctx context.Context, token DeletedToken) error {
 	if len(skis) == 0 {
 		m.logger.Warnf("no SKIs derived for token [%s:%d], skipping", token.TxID, token.Index)
 		// No SKIs means this owner type has no per-token key material to remove (for example
-		// X.509, see NoopSKIProvider). Mark the token as cleaned to avoid rescanning it on
+		// X.509 or composite owners, see NoopSKIProvider). Mark the token as cleaned to avoid rescanning it on
 		// every sweep: "cleaned" here records "nothing to delete", not "keys were deleted".
 		if err := m.storage.MarkTokenCleaned(ctx, token.TxID, token.Index, m.config.InstanceID); err != nil {
 			return errors.Wrapf(err, "failed to mark token [%s:%d] as cleaned", token.TxID, token.Index)

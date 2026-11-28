@@ -8,11 +8,12 @@ package signers
 
 import (
 	"database/sql"
-	"fmt"
 
 	sqlcommon "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/postgres"
+	qcommon "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/sqlite"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	scommon "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	fscPostgres "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/postgres"
 	fscSqlite "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/sqlite"
@@ -20,23 +21,30 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// Stores groups the two stores needed by the signers command.
+// Stores groups the stores and raw database handles needed by the skicleanup commands.
 type Stores struct {
 	Identity *sqlcommon.IdentityStore
 	Token    *sqlcommon.TokenStore
+	// ReadDB is the database handle shared by Identity and Token.
+	// Close closes it through the stores; do not close it separately.
+	ReadDB *sql.DB
+	// TableNames are the resolved SQL table names.
+	TableNames sqlcommon.TableNames
+	// CondInterpreter formats query conditions for the configured driver.
+	CondInterpreter qcommon.CondInterpreter
 }
 
 // Close closes both underlying store connections.
 func (s *Stores) Close() error {
 	var errs []error
 	if err := s.Identity.Close(); err != nil {
-		errs = append(errs, fmt.Errorf("identity store close: %w", err))
+		errs = append(errs, errors.Wrap(err, "identity store close"))
 	}
 	if err := s.Token.Close(); err != nil {
-		errs = append(errs, fmt.Errorf("token store close: %w", err))
+		errs = append(errs, errors.Wrap(err, "token store close"))
 	}
 	if len(errs) > 0 {
-		return fmt.Errorf("close errors: %v", errs)
+		return errors.Wrap(errors.Join(errs...), "close errors")
 	}
 
 	return nil
@@ -51,7 +59,7 @@ func NewStores(cfg Config) (*Stores, error) {
 	}
 	tableNames, err := sqlcommon.GetTableNamesWithConfig(cfg.TablePrefix, storeCfg)
 	if err != nil {
-		return nil, fmt.Errorf("derive table names: %w", err)
+		return nil, errors.Wrap(err, "derive table names")
 	}
 
 	switch cfg.Driver {
@@ -60,14 +68,14 @@ func NewStores(cfg Config) (*Stores, error) {
 	case "postgres":
 		return newPostgresStores(cfg.DataSource, tableNames)
 	default:
-		return nil, fmt.Errorf("unsupported driver: %s", cfg.Driver)
+		return nil, errors.Errorf("unsupported driver: %s", cfg.Driver)
 	}
 }
 
 func newSQLiteStores(dataSource string, tableNames sqlcommon.TableNames) (*Stores, error) {
 	db, err := sql.Open("sqlite", dataSource)
 	if err != nil {
-		return nil, fmt.Errorf("open sqlite db: %w", err)
+		return nil, errors.Wrap(err, "open sqlite db")
 	}
 
 	dbs := &scommon.RWDB{ReadDB: db, WriteDB: db}
@@ -81,23 +89,29 @@ func newSQLiteStores(dataSource string, tableNames sqlcommon.TableNames) (*Store
 	if err != nil {
 		_ = db.Close()
 
-		return nil, fmt.Errorf("create sqlite identity store: %w", err)
+		return nil, errors.Wrap(err, "create sqlite identity store")
 	}
 
 	tokenStore, err := sqlite.NewTokenStore(dbs, tableNames)
 	if err != nil {
 		_ = db.Close()
 
-		return nil, fmt.Errorf("create sqlite token store: %w", err)
+		return nil, errors.Wrap(err, "create sqlite token store")
 	}
 
-	return &Stores{Identity: identityStore, Token: tokenStore}, nil
+	return &Stores{
+		Identity:        identityStore,
+		Token:           tokenStore,
+		ReadDB:          db,
+		TableNames:      tableNames,
+		CondInterpreter: sqlite.NewConditionInterpreter(),
+	}, nil
 }
 
 func newPostgresStores(dataSource string, tableNames sqlcommon.TableNames) (*Stores, error) {
 	db, err := sql.Open("pgx", dataSource)
 	if err != nil {
-		return nil, fmt.Errorf("open postgres db: %w", err)
+		return nil, errors.Wrap(err, "open postgres db")
 	}
 
 	dbs := &scommon.RWDB{ReadDB: db, WriteDB: db}
@@ -111,7 +125,7 @@ func newPostgresStores(dataSource string, tableNames sqlcommon.TableNames) (*Sto
 	if err != nil {
 		_ = db.Close()
 
-		return nil, fmt.Errorf("create postgres identity store: %w", err)
+		return nil, errors.Wrap(err, "create postgres identity store")
 	}
 
 	// For the postgres token store we use the base common constructor directly
@@ -125,8 +139,14 @@ func newPostgresStores(dataSource string, tableNames sqlcommon.TableNames) (*Sto
 	if err != nil {
 		_ = db.Close()
 
-		return nil, fmt.Errorf("create postgres token store: %w", err)
+		return nil, errors.Wrap(err, "create postgres token store")
 	}
 
-	return &Stores{Identity: identityStore, Token: tokenStore}, nil
+	return &Stores{
+		Identity:        identityStore,
+		Token:           tokenStore,
+		ReadDB:          db,
+		TableNames:      tableNames,
+		CondInterpreter: postgres.NewConditionInterpreter(),
+	}, nil
 }

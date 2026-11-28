@@ -14,9 +14,12 @@ import (
 	"github.com/LFDT-Panurus/panurus/token"
 	sdkidentity "github.com/LFDT-Panurus/panurus/token/sdk/identity"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/boolpolicy"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemixnym"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/multisig"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/x509"
+	"github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/identitydb"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/keystoredb"
@@ -119,6 +122,14 @@ func (k *KeystoreStatsView) Call(context view.Context) (any, error) {
 	extractor.RegisterProvider(idemix.IdentityTypeString, idemix.NewSKIProvider())
 	extractor.RegisterProvider(idemixnym.IdentityTypeString, idemixnym.NewSKIProvider(iss))
 	extractor.RegisterProvider(x509.IdentityTypeString, cleanup.NewNoopSKIProvider())
+	for _, t := range []string{
+		identity.TypeToString(htlc.ScriptType),
+		identity.TypeToString(multisig.Multisig),
+		identity.TypeToString(boolpolicy.Policy),
+		"Type (6)", // legacy policy owner type
+	} {
+		extractor.RegisterProvider(t, cleanup.NewNoopSKIProvider())
+	}
 
 	// SKI -> whether an identity with that SKI owns, or owned, a token.
 	skis := map[string]bool{}

@@ -28,6 +28,8 @@ No flags required.
 
 Iterates all entries in the `Signers` table in batches, unmarshals each identity, and checks whether it appears in the `Tokens` table. For every orphaned signer (not found in `Tokens`), the command prints the identity hash and the derived Subject Key Identifiers (SKIs) to stdout.
 
+`signers` first builds the `owned-skis` list and excludes its SKIs, so a signer that is a component of a composite token owner is not reported. A signer whose SKIs are all in the list is not printed and is counted as `Kept by owned-skis`; otherwise only the SKIs outside the list are printed. The `owned-skis` statistics and errors go to stderr. If the list cannot be built, the command fails and prints no orphan.
+
 This is a **read-only** operation. No data is modified or deleted.
 
 ```bash
@@ -44,8 +46,47 @@ skicleanup signers --config <path-to-config.yaml> [--batch-size <n>]
 **Output format** (one line per orphaned signer):
 
 ```
-<identity-hash>: [<ski1>, <ski2>, ...]
+[<identity-hash>][<owner-type>]: [<ski1>, <ski2>, ...]
 ```
+
+### `owned-skis`
+
+Lists the SKIs derived from the identities that own tokens. Token-driven cleanup should not remove these keys while the tokens exist.
+
+The command reads every token owned by this node (`owner = true`), spent and unspent, from the `Tokens` table.
+It takes each distinct `(owner_identity, owner_type)` pair and derives its SKIs with the `signers` extractor, extended to unwrap composite owners (see [SKI Extraction](#ski-extraction)).
+The Ownership table is not used: tokens stored through the standard wallet path have no Ownership row.
+
+This is a **read-only** operation.
+
+```bash
+skicleanup owned-skis --config <path-to-config.yaml> [--output <file>]
+```
+
+**Flags:**
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--config` | Yes | — | Path to the YAML configuration file |
+| `--output` | No | — | Also write the list to this file (mode `0600`). The file is replaced atomically by a rename. A symlink at this path is replaced by a regular file; its target is not changed. `-` is rejected. |
+
+**Output format:** the sorted, de-duplicated SKIs on stdout, one per line, and nothing else.
+This differs from `signers`. Statistics and errors go to stderr.
+
+**Errors:** the command never produces a partial list.
+- If SKI extraction fails for any owner, stderr names every failing owner as `owner type [<type>] identity sha256 [<hash>]`. Nothing goes to stdout, the output file is not touched, and the exit code is non-zero.
+- The list goes to stdout first, then to the file. If the stdout write fails, the file is not touched.
+- If the file write fails after stdout succeeded, stdout holds the complete list, and the exit code is non-zero.
+- A stdout write can fail partway (for example, a closed pipe). Consumers must check the exit code.
+
+**This is not a complete keep-list.** Never delete every key that is not in this list.
+- The SKIs come from the runtime cleanup extractor, plus composite unwrapping (see [SKI Extraction](#ski-extraction)).
+- `x509` owners yield no SKIs: cleanup never deletes the wallet's X.509 key. The same holds for `x509` components of a composite.
+- Composite owners (`htlc`, `multisig`, policy) yield the SKIs of their components. Components of an unknown type yield the SHA-256 fallback, not a keystore key.
+- `idemixnym` components with no signer info row belong to a counterparty and yield no SKIs.
+- The list is a snapshot of the `Tokens` table. Keys for identities that own no token yet are not listed.
+
+**Caveat on spent tokens:** spent tokens are listed too. The runtime cleanup service deletes the SKIs of spent tokens after its TTL. Tokens it has already cleaned may have no keys left in the keystore.
 
 ## Configuration
 
@@ -118,14 +159,21 @@ Available short codes: `movements`, `txs`, `tx_ends`, `requests`, `req_vals`, `t
 
 ## SKI Extraction
 
-SKIs are derived from each orphaned identity using the same extraction logic as the runtime cleanup service:
+SKIs are derived from each identity (orphaned signers for `signers`, token owners for `owned-skis`) using the same extraction logic as the runtime cleanup service:
 
 | Identity type | Extraction method |
 |---------------|-------------------|
 | `idemix` | Extracts SKI from the Idemix NymPublicKey |
 | `idemixnym` | Looks up signer info in the identity store, then extracts SKI from the embedded Idemix signature |
 | `x509` | Returns no SKIs (X.509 key material is not stored in the Panurus keystore) |
+| `htlc`, `multisig`, policy | `owned-skis` only: unwraps the components (htlc sender and recipient, all multisig and policy components) and extracts each by its own type. An `idemixnym` component with no signer info row is a counterparty's and yields no SKIs; a row with empty or invalid info is an error. Malformed bytes or exceeded limits are an error. `signers` uses the fallback for the composite row itself. The runtime cleanup derives no SKIs: components may still own live tokens. |
 | Any other type | SHA-256 hash of the raw identity bytes (fallback) |
+
+The Tokens table stores policy owners with type `policy`. Rows written before `identity.TypeToString` gained the policy case carry `Type (6)`. `owned-skis` accepts both.
+
+Composite unwrapping notes:
+- The tool always uses the default composite-identity limits: depth 5, 16 components. It does not read the node configuration. If the node is configured with larger limits, an owner beyond the defaults fails the command, and no list is produced.
+- Composites are decoded like the runtime deserializer. htlc scripts reject unknown JSON fields but accept trailing bytes. Duplicate components and policy expressions are not checked. This is harmless for a keep-list.
 
 ## Environment variables
 

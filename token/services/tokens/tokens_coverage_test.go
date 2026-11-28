@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/tokendb"
 	"github.com/LFDT-Panurus/panurus/token/services/tokens"
 	"github.com/LFDT-Panurus/panurus/token/services/tokens/mock"
@@ -197,4 +198,35 @@ func TestParse_OwnerTypeError(t *testing.T) {
 	_, _, err := ts.Parse(ctx, auth, "tx1", md, is, os, false, 64, false)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "failed to extract owner type")
+}
+
+// TestParse_PolicyOwnerType verifies that a policy-owned output is stored with owner
+// type "policy", not the "Type (6)" placeholder for unknown types.
+func TestParse_PolicyOwnerType(t *testing.T) {
+	ctx := context.Background()
+	ts := &tokens.Service{Storage: &tokens.DBStorage{}}
+	md := &mock.FakeMetaData{}
+
+	owned := &token.Output{
+		Token:        token2.Token{Type: "TOK", Owner: []byte("policy-owner")},
+		Index:        0,
+		Type:         "TOK",
+		LedgerOutput: []byte("policy-owner,TOK,0x0"),
+		Quantity:     token2.NewQuantityFromUInt64(10),
+	}
+	qs := &mock.FakeQueryService{}
+	is := token.NewInputStream(qs, []*token.Input{}, 64)
+	os := token.NewOutputStream([]*token.Output{owned}, 64)
+
+	auth := &mock.FakeAuthorization{}
+	auth.IsMineStub = func(context.Context, *token2.Token) (string, []string, bool) {
+		return "wallet", nil, true
+	}
+	auth.OwnerTypeReturns(driver.PolicyIdentityType, []byte("inner"), nil)
+
+	_, store, err := ts.Parse(ctx, auth, "tx1", md, is, os, false, 64, false)
+	require.NoError(t, err)
+	require.Len(t, store, 1)
+	assert.Equal(t, driver.PolicyIdentityTypeString, store[0].OwnerType)
+	assert.EqualValues(t, []byte("inner"), store[0].OwnerIdentity)
 }
