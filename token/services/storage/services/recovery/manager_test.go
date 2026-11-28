@@ -1192,3 +1192,52 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, 5*time.Minute, config.LeaseDuration)
 	assert.Equal(t, 60*time.Second, config.TransactionTimeout)
 }
+
+// TestManager_NoProgressSweepIsWarnedWithTheStuckTransactions checks a sweep that only
+// skipped stuck transactions is reported as having made no progress, naming them, instead of
+// passing as a clean sweep (#2317).
+func TestManager_NoProgressSweepIsWarnedWithTheStuckTransactions(t *testing.T) {
+	logger := &sweepLogger{}
+	mockDB := &mock2.Storage{}
+	mockHandler := &mock2.Handler{}
+	config := recovery2.Config{
+		Enabled:            true,
+		TTL:                5 * time.Millisecond,
+		ScanInterval:       15 * time.Millisecond,
+		BatchSize:          100,
+		WorkerCount:        2,
+		LeaseDuration:      time.Second,
+		TransactionTimeout: 20 * time.Millisecond,
+		InstanceID:         "test-instance",
+	}
+
+	leadership := &mock2.Leadership{}
+	leadership.CloseReturns(nil)
+	mockDB.AcquireRecoveryLeadershipReturns(leadership, true, nil)
+	mockDB.ClaimPendingTransactionsReturns([]*ttxdb.RecoveryClaim{{TxID: "txStuck"}}, nil)
+	release := make(chan struct{})
+	defer close(release)
+	mockHandler.RecoverStub = func(context.Context, string) error {
+		<-release
+
+		return nil
+	}
+
+	manager := recovery2.NewManager(logger, mockDB, mockHandler, config)
+	require.NoError(t, manager.Start())
+	defer func() { _ = manager.Stop() }()
+
+	require.Eventually(t, func() bool {
+		for _, m := range logger.allMessages() {
+			if strings.Contains(m, "made no progress") && strings.Contains(m, "txStuck (for ") {
+				return true
+			}
+		}
+
+		return false
+	}, 5*time.Second, 10*time.Millisecond, "expected a no-progress warning naming the stuck transaction")
+
+	stuck := manager.StuckTransactions()
+	require.Len(t, stuck, 1)
+	assert.Equal(t, "txStuck", stuck[0].TxID)
+}
