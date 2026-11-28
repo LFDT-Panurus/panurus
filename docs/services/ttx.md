@@ -576,6 +576,8 @@ Once fully endorsed, the transaction metadata is distributed to all recipients s
 
 Each remote node receives the metadata filtered by enrollment ID. Parties that resolve to the same long-term identity share one distribution entry. That entry collects the enrollment IDs of all those parties, so a node that hosts several recipients receives the metadata of all their outputs. Auditors receive the full metadata.
 
+A party's enrollment ID comes from its local audit info. If there is none, for example for an owner paid by an action that a counterparty built, it comes from the audit info carried in the token request, but only if that audit info matches the party's identity. For x509 identities, this match checks only the enrollment ID against the certificate. A party without a usable enrollment ID is skipped if its node is already in the list. Otherwise the distribution fails.
+
 ## Finality and Discovery
 
 The `FinalityView` allows applications to wait for a transaction to be committed to the ledger. Internally, Panurus's **Network Service** listens for ledger events. When a transaction reaches finality, the Network Service notifies Panurus, which then updates the local `Transactions DB` and `Tokens DB` to reflect the new state.

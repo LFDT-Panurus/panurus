@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/LFDT-Panurus/panurus/token/driver/mock"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -256,4 +257,20 @@ func TestSignatureService_GetAuditInfo(t *testing.T) {
 		assert.Nil(t, result)
 		assert.Contains(t, err.Error(), "failed to get audit info")
 	})
+}
+
+// TestSignatureService_MatchIdentity verifies that MatchIdentity forwards to the deserializer
+// and returns its error.
+func TestSignatureService_MatchIdentity(t *testing.T) {
+	deserializer := &mock.Deserializer{}
+	service := &SignatureService{deserializer: deserializer, identityProvider: &mock.IdentityProvider{}}
+
+	require.NoError(t, service.MatchIdentity(t.Context(), []byte("id"), []byte("ai")))
+	require.Equal(t, 1, deserializer.MatchIdentityCallCount())
+	_, id, ai := deserializer.MatchIdentityArgsForCall(0)
+	assert.Equal(t, Identity("id"), id)
+	assert.Equal(t, []byte("ai"), ai)
+
+	deserializer.MatchIdentityReturns(errors.New("mismatch"))
+	require.ErrorContains(t, service.MatchIdentity(t.Context(), []byte("id"), []byte("other")), "mismatch")
 }
