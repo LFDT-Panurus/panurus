@@ -81,6 +81,14 @@ func (s *auditGetTokenRequestsStub) ClaimPendingTransactions(_ context.Context, 
 func (s *auditGetTokenRequestsStub) ReleaseRecoveryClaim(_ context.Context, _ string, _ string, _ string) error {
 	panic("unexpected")
 }
+
+func (s *auditGetTokenRequestsStub) RenewRecoveryClaim(_ context.Context, _ string, _ string, _ time.Duration) (bool, error) {
+	panic("unexpected")
+}
+
+func (s *auditGetTokenRequestsStub) MarkRecoveryOrphan(_ context.Context, _ string, _ string, _ string) (bool, error) {
+	panic("unexpected")
+}
 func (s *auditGetTokenRequestsStub) PrefixedTableName(_ string) string { panic("unexpected") }
 
 // enforced: auditGetTokenRequestsStub must implement AuditTransactionStore

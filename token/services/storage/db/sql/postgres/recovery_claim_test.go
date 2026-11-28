@@ -569,3 +569,78 @@ func ageRequests(t *testing.T, ctx context.Context, claims *recoveryClaimStore, 
 		require.EqualValues(t, 1, rowsAffected)
 	}
 }
+
+// TestRenewAndMarkOrphan_AcrossATakeover walks the window from #2322 against a real database:
+// instance1's claim lapses while its attempt is still running, instance2 takes the row over,
+// and instance1's attempt then finishes. Its renewal and its Orphan promotion must both see
+// the claim is gone instead of extending or overwriting instance2's. While a claim is held,
+// renewing it is what keeps a peer from taking it over.
+func TestRenewAndMarkOrphan_AcrossATakeover(t *testing.T) {
+	terminate, pgConnStr := startContainer(t)
+	defer terminate()
+	ctx := context.Background()
+
+	storeInterface, err := NewDriver(postgresCfg(pgConnStr, "renew_orphan_test")).NewOwnerTransaction("test", "renew_orphan_test")
+	require.NoError(t, err)
+	store, ok := storeInterface.(*TransactionStore)
+	require.True(t, ok)
+	require.NoError(t, store.CreateSchema())
+
+	now := time.Now().UTC()
+	oldTime := now.Add(-10 * time.Minute)
+	const txID = "tx1"
+	aw, err := store.NewTransactionStoreTransaction()
+	require.NoError(t, err)
+	require.NoError(t, aw.AddTokenRequest(ctx, txID, []byte("request"), nil, nil, []byte("hash")))
+	require.NoError(t, aw.AddTransaction(ctx, tokensdriver.TransactionRecord{
+		TxID: txID, ActionType: tokensdriver.Transfer, SenderEID: "sender", RecipientEID: "recipient",
+		TokenType: "USD", Amount: big.NewInt(100), Timestamp: oldTime,
+	}))
+	require.NoError(t, aw.Commit())
+	ageRequests(t, ctx, store.claims, oldTime, txID)
+
+	claim := func(owner string) int {
+		claimed, err := store.ClaimPendingTransactions(ctx, tokensdriver.RecoveryClaimParams{
+			OlderThan: now, LeaseDuration: time.Second, Limit: 10, Owner: owner,
+		})
+		require.NoError(t, err)
+
+		return len(claimed)
+	}
+	require.Equal(t, 1, claim("instance1"))
+
+	// Renewing keeps instance2 out past the original one-second lease.
+	time.Sleep(600 * time.Millisecond)
+	renewed, err := store.RenewRecoveryClaim(ctx, txID, "instance1", 2*time.Second)
+	require.NoError(t, err)
+	require.True(t, renewed)
+	time.Sleep(600 * time.Millisecond)
+	require.Equal(t, 0, claim("instance2"), "a renewed claim must not be taken over")
+
+	// instance1 stops renewing; its lease lapses and instance2 takes the row over.
+	time.Sleep(2 * time.Second)
+	require.Equal(t, 1, claim("instance2"))
+
+	renewed, err = store.RenewRecoveryClaim(ctx, txID, "instance1", time.Minute)
+	require.NoError(t, err)
+	require.False(t, renewed, "instance1 must not renew a claim instance2 now holds")
+
+	marked, err := store.MarkRecoveryOrphan(ctx, txID, "instance1", "stale verdict")
+	require.NoError(t, err)
+	require.False(t, marked, "instance1 must not mark Orphan a row instance2 now holds")
+	status, _, err := store.GetStatus(ctx, txID)
+	require.NoError(t, err)
+	require.Equal(t, tokensdriver.Pending, status)
+
+	marked, err = store.MarkRecoveryOrphan(ctx, txID, "instance2", "never reached the ledger")
+	require.NoError(t, err)
+	require.True(t, marked)
+	status, message, err := store.GetStatus(ctx, txID)
+	require.NoError(t, err)
+	require.Equal(t, tokensdriver.Orphan, status)
+	require.Equal(t, "never reached the ledger", message)
+
+	renewed, err = store.RenewRecoveryClaim(ctx, txID, "instance2", time.Minute)
+	require.NoError(t, err)
+	require.False(t, renewed, "a transaction that left Pending has no claim worth renewing")
+}

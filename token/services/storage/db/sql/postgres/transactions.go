@@ -10,6 +10,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
@@ -101,6 +102,16 @@ func (db *TransactionStore) ReleaseRecoveryClaim(ctx context.Context, txID strin
 	return db.claims.releaseClaim(ctx, txID, owner, message)
 }
 
+// RenewRecoveryClaim extends the lease of owner's claim on txID, if it still holds it.
+func (db *TransactionStore) RenewRecoveryClaim(ctx context.Context, txID string, owner string, leaseDuration time.Duration) (bool, error) {
+	return db.claims.renewClaim(ctx, txID, owner, leaseDuration)
+}
+
+// MarkRecoveryOrphan sets txID to Orphan if it is still Pending and claimed by owner.
+func (db *TransactionStore) MarkRecoveryOrphan(ctx context.Context, txID string, owner string, message string) (bool, error) {
+	return db.claims.markOrphan(ctx, txID, owner, message)
+}
+
 // CleanupExpiredClaims removes expired recovery claims. Returns the number of claims cleaned up.
 func (db *TransactionStore) CleanupExpiredClaims(ctx context.Context) (int, error) {
 	return db.claims.cleanupExpired(ctx)
@@ -132,6 +143,20 @@ func (s *AuditTransactionStore) ClaimPendingTransactions(ctx context.Context, pa
 // the bookkeeping message; that behavior predates this PR and is unchanged here.
 func (s *AuditTransactionStore) ReleaseRecoveryClaim(ctx context.Context, txID string, owner string, _ string) error {
 	return s.claims.releaseClaim(ctx, txID, owner, "")
+}
+
+// RenewRecoveryClaim extends the lease of owner's claim on an audit transaction, if it still
+// holds it. Like the claim itself, it needs this override: the inherited implementation
+// persists no claim.
+func (s *AuditTransactionStore) RenewRecoveryClaim(ctx context.Context, txID string, owner string, leaseDuration time.Duration) (bool, error) {
+	return s.claims.renewClaim(ctx, txID, owner, leaseDuration)
+}
+
+// MarkRecoveryOrphan sets an audit transaction to Orphan if it is still Pending and claimed
+// by owner. Unlike the release above, it keeps message: it is the reason the status
+// changed, which is what the audit trail's status_message records.
+func (s *AuditTransactionStore) MarkRecoveryOrphan(ctx context.Context, txID string, owner string, message string) (bool, error) {
+	return s.claims.markOrphan(ctx, txID, owner, message)
 }
 
 // GetSchema overrides the base GetSchema to prefix with advisory lock
@@ -345,6 +370,66 @@ func (db *recoveryClaimStore) releaseClaim(ctx context.Context, txID string, own
 	}
 
 	return nil
+}
+
+// renewClaim pushes recovery_claim_expires_at to leaseDuration from now, if owner still holds
+// the claim on txID and the transaction is still Pending. It reports whether it did.
+//
+// It deliberately does not check that the lease is still running: a lapsed claim nobody
+// took over is still owner's, and ClaimPendingTransactions hands a row to a peer by
+// rewriting recovery_claimed_by, which this condition then no longer matches.
+func (db *recoveryClaimStore) renewClaim(ctx context.Context, txID string, owner string, leaseDuration time.Duration) (bool, error) {
+	// #nosec G201
+	query := fmt.Sprintf(`
+		UPDATE %s
+		SET recovery_claim_expires_at = NOW() + $1::INTERVAL
+		WHERE tx_id = $2
+		  AND recovery_claimed_by = $3
+		  AND status = $4`,
+		db.tables.Requests,
+	)
+	// Milliseconds, for the same reason as in claimPending.
+	args := []any{fmt.Sprintf("%d milliseconds", leaseDuration.Milliseconds()), txID, owner, tokensdriver.Pending}
+
+	logger.Debug(query, args)
+	result, err := db.writeDB.ExecContext(ctx, query, args...)
+	if err != nil {
+		return false, errors.Wrapf(err, "failed to renew recovery claim for tx %s", txID)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, errors.Wrapf(err, "failed to get rows affected for tx %s", txID)
+	}
+
+	return rowsAffected > 0, nil
+}
+
+// markOrphan sets txID to Orphan with message in one statement, only if it is still Pending
+// and owner still holds its claim, and reports whether it did. A peer that took the claim
+// over, or an outcome written in the meantime, makes it a no-op instead of being overwritten.
+func (db *recoveryClaimStore) markOrphan(ctx context.Context, txID string, owner string, message string) (bool, error) {
+	// #nosec G201
+	query := fmt.Sprintf(`
+		UPDATE %s
+		SET status = $1, status_message = $2
+		WHERE tx_id = $3
+		  AND recovery_claimed_by = $4
+		  AND status = $5`,
+		db.tables.Requests,
+	)
+	args := []any{tokensdriver.Orphan, message, txID, owner, tokensdriver.Pending}
+
+	logger.Debug(query, args)
+	result, err := db.writeDB.ExecContext(ctx, query, args...)
+	if err != nil {
+		return false, errors.Wrapf(err, "failed to mark tx %s Orphan", txID)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, errors.Wrapf(err, "failed to get rows affected for tx %s", txID)
+	}
+
+	return rowsAffected > 0, nil
 }
 
 // cleanupExpired removes expired recovery claims.

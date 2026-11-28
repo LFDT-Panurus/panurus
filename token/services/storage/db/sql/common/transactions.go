@@ -493,6 +493,38 @@ func (db *TransactionStore) ReleaseRecoveryClaim(context.Context, string, string
 	return nil
 }
 
+// RenewRecoveryClaim reports true: the default SQL implementation does not persist recovery
+// claims, so there is no lease to renew and nobody can take it over.
+func (db *TransactionStore) RenewRecoveryClaim(context.Context, string, string, time.Duration) (bool, error) {
+	return true, nil
+}
+
+// MarkRecoveryOrphan sets txID to Orphan with message if it is still Pending. The default SQL
+// implementation does not persist recovery claims, so owner is not checked: only the status
+// guard applies.
+func (db *TransactionStore) MarkRecoveryOrphan(ctx context.Context, txID string, _ string, message string) (bool, error) {
+	query, args := q.Update(db.table.Requests).
+		Set("status", dbdriver.Orphan).
+		Set("status_message", message).
+		Where(cond.And(
+			cond.Eq("tx_id", txID),
+			cond.Eq("status", dbdriver.Pending),
+		)).
+		Format(db.ci)
+
+	logging.Debug(logger, query, args)
+	res, err := db.writeDB.ExecContext(ctx, query, args...)
+	if err != nil {
+		return false, errors.Wrapf(err, "failed marking tx [%s] Orphan", txID)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, errors.Wrapf(err, "failed marking tx [%s] Orphan", txID)
+	}
+
+	return affected > 0, nil
+}
+
 // AddTransactionEndorsementAck records the signature of endorser over the
 // payload it was sent for txID.
 //

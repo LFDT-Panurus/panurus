@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
-	"github.com/LFDT-Panurus/panurus/token/services/storage"
 	recovery2 "github.com/LFDT-Panurus/panurus/token/services/storage/services/recovery"
 	mock2 "github.com/LFDT-Panurus/panurus/token/services/storage/services/recovery/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
@@ -396,7 +395,7 @@ func TestManager_PromoteOrphanOnNotFoundPastGracePeriod(t *testing.T) {
 	// Match isNotFoundError: "tx not found" is the FSC sentinel substring.
 	mockHandler.RecoverReturns(errors.New("rpc error: code = NotFound desc = tx not found"))
 	mockDB.ReleaseRecoveryClaimReturns(nil)
-	mockDB.SetStatusReturns(nil)
+	mockDB.MarkRecoveryOrphanReturns(true, nil)
 
 	manager := recovery2.NewManager(logger, mockDB, mockHandler, config)
 
@@ -406,11 +405,11 @@ func TestManager_PromoteOrphanOnNotFoundPastGracePeriod(t *testing.T) {
 	_ = manager.Stop()
 
 	require.GreaterOrEqual(t, mockHandler.RecoverCallCount(), 1)
-	require.Equal(t, 1, mockDB.SetStatusCallCount(), "expected exactly one SetStatus call for the orphan promotion")
+	require.Equal(t, 1, mockDB.MarkRecoveryOrphanCallCount(), "expected exactly one MarkRecoveryOrphan call for the orphan promotion")
 
-	_, gotTxID, gotStatus, gotMsg := mockDB.SetStatusArgsForCall(0)
+	_, gotTxID, gotOwner, gotMsg := mockDB.MarkRecoveryOrphanArgsForCall(0)
 	assert.Equal(t, "txOrphan", gotTxID)
-	assert.Equal(t, storage.Orphan, gotStatus, "orphan path must promote to storage.Orphan, not storage.Deleted")
+	assert.NotEmpty(t, gotOwner, "the promotion must be scoped to the claim's owner")
 	assert.Contains(t, gotMsg, "tx never reached ledger")
 }
 
@@ -457,7 +456,7 @@ func TestManager_NoPromotionWhenGracePeriodDisabled(t *testing.T) {
 	time.Sleep(1300 * time.Millisecond)
 	_ = manager.Stop()
 
-	assert.Equal(t, 0, mockDB.SetStatusCallCount(), "grace period disabled should never call SetStatus")
+	assert.Equal(t, 0, mockDB.MarkRecoveryOrphanCallCount(), "grace period disabled should never mark a transaction Orphan")
 }
 
 // TestManager_StopDuringFanOutDoesNotDeadlock walks the exact failure scenario
@@ -598,7 +597,7 @@ func TestManager_PromoteOrphanOnNoSuchTransactionID(t *testing.T) {
 	// Use the Chaguar ledger sentinel substring directly.
 	mockHandler.RecoverReturns(errors.New("Failed to get transaction with id d48c4, error no such transaction ID [d48c] in index"))
 	mockDB.ReleaseRecoveryClaimReturns(nil)
-	mockDB.SetStatusReturns(nil)
+	mockDB.MarkRecoveryOrphanReturns(true, nil)
 
 	manager := recovery2.NewManager(logger, mockDB, mockHandler, config)
 
@@ -608,11 +607,11 @@ func TestManager_PromoteOrphanOnNoSuchTransactionID(t *testing.T) {
 	_ = manager.Stop()
 
 	require.GreaterOrEqual(t, mockHandler.RecoverCallCount(), 1)
-	require.Equal(t, 1, mockDB.SetStatusCallCount(), "expected exactly one SetStatus call for the orphan promotion")
+	require.Equal(t, 1, mockDB.MarkRecoveryOrphanCallCount(), "expected exactly one MarkRecoveryOrphan call for the orphan promotion")
 
-	_, gotTxID, gotStatus, gotMsg := mockDB.SetStatusArgsForCall(0)
+	_, gotTxID, gotOwner, gotMsg := mockDB.MarkRecoveryOrphanArgsForCall(0)
 	assert.Equal(t, "txNoSuchTx", gotTxID)
-	assert.Equal(t, storage.Orphan, gotStatus, "orphan path must promote to storage.Orphan, not storage.Deleted")
+	assert.NotEmpty(t, gotOwner, "the promotion must be scoped to the claim's owner")
 	assert.Contains(t, gotMsg, "tx never reached ledger")
 }
 

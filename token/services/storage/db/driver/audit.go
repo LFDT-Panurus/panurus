@@ -8,6 +8,7 @@ package driver
 
 import (
 	"context"
+	"time"
 
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 )
@@ -94,6 +95,22 @@ type AuditTransactionStore interface {
 	// generic recovery-loop bookkeeping ("recovered successfully", "recovery failed: …") that
 	// would overwrite it. See postgres.AuditTransactionStore.ReleaseRecoveryClaim.
 	ReleaseRecoveryClaim(ctx context.Context, txID string, owner string, message string) error
+
+	// RenewRecoveryClaim pushes the lease of txID's recovery claim to leaseDuration from now,
+	// if owner still holds the claim and the transaction is still Pending, and reports
+	// whether it did. A false result means the claim is gone: released, taken over by
+	// another replica after it lapsed, or the transaction left Pending.
+	//
+	// It lets a recovery attempt that outlived its own deadline keep its claim for as long
+	// as it is still running, without depending on the sweep that started it. A backend
+	// that does not persist claims has nothing to renew and reports true.
+	RenewRecoveryClaim(ctx context.Context, txID string, owner string, leaseDuration time.Duration) (bool, error)
+
+	// MarkRecoveryOrphan sets txID to Orphan with message in one atomic step, only if it is
+	// still Pending and owner still holds its recovery claim, and reports whether it did.
+	// Unlike SetStatus it cannot overwrite an outcome another replica wrote in the
+	// meantime. A backend that does not persist claims checks the status only.
+	MarkRecoveryOrphan(ctx context.Context, txID string, owner string, message string) (bool, error)
 
 	// PrefixedTableName returns the formatted table name for the given logical table name,
 	// following the persistence naming rules of this store.
