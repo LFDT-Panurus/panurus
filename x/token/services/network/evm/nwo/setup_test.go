@@ -124,6 +124,17 @@ func TestBuildDeltaNamesTheVersionItSupersedes(t *testing.T) {
 	assert.Empty(t, delta.MetadataKeys)
 }
 
+// TestBuildDeltaCarriesADeadline checks the setup delta is stamped with a deadline past the latest
+// block, or the contract would refuse it with DeltaExpired.
+func TestBuildDeltaCarriesADeadline(t *testing.T) {
+	updater, evmClient := newSetupHarness(t, [][]byte{testKey(1)}, 1)
+	evmClient.BlockNumberReturns(1234, nil)
+
+	delta, err := updater.buildDelta(context.Background(), []byte(newPP))
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1234+setupDeadlineBlocks), delta.ValidUntil)
+}
+
 // TestEndorseProducesADistinctQuorum checks the signatures are what the verifier requires: exactly
 // the threshold, from distinct endorsers, over the digest of the delta being submitted. The verifier
 // counts distinct signers, so a quorum reusing one key would be rejected on chain.

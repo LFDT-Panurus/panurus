@@ -20,6 +20,7 @@ import (
 
 func sampleRequest() *EndorseRequest {
 	return &EndorseRequest{
+		ValidUntil:   testValidUntil,
 		Kind:         KindApproval,
 		TokenRequest: []byte("marshalled-token-request"),
 		TMSID:        token2.TMSID{Network: "evm", Namespace: "token"},
@@ -30,6 +31,7 @@ func sampleRequest() *EndorseRequest {
 
 func sampleSetupRequest() *EndorseRequest {
 	return &EndorseRequest{
+		ValidUntil:      testValidUntil,
 		Kind:            KindSetup,
 		PublicParamsRaw: []byte("new-public-parameters"),
 		TMSID:           token2.TMSID{Network: "evm", Namespace: "token"},
@@ -67,6 +69,7 @@ func TestEndorseRequestValidate(t *testing.T) {
 		"no network":          func(r *EndorseRequest) { r.TMSID.Network = "" },
 		"no namespace":        func(r *EndorseRequest) { r.TMSID.Namespace = "" },
 		"unknown kind":        func(r *EndorseRequest) { r.Kind = "bogus" },
+		"no validUntil":       func(r *EndorseRequest) { r.ValidUntil = 0 },
 	}
 	for name, mutate := range bad {
 		t.Run(name, func(t *testing.T) {
@@ -127,6 +130,7 @@ func TestEndorseResponseError(t *testing.T) {
 func TestEndorseResponseRoundTripsTheDelta(t *testing.T) {
 	want := &EndorseResponse{
 		Delta: &statedelta.StateDelta{
+			ValidUntil:          testValidUntil,
 			Anchor:              [32]byte{0xC1},
 			SpentRefs:           [][32]byte{{0x01}, {0x02}},
 			Outputs:             []statedelta.OutputToken{{TokenID: [32]byte{0x03}, SNMarker: [32]byte{0x04}, TokenData: []byte("tok")}},

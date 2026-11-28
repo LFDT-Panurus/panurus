@@ -27,6 +27,12 @@ import (
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/eip712"
 )
 
+// testValidUntil is the deadline test requests propose, and testDeadline the window test endorsers
+// accept it in: a fresh mock.EVMClient reports block 0, which puts 100 inside (10, 1000].
+const testValidUntil uint64 = 100
+
+var testDeadline = DeadlineWindow{MinBlocks: 10, MaxBlocks: 1000}
+
 // This is the Week-4 gate. The Go side drives the REAL Initiator.Call and Responder.Call over
 // in-memory sessions: the initiator opens a session to each registered endorser, sends the request,
 // each endorser validates + translates + signs, and the initiator recovers and assembles a 2-of-3
@@ -74,11 +80,12 @@ func gateFactory() *DeltaFactory {
 
 	pp := &fakePP{raw: []byte(gatePPRaw), version: gatePPVersion}
 
-	return NewDeltaFactory(validator, pp, pp, &mock.EVMClient{}, addr(0xAA), "")
+	return NewDeltaFactory(validator, pp, pp, &mock.EVMClient{}, addr(0xAA), "", testDeadline)
 }
 
 func gateRequest() *EndorseRequest {
 	return &EndorseRequest{
+		ValidUntil:   testValidUntil,
 		Kind:         KindApproval,
 		TokenRequest: []byte("week4-gate-request"),
 		TMSID:        token2.TMSID{Network: "evm", Namespace: "token"},

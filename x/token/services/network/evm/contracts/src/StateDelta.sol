@@ -50,4 +50,8 @@ struct StateDelta {
     bool isSetup;
     /// @dev the new public parameters, present iff isSetup.
     bytes setupParameters;
+    /// @dev the last block number at which this delta may be applied. Once a block past it is final,
+    ///      nobody can apply the delta any more, which is what lets a node conclude that a transaction
+    ///      that never landed never will. Proposed by the requester, bounded by every endorser.
+    uint64 validUntil;
 }

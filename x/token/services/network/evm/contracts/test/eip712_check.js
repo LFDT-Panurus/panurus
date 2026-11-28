@@ -33,6 +33,7 @@ const types = {
     { name: "publicParamsVersion", type: "uint64" },
     { name: "isSetup", type: "bool" },
     { name: "setupParameters", type: "bytes" },
+    { name: "validUntil", type: "uint64" },
   ],
   OutputToken: [
     { name: "tokenID", type: "bytes32" },
@@ -53,6 +54,7 @@ const value = {
   publicParamsVersion: sd.publicParamsVersion,
   isSetup: sd.isSetup,
   setupParameters: sd.setupParameters,
+  validUntil: sd.validUntil,
 };
 
 const enc = ethers.TypedDataEncoder;
@@ -60,7 +62,7 @@ const got = {
   outputTokenTypeHash: ethers.keccak256(ethers.toUtf8Bytes("OutputToken(bytes32 tokenID,bytes32 snMarker,bytes tokenData)")),
   stateDeltaTypeHash: ethers.keccak256(
     ethers.toUtf8Bytes(
-      "StateDelta(bytes32 anchor,bytes32[] spentRefs,OutputToken[] outputs,bytes32[] metadataKeys,bytes[] metadataVals,bytes32 tokenRequestHash,bytes32 publicParamsHash,uint64 publicParamsVersion,bool isSetup,bytes setupParameters)OutputToken(bytes32 tokenID,bytes32 snMarker,bytes tokenData)",
+      "StateDelta(bytes32 anchor,bytes32[] spentRefs,OutputToken[] outputs,bytes32[] metadataKeys,bytes[] metadataVals,bytes32 tokenRequestHash,bytes32 publicParamsHash,uint64 publicParamsVersion,bool isSetup,bytes setupParameters,uint64 validUntil)OutputToken(bytes32 tokenID,bytes32 snMarker,bytes tokenData)",
     ),
   ),
   domainSeparator: enc.hashDomain(domain),

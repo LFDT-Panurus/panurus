@@ -41,6 +41,7 @@ func goldenDelta() *statedelta.StateDelta {
 		TokenRequestHash:    word(0x61),
 		PublicParamsHash:    word(0x71),
 		PublicParamsVersion: 3,
+		ValidUntil:          0xB1,
 	}
 }
 
@@ -56,30 +57,31 @@ func goldenSignatures() [][]byte {
 // TestApplyStateDeltaSelector pins the selector against the compiled contract ABI. The canonical
 // signature must match what the contract dispatches on, or every call reverts as an unknown method.
 func TestApplyStateDeltaSelector(t *testing.T) {
-	// Verified with `cast sig` against the signature taken from the compiled TokenState ABI.
-	assert.Equal(t, "e7920565", hex.EncodeToString(MethodID(ApplyStateDeltaMethod)))
+	// Verified against the method identifier solc reports for the compiled TokenState ABI.
+	assert.Equal(t, "23c97da0", hex.EncodeToString(MethodID(ApplyStateDeltaMethod)))
 }
 
 // TestEncodeApplyStateDeltaGoldenVector is the Phase-B gate: the calldata must match, byte for byte,
-// a vector independently decoded with foundry's `cast decode-calldata`, which round-tripped every
-// field (anchor, both spent refs, both outputs including the multi-word one, metadata, hashes,
-// version, isSetup, and both signatures). That pins the ABI head/tail layout for nested dynamic
+// a vector independently produced and decoded with ethers v6 (Interface.encodeFunctionData /
+// decodeFunctionData), which round-tripped every field (anchor, both spent refs, both outputs
+// including the multi-word one, metadata, hashes, version, isSetup, validUntil, and both signatures). That pins the ABI head/tail layout for nested dynamic
 // types, which is the part most easily got wrong.
 func TestEncodeApplyStateDeltaGoldenVector(t *testing.T) {
 	want :=
-		"e792056500000000000000000000000000000000000000000000000000000000" +
+		"23c97da000000000000000000000000000000000000000000000000000000000" +
 			"0000004000000000000000000000000000000000000000000000000000000000" +
-			"0000048000000000000000000000000000000000000000000000000000000000" +
+			"000004a000000000000000000000000000000000000000000000000000000000" +
 			"000000a100000000000000000000000000000000000000000000000000000000" +
-			"0000014000000000000000000000000000000000000000000000000000000000" +
-			"000001a000000000000000000000000000000000000000000000000000000000" +
-			"0000036000000000000000000000000000000000000000000000000000000000" +
-			"000003a000000000000000000000000000000000000000000000000000000000" +
+			"0000016000000000000000000000000000000000000000000000000000000000" +
+			"000001c000000000000000000000000000000000000000000000000000000000" +
+			"0000038000000000000000000000000000000000000000000000000000000000" +
+			"000003c000000000000000000000000000000000000000000000000000000000" +
 			"0000006100000000000000000000000000000000000000000000000000000000" +
 			"0000007100000000000000000000000000000000000000000000000000000000" +
 			"0000000300000000000000000000000000000000000000000000000000000000" +
 			"0000000000000000000000000000000000000000000000000000000000000000" +
-			"0000042000000000000000000000000000000000000000000000000000000000" +
+			"0000044000000000000000000000000000000000000000000000000000000000" +
+			"000000b100000000000000000000000000000000000000000000000000000000" +
 			"0000000200000000000000000000000000000000000000000000000000000000" +
 			"0000001100000000000000000000000000000000000000000000000000000000" +
 			"0000002200000000000000000000000000000000000000000000000000000000" +

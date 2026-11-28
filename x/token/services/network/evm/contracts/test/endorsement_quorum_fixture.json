@@ -1,9 +1,9 @@
 {
   "description": "Week 4 gate: a 2-of-3 endorsement quorum assembled by the initiator over FSC sessions, verified on-chain by EndorsementVerifier. Digest is the EIP-712 digest of a real fabtoken issue delta; signatures are RFC 6979 deterministic (keys 1,2).",
-  "digest": "0xe3047c02300f0999f7018e44014bb0de5376e08b4e82978b44848e60c37511da",
+  "digest": "0xda17d6c46e5cc69eb21e2521674c02976f01f20ae2806d53b77e1a6e31ad53a2",
   "signatures": [
-    "0x41998b27dd43bd1385687c89e5621d08415c1f7aca6421d04dcc3b946d52603d4ca1fde71a6956fe9fc86c3b6382d9ba46989ad30da91637c26c2181928752bc1b",
-    "0x1e07327d998269a6ebc6d5e547a13814564e58b6d95266705f6899508a2133be661cc831a116415175a436e5ed06f5377c7622cfbcfa362c43f05c2d0af8f6031b"
+    "0x6ae47637c575cc2dbdd186b0dc13ce2ee9066eb8fdec1443da0b355c1cc8527f1113b47af93f6798e5b3c24be3650181625333e80e80cc3e8cbd4d3a69e462171b",
+    "0xd15ab639b8610c50abc3e1bb15fc45d39d55a1b170bd3688bde387366f42459d5aa6f7e4b3ec2c7faf2e750ff3155137a9f93a6f5f109dc9b0330a11ac0203071b"
   ],
   "signers": [
     "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",

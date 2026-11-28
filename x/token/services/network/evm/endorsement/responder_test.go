@@ -33,11 +33,14 @@ type fakeValidator struct {
 	actions []any
 	meta    map[string][]byte
 	err     error
+	calls   int
 }
 
 func (f *fakeValidator) UnmarshallAndVerifyWithMetadata(
 	_ context.Context, _ token2.Ledger, _ token2.RequestAnchor, _ []byte,
 ) ([]any, map[string][]byte, error) {
+	f.calls++
+
 	return f.actions, f.meta, f.err
 }
 
@@ -94,6 +97,7 @@ func issueAction() *fabactions.IssueAction {
 // validRequest is a well-formed request whose anchor is a valid 32-byte hex (AnchorFromTxID needs it).
 func validRequest() *EndorseRequest {
 	return &EndorseRequest{
+		ValidUntil:   testValidUntil,
 		Kind:         KindApproval,
 		TokenRequest: []byte("marshalled-request"),
 		TMSID:        testTMSID(),
@@ -111,6 +115,7 @@ func fixedAuthorizer(auth *Authorizer) func(token2.TMSID) (*Authorizer, error) {
 // TMS so tests can reuse testDomain/testTMSID.
 func validSetupRequest() *EndorseRequest {
 	return &EndorseRequest{
+		ValidUntil:      testValidUntil,
 		Kind:            KindSetup,
 		PublicParamsRaw: []byte("new-public-parameters"),
 		TMSID:           testTMSID(),
@@ -122,7 +127,7 @@ func newResponder(t *testing.T, v RequestValidator, pp *fakePP, signer EndorserS
 	t.Helper()
 	auth, err := NewAuthorizer([]view.Identity{view.Identity(testCaller)})
 	require.NoError(t, err)
-	factory := NewDeltaFactory(v, pp, pp, &mock.EVMClient{}, addr(0xAA), "")
+	factory := NewDeltaFactory(v, pp, pp, &mock.EVMClient{}, addr(0xAA), "", testDeadline)
 
 	return NewResponder(
 		fixedAuthorizer(auth),
@@ -156,7 +161,7 @@ func newResponderWithSetup(t *testing.T, ppValidator PublicParamsValidator, curr
 	t.Helper()
 	auth, err := NewAuthorizer([]view.Identity{view.Identity(testCaller)})
 	require.NoError(t, err)
-	factory := NewSetupDeltaFactory(ppValidator, current)
+	factory := NewSetupDeltaFactory(ppValidator, current, &mock.EVMClient{}, testDeadline)
 
 	return NewResponder(
 		fixedAuthorizer(auth),
@@ -181,7 +186,7 @@ func recomputeDigest(t *testing.T, anchor string, actions []any, meta map[string
 	t.Helper()
 	a, err := keys.AnchorFromTxID(anchor)
 	require.NoError(t, err)
-	tr := statedelta.NewTranslator(a, []byte(testPPRaw), testPPVer)
+	tr := statedelta.NewTranslator(a, []byte(testPPRaw), testPPVer, testValidUntil)
 	for _, action := range actions {
 		require.NoError(t, tr.Write(context.Background(), action))
 	}
@@ -248,7 +253,7 @@ func TestResponderRejectsUnauthorizedCaller(t *testing.T) {
 func TestResponderHidesWhichTMSsItServes(t *testing.T) {
 	auth, err := NewAuthorizer([]view.Identity{view.Identity(testCaller)})
 	require.NoError(t, err)
-	factory := NewDeltaFactory(&fakeValidator{}, &fakePP{}, &fakePP{}, &mock.EVMClient{}, addr(0xAA), "")
+	factory := NewDeltaFactory(&fakeValidator{}, &fakePP{}, &fakePP{}, &mock.EVMClient{}, addr(0xAA), "", testDeadline)
 	r := NewResponder(
 		func(tmsID token2.TMSID) (*Authorizer, error) {
 			if tmsID == testTMSID() {

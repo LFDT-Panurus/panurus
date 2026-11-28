@@ -782,8 +782,13 @@ func twoTMSEndorser(t *testing.T, cfgA, cfgB *Config) (*endorsement.Responder, e
 	return responder, nil
 }
 
+// endorsementTestValidUntil is the deadline the driver tests' requests propose: the default window
+// against the block 0 a fresh mock.EVMClient reports.
+const endorsementTestValidUntil = DefaultDeadlineBlocks
+
 func approvalFor(namespace string) *endorsement.EndorseRequest {
 	return &endorsement.EndorseRequest{
+		ValidUntil:   endorsementTestValidUntil,
 		Kind:         endorsement.KindApproval,
 		Anchor:       repeat("11", 32),
 		TMSID:        token2.TMSID{Network: "evm-net", Namespace: namespace},
