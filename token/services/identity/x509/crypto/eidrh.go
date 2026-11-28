@@ -20,6 +20,12 @@ func GetEnrollmentID(id []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
+	return EnrollmentIDFromCert(cert), nil
+}
+
+// EnrollmentIDFromCert returns the enrollment ID of cert: its CommonName up to the first '@'.
+func EnrollmentIDFromCert(cert *x509.Certificate) string {
 	cn := cert.Subject.CommonName
 	// if cn contains a @, then return only the left part of the string
 	index := strings.Index(cn, "@")
@@ -27,7 +33,7 @@ func GetEnrollmentID(id []byte) (string, error) {
 		cn = cn[:index]
 	}
 
-	return cn, nil
+	return cn
 }
 
 func GetRevocationHandle(id []byte) ([]byte, error) {
@@ -35,6 +41,13 @@ func GetRevocationHandle(id []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return RevocationHandleFromCert(cert)
+}
+
+// RevocationHandleFromCert returns the revocation handle of cert:
+// the base64 encoding of the SHA-256 hash of its PKIX public key.
+func RevocationHandleFromCert(cert *x509.Certificate) ([]byte, error) {
 	encoded, err := x509.MarshalPKIXPublicKey(cert.PublicKey)
 	if err != nil {
 		return nil, errors.WithMessagef(err, "Failed to marshal PKI public key")

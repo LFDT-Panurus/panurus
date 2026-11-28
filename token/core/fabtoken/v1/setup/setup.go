@@ -14,6 +14,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	driverv1 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1"
 	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/pp"
+	x509crypto "github.com/LFDT-Panurus/panurus/token/services/identity/x509/crypto"
 	"github.com/LFDT-Panurus/panurus/token/services/utils/protos"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
@@ -43,6 +44,11 @@ type PublicParams struct {
 	IssuerIDs []driver.Identity
 	// ExtraData contains any extra custom data
 	ExtraData driver.Extras
+	// X509OwnerRoots are the PEM-encoded root CA certificates that x509 owner identities must chain to.
+	// If empty, x509 owner identities are not checked against a CA.
+	X509OwnerRoots [][]byte
+	// X509OwnerIntermediates are optional PEM-encoded intermediate CA certificates, each chaining to a root.
+	X509OwnerIntermediates [][]byte
 }
 
 // Setup initializes PublicParams
@@ -140,6 +146,12 @@ func (p *PublicParams) Bytes() ([]byte, error) {
 		QuantityPrecision: p.QuantityPrecision,
 		Metadata:          p.ExtraData,
 	}
+	if len(p.X509OwnerRoots) != 0 || len(p.X509OwnerIntermediates) != 0 {
+		params.X509OwnerCertificates = &fabpp.X509OwnerCertificates{
+			Roots:         p.X509OwnerRoots,
+			Intermediates: p.X509OwnerIntermediates,
+		}
+	}
 
 	return proto.Marshal(params)
 }
@@ -170,6 +182,8 @@ func (p *PublicParams) FromBytes(data []byte) error {
 	if p.ExtraData == nil {
 		p.ExtraData = driver.Extras{}
 	}
+	p.X509OwnerRoots = publicParams.GetX509OwnerCertificates().GetRoots()
+	p.X509OwnerIntermediates = publicParams.GetX509OwnerCertificates().GetIntermediates()
 
 	return nil
 }
@@ -269,6 +283,9 @@ func (p *PublicParams) Validate() error {
 	maxTokenValue := uint64(1<<p.Precision()) - 1
 	if p.MaxToken > maxTokenValue {
 		return errors.Errorf("max token value is invalid [%d]>[%d]", p.MaxToken, maxTokenValue)
+	}
+	if _, err := x509crypto.NewOwnerCAs(p.X509OwnerRoots, p.X509OwnerIntermediates); err != nil {
+		return errors.Wrap(err, "invalid x509 owner certificates")
 	}
 
 	return nil

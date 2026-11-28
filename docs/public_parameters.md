@@ -20,8 +20,18 @@ tokengen gen zkatdlognogh.v1 --curve bls12_381_bbs --idemix-issuer-pk ./msp/idem
 ```
 
 ### Driver-Specific Details:
-- **[FabToken](drivers/fabtoken.md#public-parameters)**: Focuses on auditor and issuer identities (X.509).
+- **[FabToken](drivers/fabtoken.md#public-parameters)**: Focuses on auditor and issuer identities (X.509), and optional X.509 owner CA certificates.
 - **[DLOG w/o Graph Hiding](drivers/dlogwogh.md#4-public-parameters)**: Includes Pedersen generators, range proof parameters, and Idemix issuer keys for privacy.
+
+### X.509 Owner Certificates (FabToken)
+
+FabToken public parameters can carry X.509 owner CA certificates: `X509OwnerRoots` and `X509OwnerIntermediates` on `PublicParams`.
+When roots are set, an X.509 owner certificate must chain to them before a node trusts its enrollment ID.
+When no roots are set, the driver behaves as before and logs a warning.
+See [tokengen](../cmd/tokengen/README.md) for the generation flags.
+See [X.509 Owner Chain Validation](services/identity.md#x509-owner-chain-validation) for the rules and the rollout order.
+
+ZKAT-DLOG public parameters do not carry owner certificates yet.
 
 ---
 

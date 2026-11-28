@@ -140,6 +140,9 @@ valid encodings are still correctly accepted.
 | `FuzzFromZrProto` | `token/core/zkatdlog/nogh/protos-go/utils` | Raw Zr bytes through `FromZrProto`; any accepted element must be on the expected curve. |
 | `FuzzPublicParamsDeserializeNoPanic` | `token/core/zkatdlog/nogh/v1/setup` | Raw ledger-stored public parameters through `NewPublicParamsFromBytes`, exercised by every validator/prover/verifier on startup and params update. |
 | `FuzzProofDeserializeNoPanic` | `token/core/zkatdlog/nogh/v1/crypto/upgrade` | Raw untrusted token-upgrade request bytes through `Proof.Deserialize`. |
+| `FuzzPublicParamsDeserializeNoPanic` | `token/core/fabtoken/v1/setup` | Raw ledger-stored FabToken public parameters, including x509 owner certificates, through `NewPublicParamsFromBytes` and `Validate`. |
+| `FuzzOwnerCertificatesNoPanic` | `token/services/identity/x509/crypto` | x509 owner CA lists and an owner certificate through `NewOwnerCAs`, `ParseOwnerCertificate` and the chain walk. |
+| `FuzzAuditInfoDeserializerWithRootsNoPanic` | `token/services/identity/x509` | A peer's x509 identity and audit info through the root-checked `AuditInfoDeserializer` and `AuditInfoMatcher`; accepted inputs must chain and bind. |
 | `FuzzRegisterRecipientIdentityStructuralGuard` | `token/services/identity/wallet` | A counterparty's identity and audit-info bytes through `Service.RegisterRecipientIdentity`, asserting the structural guard rejects exactly the out-of-bounds lengths and never panics. |
 
 ### Running the Seed Corpus

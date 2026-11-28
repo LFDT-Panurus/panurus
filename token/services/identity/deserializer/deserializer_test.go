@@ -8,7 +8,6 @@ package deserializer
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 
@@ -16,6 +15,7 @@ import (
 	drivermock "github.com/LFDT-Panurus/panurus/token/driver/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	identitydrivermock "github.com/LFDT-Panurus/panurus/token/services/identity/driver/mock"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -220,6 +220,22 @@ func TestEIDRHDeserializer(t *testing.T) {
 		require.ErrorIs(t, err, expectedErr)
 		assert.Contains(t, err.Error(), "failed to deserialize audit info")
 		assert.Equal(t, 1, mockDeserializer.DeserializeAuditInfoCallCount())
+	})
+
+	// test that an untrusted identity does not carry the unresolvable marker,
+	// so callers fail instead of skipping it
+	t.Run("UntrustedIdentity", func(t *testing.T) {
+		deserializer := NewEIDRHDeserializer()
+		mockDeserializer := &identitydrivermock.AuditInfoDeserializer{}
+		mockDeserializer.DeserializeAuditInfoReturns(nil, errors.Wrap(identity.ErrUntrustedIdentity, "does not chain"))
+		deserializer.AddDeserializer(identity.Type(99), mockDeserializer)
+
+		typedID := createTypedIdentity(t, identity.Type(99), []byte("raw-identity"))
+		_, err := deserializer.GetEnrollmentID(context.Background(), typedID, []byte("audit-info"))
+
+		require.ErrorIs(t, err, identity.ErrUntrustedIdentity)
+		require.NotErrorIs(t, err, identity.ErrUnresolvableIdentity)
+		assert.Contains(t, err.Error(), "does not chain")
 	})
 }
 

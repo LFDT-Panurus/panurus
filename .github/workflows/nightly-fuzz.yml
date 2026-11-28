@@ -144,6 +144,15 @@ jobs:
           - name: fabtoken-owner-verifier
             pkg: ./token/core/fabtoken/v1/driver
             func: FuzzOwnerVerifierNoPanic
+          - name: fabtoken-public-params-deserialize
+            pkg: ./token/core/fabtoken/v1/setup
+            func: FuzzPublicParamsDeserializeNoPanic
+          - name: x509-owner-certificates
+            pkg: ./token/services/identity/x509/crypto
+            func: FuzzOwnerCertificatesNoPanic
+          - name: x509-audit-info-deserializer-with-roots
+            pkg: ./token/services/identity/x509
+            func: FuzzAuditInfoDeserializerWithRootsNoPanic
           - name: storage-sql-table-names
             pkg: ./token/services/storage/db/sql/common
             func: FuzzGetTableNamesNoPanic

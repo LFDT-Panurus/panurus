@@ -44,7 +44,7 @@ func timeSince(t time.Time) time.Duration {
 }
 
 // defaultIsFailure returns true if the error represents an operational or infrastructure
-// failure rather than a routine/benign business condition (e.g. unresolvable identity miss,
+// failure rather than a routine/benign business condition (e.g. unresolvable or untrusted identity,
 // context cancellation or client timeout, or routine token-not-found query miss).
 func defaultIsFailure(err error) bool {
 	if err == nil {
@@ -53,7 +53,7 @@ func defaultIsFailure(err error) bool {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
-	if errors.Is(err, identity.ErrUnresolvableIdentity) {
+	if errors.Is(err, identity.ErrUnresolvableIdentity) || errors.Is(err, identity.ErrUntrustedIdentity) {
 		return false
 	}
 	if errors.Is(err, driver.ErrTokenNotFound) {

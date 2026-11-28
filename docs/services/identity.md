@@ -509,6 +509,91 @@ The cryptographic materials are stored in standard PEM format. By default, the d
 ###### Custom Key Store Directory
 While `keystore` is the default directory name for the private key, a custom keystore directory name can be passed as an argument when initializing the key manager (e.g. to load `priv_sk` from `<dir>/<custom-keystore-name>/priv_sk`).
 
+##### X.509 Owner Chain Validation
+
+An X.509 owner certificate is not validated by default.
+Its enrollment ID (EID) is the certificate `CommonName` up to the first `@`.
+Any node can mint a self-signed certificate with `CN=victim` and claim the victim's EID.
+Owner CA certificates in the public parameters close this gap.
+
+**Scope.** Only FabToken supports owner CA certificates (`X509OwnerRoots`, `X509OwnerIntermediates`; see [FabToken public parameters](../drivers/fabtoken.md#public-parameters)).
+ZKAT-DLOG does not enforce owner roots yet.
+Its X.509 owners stay exposed to the forged-EID attack above.
+
+**Activation.** The checks run only when the public parameters carry at least one root.
+With no roots, the driver behaves exactly as before and logs one warning when it builds the wallet service.
+The zero values `&x509.AuditMatcherDeserializer{}` and `&x509.AuditInfoDeserializer{}` also keep the old behaviour.
+
+**Where the checks run.** The FabToken driver sets `x509.OwnerChainChecker` as the `Checker` of both structs:
+
+*   `x509.AuditInfoMatcher.Match`. This serves `Deserializer.MatchIdentity`, so `wallet.Service.RegisterRecipientIdentity` rejects a forged recipient before it stores anything.
+*   `x509.AuditInfoDeserializer.DeserializeAuditInfo`. This serves `deserializer.EIDRHDeserializer` (`GetEnrollmentID`, `GetRevocationHandler`, `GetEIDAndRH`), and through it the auditor and `Metadata.FilterBy`.
+
+Wrapped identities (multisig, boolpolicy, HTLC) reach the same checks through their components.
+
+**Where the checks do not run.** `IdentityDeserializer.DeserializeVerifier`, `GetOwnerVerifier` and the committer validator do not change.
+A forged owner can still receive and spend tokens on the ledger.
+The checks stop it from being attributed to an EID it does not own.
+Commit-time validation is the same on upgraded and old nodes.
+
+**Owner certificate (leaf) rules.** The certificate must:
+
+*   be exactly one PEM `CERTIFICATE` block, with no headers and no bytes before or after it;
+*   carry an ECDSA public key;
+*   not be a CA;
+*   chain to a root by signature, through at most 8 intermediates, honouring `MaxPathLen`.
+
+The audit info must match the certificate: its EID must equal the CN-derived EID, and its revocation handle must equal the one derived from the certificate key.
+The same parse serves the chain check and the EID/RH derivation.
+The checker caches up to 1024 certificates that passed the chain check. It never caches failures.
+
+**CA certificate rules.** `PublicParams.Validate` calls `crypto.NewOwnerCAs`. It requires:
+
+*   each entry to be one strict PEM `CERTIFICATE` block of at most 64 KiB;
+*   at most 64 entries in each list;
+*   a CA: valid basic constraints with `IsCA`, and `CertSign` when key usage is set;
+*   no name constraints extension. CAs with name constraints are rejected;
+*   no certificate twice across both lists;
+*   every intermediate to chain to a root;
+*   no intermediates without roots.
+
+**What is not checked.** The chain walk checks signatures, CA flags and `MaxPathLen` only.
+It does not call `x509.Verify`.
+It ignores validity periods, so expired certificates are accepted.
+It checks no CRLs and no extended key usage.
+
+**One trust domain.** All roots share one EID namespace.
+Any root or intermediate can certify any EID.
+Add only CAs that you trust for every EID.
+
+**Issuer and auditor exemption.** X.509 identities listed in `pp.Issuers()` and `pp.Auditors()` skip the chain and leaf-CA rules.
+The match is on the exact certificate bytes.
+Their audit info must still match the certificate.
+Two cases are not exempt:
+
+*   With an open issuer policy (empty `Issuers()`), unlisted X.509 issuers must chain to the roots too.
+*   A composite issuer (for example a multisig) is exempt only as a whole. Its X.509 components are not exempt and must chain.
+
+**Failure mode.** A failed check fails closed with `identity.ErrUntrustedIdentity`.
+The EIDRH layer does not join it with `identity.ErrUnresolvableIdentity`.
+So the auditor fails the audit instead of leaving the input unattributed.
+The circuit breaker does not count `ErrUntrustedIdentity` as a failure, so forged input cannot trip it.
+When roots are set, the driver also logs a warning for each local owner identity that fails the checks.
+
+**Residual risks.**
+
+*   *Echo-path replay.* On the recipient echo path, `verifyRecipientAttestation` (`token/services/ttx/recipients.go`) accepts an empty signature. A peer can echo a genuine certificate of another owner with its audit info, and no key-ownership proof is required.
+*   *CN collisions.* Two certificates with the same CN under the trusted CAs map to the same EID. The checks cannot tell them apart.
+
+**Rollout.**
+
+*   Old nodes ignore the new field. They keep the old behaviour, so the protection holds on upgraded nodes only.
+*   Upgrade all node binaries before you publish public parameters with owner roots.
+*   With roots set, X.509 audit info must carry the revocation handle (`RH`). Audit info with only an `EID` fails. Panurus key managers always set it.
+*   Upgraded nodes run `Validate` on the owner certificates and reject public parameters that fail it. Old nodes accept them.
+*   To rotate a root, add the new root, re-enroll the owners, then remove the old root.
+*   Stored audit info is checked again at read time. Owners that do not chain to the current roots fail on every read.
+
 #### 2. Idemix (Identity Mixer)
 Advanced identity encryption based on Zero-Knowledge Proofs (ZKP).
 *   **Identity (Payload)**: A **full Idemix signature** acting as a commitment to the user's attributes. It is encoded as a Protobuf `SerializedIdemixIdentity` message.

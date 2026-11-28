@@ -25,6 +25,12 @@ type (
 // Errors carrying it keep the underlying cause in their chain.
 var ErrUnresolvableIdentity = errors.New("identity does not resolve")
 
+// ErrUntrustedIdentity marks an identity that decodes but fails a trust check,
+// such as an x509 owner certificate that does not chain to the owner roots of the
+// public parameters, or audit info not bound to the certificate.
+// It never carries ErrUnresolvableIdentity: callers must fail, not skip.
+var ErrUntrustedIdentity = errors.New("identity is not trusted")
+
 // TypedIdentity encodes an identity with a type.
 type TypedIdentity struct {
 	// Type encodes the type of the identity

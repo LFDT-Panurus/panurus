@@ -21,6 +21,11 @@ The `PublicParams` for FabToken (v1) include:
 - **Auditor**: The X.509 certificate of the authorized auditor. FabToken supports a single auditor.
 - **Issuers**: A list of X.509 certificates for identities authorized to issue tokens.
 - **ExtraData**: A map for driver-specific or application-specific extensions.
+- **X509OwnerRoots**: Optional PEM-encoded root CA certificates that X.509 owner identities must chain to.
+  If empty, X.509 owners are not checked against a CA. Any node can then claim any enrollment ID.
+- **X509OwnerIntermediates**: Optional PEM-encoded intermediate CA certificates. Each one must chain to a root. They are rejected when no root is set.
+
+`Validate` rejects malformed owner certificates. See [X.509 Owner Chain Validation](../services/identity.md#x509-owner-chain-validation) for the rules.
 
 ### Management
 Public parameters can be generated and inspected using the [`tokengen`](../../cmd/tokengen/README.md) utility.
@@ -43,6 +48,9 @@ The `PublicParameters` message defines the governance and constraints of the Fab
 - `max_token`: Maximum value for any single token.
 - `quantity_precision`: Bit-precision for token amounts.
 - `extra_data`: Extensibility map for custom parameters.
+- `x509_owner_certificates` (field 8): An `X509OwnerCertificates` message with `roots` and `intermediates`.
+  Each entry is one PEM `CERTIFICATE` block. The field is not written when both lists are empty,
+  so public parameters without owner roots serialize as before.
 
 #### Tokens and Actions (`ftactions.proto`)
 - `Token`: Represents a cleartext token.
@@ -66,4 +74,6 @@ The validator guarantees the following:
 *   **Issuer Authorization**: Only issuers listed in the public parameters can issue tokens. When the public parameters list authorized issuers, redeeming (burning) tokens also requires a signature from one of those listed issuers; a redeem approved by an identity outside that list is rejected.
 *   **Auditor Authorization**: Only auditors listed in the public parameters can audit transactions.
 *   **Owner Authorization**: Only legitimate owners can spend their tokens.
+    The validator does not check X.509 owner certificates against the owner roots.
+    The roots protect enrollment ID resolution off-ledger only.
 *   **Value Preservation**: In a transfer, the sum of inputs matches the sum of outputs.

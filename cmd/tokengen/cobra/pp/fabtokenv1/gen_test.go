@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	setupv1 "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/setup"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/x509/crypto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -19,6 +21,15 @@ import (
 func TestCmd(t *testing.T) {
 	cmd := Cmd()
 	assert.NotNil(t, cmd)
+
+	t.Run("x509_owner_flags", func(t *testing.T) {
+		for _, name := range []string{"x509-owner-roots", "x509-owner-intermediates"} {
+			f := cmd.Flags().Lookup(name)
+			require.NotNil(t, f, name)
+			assert.Empty(t, f.Shorthand, name)
+			assert.Equal(t, "stringSlice", f.Value.Type(), name)
+		}
+	})
 
 	t.Run("trailing_args", func(t *testing.T) {
 		cmd.SetArgs([]string{"extra"})
@@ -96,6 +107,97 @@ func TestGen(t *testing.T) {
 		raw, err := Gen(args)
 		require.NoError(t, err)
 		assert.NotNil(t, raw)
+	})
+}
+
+// TestGenX509OwnerCertificates tests that Gen loads, validates, and stores the x509 owner CA certificates.
+func TestGenX509OwnerCertificates(t *testing.T) {
+	root := crypto.NewTestCertificate(t, crypto.NewTestCATemplate("root"), nil)
+	inter := crypto.NewTestCertificate(t, crypto.NewTestCATemplate("inter"), root)
+	leaf := crypto.NewTestCertificate(t, crypto.NewTestLeafTemplate("leaf"), root)
+
+	dir := t.TempDir()
+	write := func(name string, content []byte) string {
+		path := filepath.Join(dir, name)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0750))
+		require.NoError(t, os.WriteFile(path, content, 0600))
+
+		return path
+	}
+	write(filepath.Join("msp", "cacerts", "root.pem"), root.PEM)
+	write(filepath.Join("msp", "intermediatecerts", "inter.pem"), inter.PEM)
+	interFile := write("inter.pem", inter.PEM)
+	leafFile := write("leaf.pem", leaf.PEM)
+
+	t.Run("success_msp_dirs", func(t *testing.T) {
+		out := t.TempDir()
+		raw, err := Gen(&GeneratorArgs{
+			OutputDir:              out,
+			X509OwnerRoots:         []string{filepath.Join(dir, "msp", "cacerts")},
+			X509OwnerIntermediates: []string{filepath.Join(dir, "msp", "intermediatecerts")},
+		})
+		require.NoError(t, err)
+		pp, err := setupv1.NewPublicParamsFromBytes(raw, setupv1.FabTokenDriverName, setupv1.ProtocolV1)
+		require.NoError(t, err)
+		assert.Equal(t, [][]byte{root.PEM}, pp.X509OwnerRoots)
+		assert.Equal(t, [][]byte{inter.PEM}, pp.X509OwnerIntermediates)
+		stored, err := os.ReadFile(filepath.Join(out, "fabtoken1_pp.json"))
+		require.NoError(t, err)
+		assert.Equal(t, raw, stored)
+	})
+
+	t.Run("success_files", func(t *testing.T) {
+		raw, err := Gen(&GeneratorArgs{
+			OutputDir:              t.TempDir(),
+			X509OwnerRoots:         []string{filepath.Join(dir, "msp", "cacerts", "root.pem")},
+			X509OwnerIntermediates: []string{interFile},
+		})
+		require.NoError(t, err)
+		pp, err := setupv1.NewPublicParamsFromBytes(raw, setupv1.FabTokenDriverName, setupv1.ProtocolV1)
+		require.NoError(t, err)
+		assert.Equal(t, [][]byte{root.PEM}, pp.X509OwnerRoots)
+		assert.Equal(t, [][]byte{inter.PEM}, pp.X509OwnerIntermediates)
+	})
+
+	t.Run("fail_missing_roots", func(t *testing.T) {
+		_, err := Gen(&GeneratorArgs{
+			OutputDir:      t.TempDir(),
+			X509OwnerRoots: []string{filepath.Join(dir, "missing")},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed loading x509 owner roots")
+	})
+
+	t.Run("fail_missing_intermediates", func(t *testing.T) {
+		_, err := Gen(&GeneratorArgs{
+			OutputDir:              t.TempDir(),
+			X509OwnerRoots:         []string{filepath.Join(dir, "msp", "cacerts")},
+			X509OwnerIntermediates: []string{filepath.Join(dir, "missing")},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed loading x509 owner intermediates")
+	})
+
+	t.Run("fail_validate_leaf_as_root", func(t *testing.T) {
+		out := t.TempDir()
+		_, err := Gen(&GeneratorArgs{
+			OutputDir:      out,
+			X509OwnerRoots: []string{leafFile},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to validate public parameters")
+		assert.NoFileExists(t, filepath.Join(out, "fabtoken1_pp.json"))
+	})
+
+	t.Run("fail_validate_intermediates_without_roots", func(t *testing.T) {
+		out := t.TempDir()
+		_, err := Gen(&GeneratorArgs{
+			OutputDir:              out,
+			X509OwnerIntermediates: []string{interFile},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to validate public parameters")
+		assert.NoFileExists(t, filepath.Join(out, "fabtoken1_pp.json"))
 	})
 }
 
