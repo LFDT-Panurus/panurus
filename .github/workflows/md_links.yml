@@ -2,9 +2,9 @@ name: Check Markdown links
 
 on:
   push:
-    branches: [ main, feature/zkat-snark-driver ]
+    branches: [ main, 'release-*', feature/zkat-snark-driver ]
   pull_request:
-    branches: [ main, feature/zkat-snark-driver ]
+    branches: [ main, 'release-*', feature/zkat-snark-driver ]
   # Weekly full scan: catches external links that rot (dead hosts, moved files)
   # on lines that no PR touches.
   schedule:

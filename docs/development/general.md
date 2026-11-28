@@ -159,6 +159,10 @@ The queue requires all of the following, both to enter it and to merge:
   `unit-tests` (which passes only if every `utest` job passed), plus `DCO` and the CodeQL workflow's
   `Analyze` job.
 
+The `Tests` workflow also runs on pushes and PRs into `release-*` branches, with the same jobs.
+Its `tests-ok` job passes only if no other job of the workflow failed or was cancelled. A skipped
+job, such as `proto-breaking` on a push, counts as passed. A ruleset can require `tests-ok` alone.
+
 If these are not met yet when you queue the PR, Mergify waits until they are. Once the PR is
 queued, Mergify handles queued PRs one at a time (in-place checks):
 1. Rebases the PR's own branch onto the latest `main` (`update_method: rebase`).

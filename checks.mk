@@ -163,10 +163,19 @@ buf-format:
 # literal '#': Make treats a bare '#' as a comment, and buf's git-input syntax
 # (.git#branch=...) needs one, so build it via an escaped-hash variable.
 BUF_HASH := \#
+# branch the protos are checked on: the PR base branch or the pushed branch in CI
+# (where the checkout may be detached), else the local branch.
+BUF_BRANCH = $(or $(GITHUB_BASE_REF),$(GITHUB_REF_NAME),$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null))
+# last final tag of the branch's own line (release-X.Y -> vX.Y.*) reachable from
+# HEAD, pre-releases excluded. Needs the tags in .git.
+BUF_RELEASE_TAG = $(shell git describe --tags --abbrev=0 --match 'v$(patsubst release-%,%,$(BUF_BRANCH)).*' --exclude '*-*' 2>/dev/null)
+# tip of the release branch: the local branch if present, else origin's (CI).
+BUF_RELEASE_BRANCH = $(if $(shell git rev-parse --verify -q 'refs/heads/$(BUF_BRANCH)' 2>/dev/null),branch=$(BUF_BRANCH),ref=origin/$(BUF_BRANCH))
 # base git ref to diff the working tree's protos against, using buf.yaml's
-# `breaking:` ruleset. Defaults to the local 'main' branch for local runs; CI's
-# 'proto-breaking' job overrides it with the pull request's base ref.
-BUF_BREAKING_AGAINST ?= .git$(BUF_HASH)branch=main
+# `breaking:` ruleset. On a release-X.Y branch it defaults to the last vX.Y.Z tag,
+# or to the branch tip before vX.Y.0 exists. Otherwise it defaults to the local
+# 'main' branch. CI's 'proto-breaking' job also runs it against the PR's base ref.
+BUF_BREAKING_AGAINST ?= $(if $(filter release-%,$(BUF_BRANCH)),.git$(BUF_HASH)$(if $(BUF_RELEASE_TAG),tag=$(BUF_RELEASE_TAG),$(BUF_RELEASE_BRANCH)),.git$(BUF_HASH)branch=main)
 
 .PHONY: protos-breaking
 # detect backward-incompatible protobuf changes (wire-format breaks) against a

@@ -2,9 +2,9 @@ name: Tests
 
 on:
   push:
-    branches: [ main, feature/zkat-snark-driver ]
+    branches: [ main, 'release-*', feature/zkat-snark-driver ]
   pull_request:
-    branches: [ main, feature/zkat-snark-driver ]
+    branches: [ main, 'release-*', feature/zkat-snark-driver ]
   workflow_dispatch:
     inputs:
       fsc-version:
@@ -117,6 +117,13 @@ jobs:
       - name: Check protobuf backward compatibility
         run: make protos-breaking BUF_BREAKING_AGAINST=".git#ref=origin/${{ github.base_ref }}"
 
+      # On a release-X.Y branch, also diff against its last vX.Y.Z tag (checks.mk's
+      # default there; the branch tip before vX.Y.0 exists). fetch-depth: 0 above
+      # fetches the tags and origin's branches.
+      - name: Check protobuf backward compatibility against the line's last release tag
+        if: startsWith(github.base_ref, 'release-')
+        run: make protos-breaking
+
   utest:
     needs: checks
     runs-on: ubuntu-latest
@@ -209,7 +216,9 @@ jobs:
 
   itest:
     needs: checks
-    if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
+    if: >-
+      github.ref == 'refs/heads/main' || github.base_ref == 'main' ||
+      startsWith(github.ref, 'refs/heads/release-') || startsWith(github.base_ref, 'release-')
     runs-on: ubuntu-latest
     # Ginkgo's default 1h suite timeout caps the tests themselves; this bounds the
     # whole job (setup, builds, coverage upload) a little above it, so a job that
@@ -459,3 +468,23 @@ jobs:
           CGO_ENABLED: "0"
         run: cd ./cmd/artifactgen; go build -o /dev/null .
 
+  # Single status check for the whole workflow, so a ruleset can require one name.
+  # It fails if any job failed or was cancelled. A skipped job passes: jobs skip only
+  # by design (proto-breaking on push, itest outside main and release-*), or because
+  # a job they need failed, and that job then fails this one.
+  tests-ok:
+    needs: [ checks, lint, proto-breaking, utest, unit-tests, itest, publish-coverage, bench-check, cgo-check ]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check that no job failed or was cancelled
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Results: $RESULTS"
+          for r in $RESULTS; do
+            case "$r" in
+              success|skipped) ;;
+              *) echo "A required job ended with: $r"; exit 1 ;;
+            esac
+          done

@@ -17,7 +17,7 @@
 - `make lint-auto-fix` - Auto-fix linting issues (recommended pre-commit)
 - `make install-tools` - Install development dependencies
 - `make checks` - Run all pre-CI checks (license, fmt, vet, etc.)
-- `make protos-breaking` - Detect backward-incompatible protobuf changes vs. a base ref (defaults to local `main`; override with `BUF_BREAKING_AGAINST=".git#ref=origin/main"`). PR-only in CI; not part of `make checks`.
+- `make protos-breaking` - Detect backward-incompatible protobuf changes vs. a base ref (defaults to local `main`, or on `release-X.Y` to its last `vX.Y.Z` tag, else that branch's tip; override with `BUF_BREAKING_AGAINST=".git#ref=origin/main"`). PR-only in CI; not part of `make checks`.
 - `make download-fabric` - Download Fabric binaries
 - `make docker-images` - Prepare Docker images
 - `make testing-docker-images` - Prepare test Docker images
