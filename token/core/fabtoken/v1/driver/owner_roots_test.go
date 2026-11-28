@@ -79,9 +79,9 @@ func newOwnerRootsFixture(t *testing.T) *ownerRootsFixture {
 
 func (f *ownerRootsFixture) deserializers(t *testing.T, pp *setup.PublicParams) (*driver.Deserializer, *driver.EIDRHDeserializer) {
 	t.Helper()
-	des, err := driver.NewDeserializer(pp)
+	des, err := driver.NewDeserializerWithPublicParams(pp)
 	require.NoError(t, err)
-	eidrh, err := driver.NewEIDRHDeserializer(pp)
+	eidrh, err := driver.NewEIDRHDeserializerWithPublicParams(pp)
 	require.NoError(t, err)
 
 	return des, eidrh
@@ -229,4 +229,18 @@ func TestOwnerRoots_VerifierUnchanged(t *testing.T) {
 	}
 	require.NoError(t, validator.TransferSignatureValidate(ctx, c))
 	assert.Equal(t, 1, sp.HasBeenSignedByCallCount())
+}
+
+func TestOwnerRoots_Constructors(t *testing.T) {
+	_, err := driver.NewDeserializerWithPublicParams(nil)
+	require.Error(t, err)
+	_, err = driver.NewEIDRHDeserializerWithPublicParams(nil)
+	require.Error(t, err)
+
+	// the constructors without public parameters never check owner roots
+	f := newOwnerRootsFixture(t)
+	require.NoError(t, driver.NewDeserializer().MatchIdentity(t.Context(), f.forged.id, f.forged.info))
+	eid, err := driver.NewEIDRHDeserializer().GetEnrollmentID(t.Context(), f.forged.id, f.forged.info)
+	require.NoError(t, err)
+	assert.Equal(t, "victim", eid)
 }

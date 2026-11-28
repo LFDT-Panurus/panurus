@@ -34,18 +34,18 @@ func (a *AuditMatcherDeserializer) GetAuditInfoMatcher(ctx context.Context, owne
 		return nil, errors.Wrapf(err, "failed to unmarshal")
 	}
 
-	return &AuditInfoMatcher{EnrollmentID: ai.EID, revocationHandle: ai.RH, checker: a.Checker}, nil
+	return &AuditInfoMatcher{EnrollmentID: ai.EID, revocationHandle: string(ai.RH), checker: a.Checker}, nil
 }
 
 type AuditInfoMatcher struct {
 	EnrollmentID     string
-	revocationHandle []byte
+	revocationHandle string
 	checker          *OwnerChainChecker
 }
 
 func (a *AuditInfoMatcher) Match(_ context.Context, id []byte) error {
 	if a.checker != nil {
-		return a.checker.bind(id, a.EnrollmentID, a.revocationHandle)
+		return a.checker.bind(id, a.EnrollmentID, []byte(a.revocationHandle))
 	}
 	eid, err := crypto.GetEnrollmentID(id)
 	if err != nil {

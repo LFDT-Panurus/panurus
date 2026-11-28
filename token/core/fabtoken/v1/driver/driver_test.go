@@ -264,22 +264,16 @@ func TestWalletServiceFactory(t *testing.T) {
 
 // TestDeserializers tests the fabtoken deserializer and EIDRH deserializer creation.
 func TestDeserializers(t *testing.T) {
+	d := driver.NewDeserializer()
+	assert.NotNil(t, d)
+
 	ppd := &driver.PublicParamsDeserializer{}
 	pp, _ := setup.NewWith(setup.FabTokenDriverName, setup.ProtocolV1, 64)
-	d, err := driver.NewDeserializer(pp)
-	require.NoError(t, err)
-	assert.NotNil(t, d)
-	_, err = driver.NewDeserializer(nil)
-	require.Error(t, err)
-
 	ppBytes, _ := pp.Serialize()
 	res, err := ppd.DeserializePublicParams(ppBytes, setup.FabTokenDriverName, setup.ProtocolV1)
 	require.NoError(t, err)
 	assert.NotNil(t, res)
 
-	eidrh, err := driver.NewEIDRHDeserializer(pp)
-	require.NoError(t, err)
+	eidrh := driver.NewEIDRHDeserializer()
 	assert.NotNil(t, eidrh)
-	_, err = driver.NewEIDRHDeserializer(nil)
-	require.Error(t, err)
 }

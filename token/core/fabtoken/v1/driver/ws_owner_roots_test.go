@@ -50,7 +50,7 @@ func TestWarnUntrustedOwners(t *testing.T) {
 	legitID, legitInfo := owner(crypto.NewTestCertificate(t, crypto.NewTestLeafTemplate("alice"), root))
 	forgedID, forgedInfo := owner(crypto.NewTestCertificate(t, crypto.NewTestLeafTemplate("alice"), nil))
 
-	eidrh, err := NewEIDRHDeserializer(&setup.PublicParams{X509OwnerRoots: [][]byte{root.PEM}})
+	eidrh, err := NewEIDRHDeserializerWithPublicParams(&setup.PublicParams{X509OwnerRoots: [][]byte{root.PEM}})
 	require.NoError(t, err)
 	role := &idrivermock.Role{}
 	role.IdentityIDsReturns([]string{"legit", "forged", "missing"}, nil)

@@ -53,7 +53,7 @@ func (d BaseWalletServiceFactory) newWalletService(
 	if len(fabPP.X509OwnerRoots) == 0 {
 		logger.Warnf("public parameters carry no x509 owner roots: x509 owner identities are not checked against a CA, any node can claim any enrollment ID")
 	}
-	eidrh, err := NewEIDRHDeserializer(fabPP)
+	eidrh, err := NewEIDRHDeserializerWithPublicParams(fabPP)
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to create enrollment ID deserializer")
 	}
@@ -122,7 +122,7 @@ func (d BaseWalletServiceFactory) newWalletService(
 		return nil, errors.Wrapf(err, "failed to get identity storage provider")
 	}
 	signerRouter.SetConfIDResolver(walletDB)
-	deserializer, err := NewDeserializer(fabPP)
+	deserializer, err := NewDeserializerWithPublicParams(fabPP)
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to create deserializer")
 	}
