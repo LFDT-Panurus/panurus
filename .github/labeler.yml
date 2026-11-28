@@ -1,0 +1,87 @@
+# Path-based component labels for actions/labeler (see .github/workflows/labeler.yml).
+# Labels are only added, never removed. Use only labels that already exist.
+
+token-driver:
+  - changed-files:
+      - any-glob-to-any-file: ['token/driver/**']
+token-api:
+  - changed-files:
+      - any-glob-to-any-file: ['token/*.go']
+fabtoken:
+  - changed-files:
+      - any-glob-to-any-file: ['token/core/fabtoken/**']
+zkatdlog:
+  - changed-files:
+      - any-glob-to-any-file: ['token/core/zkatdlog/**']
+auditor:
+  - changed-files:
+      - any-glob-to-any-file: ['token/services/auditor/**']
+certifier:
+  - changed-files:
+      - any-glob-to-any-file: ['token/services/certifier/**']
+identity:
+  - changed-files:
+      - any-glob-to-any-file: ['token/services/identity/**']
+wallet:
+  - changed-files:
+      - any-glob-to-any-file: ['token/services/identity/wallet/**', '**/wallet.go']
+storage:
+  - changed-files:
+      - any-glob-to-any-file: ['token/services/storage/**']
+db:
+  - changed-files:
+      - any-glob-to-any-file: ['token/services/storage/db/**']
+token-selector:
+  - changed-files:
+      - any-glob-to-any-file: ['token/services/selector/**']
+ttx:
+  - changed-files:
+      - any-glob-to-any-file: ['token/services/ttx/**']
+network-driver:
+  - changed-files:
+      - any-glob-to-any-file: ['token/services/network/**']
+chaguar:
+  - changed-files:
+      - any-glob-to-any-file: ['**/*chaguar*/**', 'chaguar.mk']
+evm-network-driver:
+  - changed-files:
+      - any-glob-to-any-file: ['x/token/services/network/evm/**', 'integration/nwo/token/evm/**', 'integration/token/**/evm*/**', 'evm.mk']
+finality:
+  - changed-files:
+      - any-glob-to-any-file: ['**/finality/**']
+interoperability:
+  - changed-files:
+      - any-glob-to-any-file: ['**/interop/**', 'interop.mk']
+metrics:
+  - changed-files:
+      - any-glob-to-any-file: ['token/core/common/metrics/**', 'token/services/metricsdoc/**']
+logging:
+  - changed-files:
+      - any-glob-to-any-file: ['token/services/logging/**']
+benchmark:
+  - changed-files:
+      - any-glob-to-any-file: ['token/services/benchmark/**', 'cmd/benchmarking/**']
+tools:
+  - changed-files:
+      - any-glob-to-any-file: ['cmd/**', 'tools/**']
+nwo:
+  - changed-files:
+      - any-glob-to-any-file: ['integration/nwo/**']
+protobuf:
+  - changed-files:
+      - any-glob-to-any-file: ['**/*.proto', 'buf.yaml', 'buf.gen.yaml']
+documentation:
+  - changed-files:
+      - any-glob-to-any-file: ['docs/**', '**/*.md', 'mkdocs.yml']
+ci:
+  - changed-files:
+      - any-glob-to-any-file: ['.github/**', 'ci/**']
+build:
+  - changed-files:
+      - any-glob-to-any-file: ['Makefile', '*.mk']
+lint:
+  - changed-files:
+      - any-glob-to-any-file: ['.golangci.yml', 'staticcheck.conf']
+agents:
+  - changed-files:
+      - any-glob-to-any-file: ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md', '.claude/**', 'docs/development/ai_agents.md']

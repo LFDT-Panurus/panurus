@@ -1,0 +1,28 @@
+name: Stale PRs
+
+# Marks PRs with no update in 21 days. Never closes PRs. Issues are not touched.
+on:
+  schedule:
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/stale@4391f3da665fdf50b6810c1a66712fb9ba21aa93 # v11.0.0
+        with:
+          days-before-issue-stale: -1
+          days-before-issue-close: -1
+          days-before-pr-stale: 21
+          days-before-pr-close: -1
+          stale-pr-label: stale
+          stale-pr-message: >-
+            This PR has had no activity for 21 days, so it is marked `stale`.
+            Any update removes the label. It will not be closed automatically.

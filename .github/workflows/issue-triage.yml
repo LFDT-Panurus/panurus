@@ -1,0 +1,21 @@
+name: Issue triage
+
+# Adds needs-triage to every new issue. Triagers remove it.
+on:
+  issues:
+    types: [ opened ]
+
+permissions: {}
+
+jobs:
+  needs-triage:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Add needs-triage label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: gh api --method POST "repos/$GH_REPO/issues/$NUMBER/labels" -f 'labels[]=needs-triage' --silent
