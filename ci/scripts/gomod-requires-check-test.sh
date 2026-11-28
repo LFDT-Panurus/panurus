@@ -26,7 +26,7 @@ expect() {
   out="$("$check" "$tmp/go.mod" 2>&1)"
   rc=$?
   if [ "$want" = pass ]; then
-    [ "$rc" -eq 0 ] && pass "$name" || fail "$name: rc=$rc out=$out"
+    if [ "$rc" -eq 0 ]; then pass "$name"; else fail "$name: rc=$rc out=$out"; fi
   elif [ "$rc" -ne 0 ] && grep -qF -- "$msg" <<<"$out"; then
     pass "$name"
   else
@@ -35,16 +35,20 @@ expect() {
 }
 
 R=github.com/LFDT-Panurus/panurus
-expect pass "accepts published internal requires and local replaces" "" \
+E=$R/x/token/services/network/evm
+expect pass "accepts published internal requires with local replaces" "" \
   "replace $R => ../
 replace (
-	$R/integration v0.0.0 => ../integration
+	$R/integration => ../integration
 )
 
 require (
 	$R v0.28.0
 	$R/integration v0.27.0 // indirect
-)"
+	$E v0.28.1-0.20261101000000-0123456789ab
+)
+
+replace $E => ../evm"
 expect pass "accepts placeholders of external modules" "" \
   "require github.com/hyperledger-labs/fabric-smart-client/platform/view/services/comm/host/libp2p v0.0.0-00010101000000-000000000000"
 expect pass "ignores comments" "" "// require $R v0.0.0
@@ -55,15 +59,43 @@ expect fail "rejects v0.0.0 in a require block" "placeholder require: $R v0.0.0"
   "require (
 	github.com/stretchr/testify v1.12.1
 	$R v0.0.0
-)"
+)
+replace $R => ../"
 expect fail "rejects the zero pseudo-version of a submodule" \
   "placeholder require: $R/integration v0.0.0-00010101000000-000000000000" \
-  "require $R/integration v0.0.0-00010101000000-000000000000"
-expect fail "rejects an indirect placeholder" "placeholder require: $R/x/token/services/network/evm v0.0.0" \
+  "require $R/integration v0.0.0-00010101000000-000000000000
+replace $R/integration => ../integration"
+expect fail "rejects an indirect placeholder" "placeholder require: $E v0.0.0" \
   "require (
-	$R/x/token/services/network/evm v0.0.0 // indirect
-)"
-expect fail "rejects a toolchain line" "toolchain line: toolchain go1.27.4" "toolchain go1.27.4"
+	$E v0.0.0 // indirect
+)
+replace $E => ../evm"
+expect fail "rejects a root release with the old module path" \
+  "require $R v0.10.1 is below v0.14.1" "require $R v0.10.1
+replace $R => ../"
+expect fail "rejects a pseudo-version below the first LFDT release" \
+  "require $R v0.4.1-0.20250528165839-032fb9265504 is below v0.14.1" \
+  "require $R v0.4.1-0.20250528165839-032fb9265504
+replace $R => ../"
+expect fail "rejects hashicorp releases with the wrong module path" \
+  "require $R/token/services/storage/db/kvs/hashicorp v0.27.0 is below v0.28.0" \
+  "require $R/token/services/storage/db/kvs/hashicorp v0.27.0
+replace $R/token/services/storage/db/kvs/hashicorp => ../hashicorp"
+expect fail "rejects a module without a recorded LFDT release" "$R/cmd/profiler has no release" \
+  "require $R/cmd/profiler v0.27.0
+replace $R/cmd/profiler => ../profiler"
+expect fail "rejects a require without a replace" "no unversioned local replace for $R" \
+  "require $R v0.28.0"
+expect fail "rejects a require with only a versioned replace" "no unversioned local replace for $R" \
+  "require $R v0.28.0
+replace $R v0.28.0 => ../"
+expect fail "rejects a replace that points at another version" "no unversioned local replace for $R" \
+  "require $R v0.28.0
+replace $R => $R v0.27.0"
+expect fail "rejects a toolchain line" "toolchain line: go1.27.4" "toolchain go1.27.4"
+expect fail "rejects a placeholder in a CRLF file with require( and a quoted path" \
+  "placeholder require: $R v0.0.0" "$(printf 'require(\r\n\t"%s" v0.0.0\r\n)\r\nreplace %s => ../\r' "$R" "$R")"
+expect fail "rejects an unparsable go.mod" "cannot parse" "require ("
 
 # The repository passes, and a missing file fails.
 if out="$("$check" 2>&1)"; then

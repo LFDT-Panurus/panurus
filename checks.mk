@@ -178,7 +178,8 @@ protos-breaking:
 	@buf breaking --against '$(BUF_BREAKING_AGAINST)'
 
 .PHONY: gomod-requires-check
-# check that no go.mod requires a Panurus module at a placeholder version or has a toolchain line
+# check that every Panurus require is a published LFDT-path release with a local replace, and that
+# no go.mod has a toolchain line
 gomod-requires-check:
 	@./ci/scripts/gomod-requires-check.sh
 
