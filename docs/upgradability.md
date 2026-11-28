@@ -586,14 +586,15 @@ Go `File_<path>_proto` descriptor variables. Treat such a change as a one-time e
 These recommendations are enforced automatically. `buf.yaml` declares a `breaking:`
 ruleset (`FILE`), and the `proto-breaking` job in
 [`.github/workflows/tests.yml`](../.github/workflows/tests.yml) runs `buf breaking`
-against the pull request's base branch on every PR. Wire-incompatible changes — changing
-a field's type, reusing or renumbering a field, deleting a message, and so on — fail CI
+against the pull request's base branch on every PR. On a PR into a `release-X.Y` branch, it
+also runs against the last `vX.Y.Z` tag, or the branch tip before `vX.Y.0` exists.
+Wire-incompatible changes — changing a field's type, reusing or renumbering a field, deleting a message, and so on — fail CI
 before they can merge.
 
 To run the same check locally against your `main` branch (or any other base ref):
 
 ```bash
-make protos-breaking                                    # diff against local 'main'
+make protos-breaking                                    # diff against local 'main' (on release-X.Y: last vX.Y.Z tag)
 make protos-breaking BUF_BREAKING_AGAINST=".git#ref=origin/main"
 ```
 

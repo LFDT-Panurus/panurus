@@ -274,6 +274,11 @@ fmt: ## Run gofmt on the entire project
 
 .PHONY: update-all-deps-latest
 update-all-deps-latest: ## Update all dependencies in all Go modules to their latest version
+	@branch=$${GITHUB_BASE_REF:-$${GITHUB_REF_NAME:-$$(git rev-parse --abbrev-ref HEAD)}}; \
+	case "$$branch" in release-*) \
+		echo "update-all-deps-latest: refusing to run on release branch '$$branch'. Release branches take only targeted dependency updates." >&2; \
+		exit 1;; \
+	esac
 	@echo "Updating all dependencies to @latest..."
 	@for dir in $$(find . -name "go.mod" -exec dirname {} \;); do \
 		echo "=> Updating dependencies in $$dir"; \

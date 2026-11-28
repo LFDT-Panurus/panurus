@@ -17,6 +17,7 @@ This doc is the single source of truth. In Claude Code it is also exposed as the
 
 ## Preconditions
 
+- Never run this runbook against a `release-*` branch. It targets `main` only.
 - Working tree is clean: `git status` shows nothing to commit. If not, stash
   (`git stash -u`) or commit first — do not discard existing work.
 - `gh` is authenticated (`gh auth status`) — needed only at the very end, to open the PR.
