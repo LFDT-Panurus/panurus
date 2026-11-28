@@ -212,3 +212,22 @@ func TestVaultProvider_Vault_MultipleNetworks(t *testing.T) {
 	assert.Equal(t, 2, ttxMgr.StoreServiceByTMSIdCallCount())
 	assert.Equal(t, 2, auditMgr.StoreServiceByTMSIdCallCount())
 }
+
+// TestVaultProvider_Vault_KeysDoNotCollide verifies that TMSs whose concatenated coordinates are equal get distinct vaults (#2851).
+func TestVaultProvider_Vault_KeysDoNotCollide(t *testing.T) {
+	tokenMgr := &tokenmock.TokenStoreServiceManager{}
+	ttxMgr := &ttxmock.TTXStoreServiceManager{}
+	auditMgr := &auditmock.AuditStoreServiceManager{}
+	tokenMgr.StoreServiceByTMSIdReturns(&tokendb.StoreService{}, nil)
+	ttxMgr.StoreServiceByTMSIdReturns(&ttxdb.StoreService{}, nil)
+	auditMgr.StoreServiceByTMSIdReturns(&auditdb.StoreService{}, nil)
+
+	provider := vault.NewVaultProvider(tokenMgr, ttxMgr, auditMgr)
+
+	_, err := provider.Vault("ab", "", "c")
+	require.NoError(t, err)
+	_, err = provider.Vault("a", "b", "c")
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, tokenMgr.StoreServiceByTMSIdCallCount(), "each TMS must get its own vault")
+}

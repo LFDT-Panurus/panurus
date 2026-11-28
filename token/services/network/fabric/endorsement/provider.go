@@ -62,7 +62,7 @@ func NewServiceProvider(
 		ppValidator:         ppValidator,
 	}
 
-	return &ServiceProvider{Provider: lazy.NewProviderWithKeyMapper(key, l.load)}
+	return &ServiceProvider{Provider: lazy.NewProvider(l.load)}
 }
 
 type Service interface {
@@ -143,10 +143,6 @@ func (l *loader) load(tmsID token2.TMSID) (Service, error) {
 		NewDiscoveryEndorserSelector(NewNetworkDiscoveryProvider(l.fnsp), NewChannelProvider(l.fnsp)),
 		l.ppValidator,
 	)
-}
-
-func key(tmsID token2.TMSID) string {
-	return tmsID.Network + tmsID.Channel + tmsID.Namespace
 }
 
 // ChannelProvider provides access to the MSP manager for a given Fabric network and channel.

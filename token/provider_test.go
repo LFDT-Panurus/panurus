@@ -201,7 +201,7 @@ func TestManagementServiceProvider_Update(t *testing.T) {
 	)
 
 	// Add a cached service
-	provider.services["net1ch1ns1"] = &ManagementService{}
+	provider.services[TMSID{Network: "net1", Channel: "ch1", Namespace: "ns1"}] = &ManagementService{}
 
 	tmsID := TMSID{
 		Network:   "net1",
@@ -215,7 +215,7 @@ func TestManagementServiceProvider_Update(t *testing.T) {
 	assert.Equal(t, 1, tmsProvider.updateCallCount)
 
 	// Verify cache was cleared
-	_, exists := provider.services["net1ch1ns1"]
+	_, exists := provider.services[TMSID{Network: "net1", Channel: "ch1", Namespace: "ns1"}]
 	assert.False(t, exists)
 }
 
@@ -273,4 +273,23 @@ func TestManagementServiceProvider_Update_Error(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed updating tms")
 	assert.ErrorIs(t, err, expectedErr)
+}
+
+// TestManagementServiceProvider_KeysDoNotCollide verifies that a TMS does not get the cached management
+// service of another TMS whose concatenated coordinates are equal (#2851).
+func TestManagementServiceProvider_KeysDoNotCollide(t *testing.T) {
+	tmsProvider := &mockTokenManagerServiceProvider{getTMSErr: errors.New("not cached")}
+	provider := NewManagementServiceProvider(
+		tmsProvider,
+		&mockNormalizer{},
+		&mockVaultProvider{},
+		&mockCertificationClientProvider{},
+		&mockSelectorManagerProvider{},
+	)
+	provider.services[TMSID{Network: "a", Channel: "b", Namespace: "c"}] = &ManagementService{}
+
+	ms, err := provider.GetManagementService(WithTMSID(TMSID{Network: "ab", Channel: "", Namespace: "c"}))
+
+	require.ErrorContains(t, err, "not cached")
+	assert.Nil(t, ms)
 }

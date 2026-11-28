@@ -57,7 +57,7 @@ type TMSProvider struct {
 	tokenDriverService      *TokenDriverService
 
 	lock     sync.RWMutex
-	services map[string]driver.TokenManagerService
+	services map[driver.TMSID]driver.TokenManagerService
 }
 
 func NewTMSProvider(
@@ -68,7 +68,7 @@ func NewTMSProvider(
 	ms := &TMSProvider{
 		configService:           configService,
 		publicParametersStorage: pps,
-		services:                map[string]driver.TokenManagerService{},
+		services:                map[driver.TMSID]driver.TokenManagerService{},
 		tokenDriverService:      tokenDriverService,
 	}
 
@@ -427,6 +427,6 @@ func (m *TMSProvider) ppFromFetcher(opts *driver.ServiceOptions) ([]byte, error)
 	return nil, errors.Errorf("no PublicParamsFetcher configured")
 }
 
-func tmsKey(opts driver.ServiceOptions) string {
-	return opts.Network + opts.Channel + opts.Namespace
+func tmsKey(opts driver.ServiceOptions) driver.TMSID {
+	return driver.TMSID{Network: opts.Network, Channel: opts.Channel, Namespace: opts.Namespace}
 }

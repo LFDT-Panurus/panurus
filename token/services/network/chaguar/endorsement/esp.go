@@ -72,7 +72,7 @@ func NewServiceProvider(
 		ppValidator:                   ppValidator,
 	}
 
-	return &ServiceProvider{Provider: lazy.NewProviderWithKeyMapper(key, l.load)}
+	return &ServiceProvider{Provider: lazy.NewProvider(l.load)}
 }
 
 type loader struct {
@@ -135,10 +135,6 @@ func (l *loader) load(tmsID token2.TMSID) (endorsement.Service, error) {
 		NewQueryServiceEndorserSelector(l.grpcClientProvider, endorsement.NewChannelProvider(l.fabricProvider)),
 		l.ppValidator,
 	)
-}
-
-func key(tmsID token2.TMSID) string {
-	return tmsID.Network + tmsID.Channel + tmsID.Namespace
 }
 
 // NamespaceTxProcessor models a namespace transaction processor for Chaguar

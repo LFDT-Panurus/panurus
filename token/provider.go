@@ -67,7 +67,7 @@ type ManagementServiceProvider struct {
 	vaultProvider               VaultProvider
 
 	lock     sync.RWMutex
-	services map[string]*ManagementService
+	services map[TMSID]*ManagementService
 }
 
 // NewManagementServiceProvider returns a new instance of ManagementServiceProvider
@@ -85,7 +85,7 @@ func NewManagementServiceProvider(
 		certificationClientProvider: certificationClientProvider,
 		selectorManagerProvider:     selectorManagerProvider,
 		vaultProvider:               vaultProvider,
-		services:                    map[string]*ManagementService{},
+		services:                    map[TMSID]*ManagementService{},
 	}
 }
 
@@ -126,8 +126,7 @@ func (p *ManagementServiceProvider) Update(tmsID TMSID, val []byte) error {
 	}
 
 	// clear cache
-	key := tmsID.Network + tmsID.Channel + tmsID.Namespace
-	delete(p.services, key)
+	delete(p.services, tmsID)
 
 	p.logger.Infof("update tms [%s] with public params [%s]...done", tmsID, Hashable(val))
 
@@ -150,7 +149,7 @@ func (p *ManagementServiceProvider) managementService(opts ...ServiceOption) (*M
 		return nil, errors.Wrap(err, "failed to normalize options")
 	}
 
-	key := opt.Network + opt.Channel + opt.Namespace
+	key := TMSID{Network: opt.Network, Channel: opt.Channel, Namespace: opt.Namespace}
 	p.logger.Debugf("check existence token manager service for [%s]", key)
 	p.lock.RLock()
 	service, ok := p.services[key]
