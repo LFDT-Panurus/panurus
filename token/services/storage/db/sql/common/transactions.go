@@ -76,6 +76,7 @@ type transactionTables struct {
 	Requests              string
 	TransactionEndorseAck string
 	Findings              string
+	CheckProgress         string
 }
 
 type TransactionStore struct {
@@ -165,6 +166,7 @@ func NewOwnerTransactionStore(readDB *sql.DB, writeDB WriteDB, tables TableNames
 		Requests:              tables.Requests,
 		TransactionEndorseAck: tables.TransactionEndorseAck,
 		Findings:              tables.Findings,
+		CheckProgress:         tables.CheckProgress,
 	}, ci, pi, nil, nil), nil
 }
 
@@ -183,6 +185,7 @@ func NewTransactionStoreWithNotifierAndRecovery(
 		Requests:              tables.Requests,
 		TransactionEndorseAck: tables.TransactionEndorseAck,
 		Findings:              tables.Findings,
+		CheckProgress:         tables.CheckProgress,
 	}, ci, pi, notifier, recoveryLeaderFactory), nil
 }
 
@@ -663,7 +666,7 @@ func (db *TransactionStore) GetSchema() string {
 		db.table.Transactions, db.table.Requests, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions,
 		db.table.Movements, db.table.Requests, db.table.Movements, db.table.Movements, db.table.Movements, db.table.Movements,
 		db.table.TransactionEndorseAck, db.table.TransactionEndorseAck, db.table.TransactionEndorseAck,
-	) + db.getFindingsSchema()
+	) + db.getFindingsSchema() + db.getCheckProgressSchema()
 }
 
 func (db *TransactionStore) NewTransactionStoreTransaction() (dbdriver.TransactionStoreTransaction, error) {

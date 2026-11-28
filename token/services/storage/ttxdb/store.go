@@ -447,6 +447,18 @@ func (d *StoreService) CountOpenFindings(ctx context.Context) (map[int]int64, er
 	return d.db.CountOpenFindings(ctx)
 }
 
+// GetCheckProgress returns the resume point a history-walking drift check last
+// recorded, and false if it has not recorded one.
+func (d *StoreService) GetCheckProgress(ctx context.Context, checker string) (time.Time, bool, error) {
+	return d.db.GetCheckProgress(ctx, checker)
+}
+
+// SetCheckProgress records that a history-walking drift check has verified every
+// transaction stored before resumeFrom.
+func (d *StoreService) SetCheckProgress(ctx context.Context, checker string, resumeFrom time.Time) error {
+	return d.db.SetCheckProgress(ctx, checker, resumeFrom)
+}
+
 // AcquireRecoveryLeadership tries to acquire the DB-backed recovery leadership lease.
 func (d *StoreService) AcquireRecoveryLeadership(ctx context.Context) (dbdriver.RecoveryLeadership, bool, error) {
 	leadership, acquired, err := d.db.AcquireRecoveryLeadership(ctx)
