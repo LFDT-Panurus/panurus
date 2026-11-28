@@ -7,8 +7,8 @@ replace github.com/LFDT-Panurus/panurus => ../
 require (
 	github.com/IBM/idemix v0.4.0
 	github.com/IBM/mathlib v0.4.0
-	github.com/LFDT-Panurus/panurus v0.0.0
-	github.com/LFDT-Panurus/panurus/x/token/services/network/evm v0.0.0
+	github.com/LFDT-Panurus/panurus v0.28.0
+	github.com/LFDT-Panurus/panurus/x/token/services/network/evm v0.27.0
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
 	github.com/gin-gonic/gin v1.12.0
 	github.com/hyperledger-labs/fabric-smart-client v0.29.2

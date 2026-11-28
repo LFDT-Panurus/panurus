@@ -5,7 +5,7 @@ go 1.27.4
 replace github.com/LFDT-Panurus/panurus => ./../../
 
 require (
-	github.com/LFDT-Panurus/panurus v0.0.0
+	github.com/LFDT-Panurus/panurus v0.28.0
 	github.com/hyperledger-labs/fabric-smart-client v0.29.2
 	github.com/hyperledger-labs/fabric-smart-client/integration v0.29.2
 	github.com/stretchr/testify v1.12.1

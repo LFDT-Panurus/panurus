@@ -9,7 +9,7 @@ replace (
 )
 
 require (
-	github.com/LFDT-Panurus/panurus v0.4.1-0.20250528165839-032fb9265504
+	github.com/LFDT-Panurus/panurus v0.28.0
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/hyperledger-labs/fabric-smart-client v0.29.2
 	github.com/hyperledger-labs/fabric-smart-client/integration v0.29.2
