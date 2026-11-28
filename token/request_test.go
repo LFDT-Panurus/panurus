@@ -1126,6 +1126,10 @@ func TestRequest_AuditRecord_OwnerAuditInfo(t *testing.T) {
 
 		walletService := &driver2.WalletService{}
 		walletService.GetAuditInfoReturns(localAuditInfo, nil)
+		// The enrollment ID and revocation handle name the identity and audit info they come from.
+		walletService.GetEIDAndRHStub = func(_ context.Context, id driver.Identity, ai []byte) (string, string, error) {
+			return "eid:" + string(id) + ":" + string(ai), "rh:" + string(ai), nil
+		}
 
 		pp := &driver2.PublicParameters{}
 		pp.PrecisionReturns(64)
@@ -1181,13 +1185,47 @@ func TestRequest_AuditRecord_OwnerAuditInfo(t *testing.T) {
 		record, err := newRequest(localAuditInfo).AuditRecord(ctx)
 		require.NoError(t, err)
 		require.Equal(t, 1, record.Inputs.Count())
-		assert.Equal(t, localAuditInfo, record.Inputs.At(0).OwnerAuditInfo)
+		in := record.Inputs.At(0)
+		assert.Equal(t, localAuditInfo, in.OwnerAuditInfo)
+		// The enrollment ID and revocation handle follow the audit info kept, not the metadata's.
+		assert.Equal(t, "eid:owner1:audit-info-from-wallet-service", in.EnrollmentID)
+		assert.Equal(t, "rh:audit-info-from-wallet-service", in.RevocationHandler)
 	})
 
 	t.Run("local wallet service does not know the owner", func(t *testing.T) {
 		record, err := newRequest(nil).AuditRecord(ctx)
 		require.NoError(t, err)
 		require.Equal(t, 1, record.Inputs.Count())
-		assert.Equal(t, metadataAuditInfo, record.Inputs.At(0).OwnerAuditInfo)
+		in := record.Inputs.At(0)
+		assert.Equal(t, metadataAuditInfo, in.OwnerAuditInfo)
+		assert.Equal(t, "eid:owner1:audit-info-from-metadata", in.EnrollmentID)
+		assert.Equal(t, "rh:audit-info-from-metadata", in.RevocationHandler)
+	})
+
+	t.Run("owner and enrollment ID come from the stored token", func(t *testing.T) {
+		req := newRequest(nil)
+		req.Metadata.Actions[0].TransferMetadata.Inputs[0].Senders[0].Identity = Identity("mallory")
+		record, err := req.AuditRecord(ctx)
+		require.NoError(t, err)
+		require.Equal(t, 1, record.Inputs.Count())
+		in := record.Inputs.At(0)
+		assert.Equal(t, owner, in.Owner)
+		assert.Equal(t, "eid:owner1:audit-info-from-metadata", in.EnrollmentID)
+	})
+
+	t.Run("enrollment ID resolution failure is returned", func(t *testing.T) {
+		req := newRequest(nil)
+		ws := req.TokenService.tms.WalletService().(*driver2.WalletService)
+		calls := 0
+		ws.GetEIDAndRHStub = func(context.Context, driver.Identity, []byte) (string, string, error) {
+			calls++
+			if calls > 1 {
+				return "", "", errors.New("boom")
+			}
+
+			return "eid", "rh", nil
+		}
+		_, err := req.AuditRecord(ctx)
+		require.ErrorContains(t, err, "failed getting enrollment id and revocation handle for input [0]")
 	})
 }

@@ -67,3 +67,6 @@ The validator guarantees the following:
 *   **Auditor Authorization**: Only auditors listed in the public parameters can audit transactions.
 *   **Owner Authorization**: Only legitimate owners can spend their tokens.
 *   **Value Preservation**: In a transfer, the sum of inputs matches the sum of outputs.
+
+The auditor guarantees the following before it signs:
+*   **Input Sender Binding**: Each transfer input's metadata names exactly one sender. The sender equals the spent token's owner, both in the action and in the auditor's stored copy of the token. The sender's audit info must match that owner. The metadata token ID must equal the action input ID. The action input's type and quantity must equal those of the stored token. Otherwise the auditor rejects the transfer, so a spender cannot choose the enrollment ID that the input debits.
