@@ -152,6 +152,12 @@ tidy:
 		(cd $$dir && go mod tidy); \
 	done
 
+.PHONY: api-report
+# print an advisory API compatibility report (apidiff) of the modules changed
+# since BASE (default: the merge-base with origin/main); never fails
+api-report:
+	@GO_MODULES="$(GO_MODULES)" ./ci/scripts/api-report.sh $(if $(BASE),--base $(BASE))
+
 .PHONY: clean
 # clean up docker artifacts and generated files
 clean:
