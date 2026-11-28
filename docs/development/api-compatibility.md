@@ -20,10 +20,11 @@ The script is `ci/scripts/api-report.sh`. Run it directly for more options:
 | :--- | :--- |
 | `--base REF` | The base git ref. Same as `BASE`. |
 | `--all` | Report every module. By default, only the modules whose `.go` files or `go.mod` changed since the base are reported. |
-| `--fail-on-incompatible` | Exit 1 if any module has incompatible changes after filtering. Off by default. |
+| `--fail-on-incompatible` | Exit 1 if any module has incompatible changes after filtering, was removed, or could not be compared. Off by default. |
 | `MODULE_DIR...` | Report only these modules. The default is `GO_MODULES` from the `Makefile`. |
 
-The script checks out the base in a temporary `git worktree` under `$TMPDIR` and removes it afterwards.
+The script checks out the base and `HEAD` in temporary `git worktree`s under `$TMPDIR` and removes them afterwards.
+It compares committed `HEAD`: uncommitted changes are not included.
 It runs with `GOWORK=off`. Each module resolves its local `replace` directives, so the submodules are compared against the root code of the same ref.
 
 ## Reading the report
@@ -31,10 +32,11 @@ It runs with `GOWORK=off`. Each module resolves its local `replace` directives, 
 The report starts with one table row per module: incompatible, compatible and filtered changes.
 A section per module then lists the changes.
 
-- **Filtered** changes are in mock, fake and `testutils` packages, and the exported `Test*` helpers of the `integration` module. They are shown in a collapsed block.
+- **Filtered** changes are about an identifier in a mock, fake or `testutils` package, or an exported identifier of the `integration` module whose name starts with `Test` (functions and types). Only the subject of the change, the text before the first `: `, is matched. They are shown in a collapsed block.
 - **MODULE PATH CHANGED** means that the `module` line of `go.mod` differs. apidiff then reports no changes for that module.
 - **new module** means that the module has no `go.mod` at the base. It is not compared.
-- **apidiff failed** shows the last lines of the error, for example when the base does not build.
+- **module removed** means that the module has a `go.mod` at the base but not at `HEAD`. It counts as one incompatible change.
+- **apidiff failed** shows the last lines of the error, for example when the base does not build. In CI it also emits a warning.
 
 Known blind spots:
 
@@ -47,4 +49,4 @@ Known blind spots:
 
 The `API report` workflow (`.github/workflows/api-report.yml`) runs on every pull request into `main`.
 It compares the PR head with its merge-base, for the changed modules only.
-It writes the report to the job summary. It posts no comment, adds no label, and has read-only permissions.
+It writes the report to the job log and to the job summary. The summary copy is truncated at about 1 MB. It posts no comment, adds no label, and has read-only permissions.

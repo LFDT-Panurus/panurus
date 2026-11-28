@@ -41,4 +41,13 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          make api-report BASE="$(git merge-base "$BASE_SHA" HEAD)" | tee -a "$GITHUB_STEP_SUMMARY"
+          report="$RUNNER_TEMP/api-report.md"
+          make api-report BASE="$(git merge-base "$BASE_SHA" HEAD)" >"$report"
+          cat "$report"
+          # The job summary is limited to 1 MiB; the full report stays in the log.
+          if [ "$(wc -c <"$report")" -gt 1000000 ]; then
+            head -c 1000000 "$report"
+            printf '\n\n**Truncated, see the job log for the full report.**\n'
+          else
+            cat "$report"
+          fi >>"$GITHUB_STEP_SUMMARY"
