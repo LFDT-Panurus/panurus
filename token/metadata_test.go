@@ -9,11 +9,13 @@ package token_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
 	mock2 "github.com/LFDT-Panurus/panurus/token/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
@@ -689,15 +691,58 @@ func newFilterMetadataByRequest(t *testing.T) (*token.Request, *driver.TransferM
 		},
 	}
 
+	req := token.NewRequest(newFilterMetadataByService(t, nil), "an_anchor")
+	req.Metadata.Actions = []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: transfer}}
+
+	return req, transfer
+}
+
+// filterMetadataByLedgerOutput is a ledger output owned by the identity in raw.
+type filterMetadataByLedgerOutput struct{ raw []byte }
+
+func (o *filterMetadataByLedgerOutput) Serialize() ([]byte, error) { return o.raw, nil }
+func (o *filterMetadataByLedgerOutput) IsRedeem() bool             { return false }
+func (o *filterMetadataByLedgerOutput) GetOwner() []byte           { return o.raw }
+
+// newFilterMetadataByService returns a management service whose wallet service reads each
+// receiver's enrollment ID from its audit info.
+// Its issue and transfer services decode any action into one with outputs to Bob and Charlie.
+// auth is the authorization service of the driver.
+func newFilterMetadataByService(t *testing.T, auth driver.Authorization) *token.ManagementService {
+	t.Helper()
 	ws := &mock.WalletService{}
 	ws.GetEnrollmentIDStub = func(_ context.Context, _ driver.Identity, auditInfo []byte) (string, error) {
 		return string(auditInfo), nil
 	}
+	ledgerOutputs := []driver.Output{
+		&filterMetadataByLedgerOutput{raw: []byte("Bob")},
+		&filterMetadataByLedgerOutput{raw: []byte("Charlie")},
+	}
+	transferAction := &mock.TransferAction{}
+	transferAction.NumOutputsReturns(2)
+	transferAction.GetOutputsReturns(ledgerOutputs)
+	transferService := &mock.TransferService{}
+	transferService.DeserializeTransferActionReturns(transferAction, nil)
+	issueAction := &mock.IssueAction{}
+	issueAction.NumOutputsReturns(2)
+	issueAction.GetOutputsReturns(ledgerOutputs)
+	issueService := &mock.IssueService{}
+	issueService.DeserializeIssueActionReturns(issueAction, nil)
+	tokensService := &mock.TokensService{}
+	tokensService.DeobfuscateStub = func(_ context.Context, output driver.TokenOutput, _ driver.TokenOutputMetadata) (*token2.Token, driver.Identity, []driver.Identity, token2.Format, error) {
+		return &token2.Token{Owner: []byte(output), Type: "USD", Quantity: "0x1"}, nil, []driver.Identity{driver.Identity(output)}, "fabtoken", nil
+	}
+	pp := &mock.PublicParameters{}
+	pp.PrecisionReturns(64)
+	ppm := &mock.PublicParamsManager{}
+	ppm.PublicParametersReturns(pp)
 	tms := &mock.TokenManagerService{}
 	tms.WalletServiceReturns(ws)
-	ppm := &mock.PublicParamsManager{}
-	ppm.PublicParametersReturns(&mock.PublicParameters{})
+	tms.TransferServiceReturns(transferService)
+	tms.IssueServiceReturns(issueService)
+	tms.TokensServiceReturns(tokensService)
 	tms.PublicParamsManagerReturns(ppm)
+	tms.AuthorizationReturns(auth)
 	vault := &mock.Vault{}
 	vault.QueryEngineReturns(&mock.QueryEngine{})
 	vp := &mock2.VaultProvider{}
@@ -705,10 +750,7 @@ func newFilterMetadataByRequest(t *testing.T) (*token.Request, *driver.TransferM
 	ms, err := token.NewManagementService(token.TMSID{Network: "n", Channel: "c", Namespace: "ns"}, tms, logging.MustGetLogger(), vp, nil, nil)
 	require.NoError(t, err)
 
-	req := token.NewRequest(ms, "an_anchor")
-	req.Metadata.Actions = []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: transfer}}
-
-	return req, transfer
+	return ms
 }
 
 // TestRequest_FilterMetadataBy_MultipleEIDs verifies that FilterMetadataBy keeps the metadata
@@ -742,4 +784,148 @@ func TestRequest_FilterMetadataBy_NoEIDs(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, filtered.Metadata.Actions, 1)
 	assert.Equal(t, transfer, filtered.Metadata.Actions[0].TransferMetadata)
+}
+
+// TestRequest_FilterMetadataBy_IssueMultipleEIDs verifies that FilterMetadataBy keeps the issue
+// outputs of every passed enrollment ID (issue #2713, issue-action path).
+func TestRequest_FilterMetadataBy_IssueMultipleEIDs(t *testing.T) {
+	req := token.NewRequest(newFilterMetadataByService(t, nil), "an_anchor")
+	issue := &driver.IssueMetadata{Outputs: []*driver.IssueOutputMetadata{
+		{OutputMetadata: []byte("Bob's output"), Receivers: []*driver.AuditableIdentity{{Identity: token.Identity("Bob"), AuditInfo: []byte("Bob")}}},
+		{OutputMetadata: []byte("Charlie's output"), Receivers: []*driver.AuditableIdentity{{Identity: token.Identity("Charlie"), AuditInfo: []byte("Charlie")}}},
+		{OutputMetadata: []byte("Dave's output"), Receivers: []*driver.AuditableIdentity{{Identity: token.Identity("Dave"), AuditInfo: []byte("Dave")}}},
+	}}
+	req.Metadata.Actions = []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: issue}}
+
+	filtered, err := req.FilterMetadataBy(t.Context(), "Bob", "Charlie")
+	require.NoError(t, err)
+	require.Len(t, filtered.Metadata.Actions, 1)
+	got := filtered.Metadata.Actions[0].IssueMetadata.Outputs
+	require.Len(t, got, 3)
+	assert.Equal(t, issue.Outputs[0], got[0])
+	assert.Equal(t, issue.Outputs[1], got[1])
+	assert.Nil(t, got[2])
+}
+
+// TestRequest_FilterMetadataBy_ReceiverSeesAllOwnedOutputs verifies that a node hosting Bob and
+// Charlie extracts both outputs from the request filtered by their enrollment IDs (issue #2713).
+func TestRequest_FilterMetadataBy_ReceiverSeesAllOwnedOutputs(t *testing.T) {
+	req := token.NewRequest(newFilterMetadataByService(t, nil), "an_anchor")
+	req.Actions.Actions = []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer")}}
+	req.Metadata.Actions = []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: &driver.TransferMetadata{
+		Outputs: []*driver.TransferOutputMetadata{
+			{OutputMetadata: []byte("Bob's output"), Receivers: []*driver.AuditableIdentity{{Identity: token.Identity("Bob"), AuditInfo: []byte("Bob")}}},
+			{OutputMetadata: []byte("Charlie's output"), Receivers: []*driver.AuditableIdentity{{Identity: token.Identity("Charlie"), AuditInfo: []byte("Charlie")}}},
+		},
+	}}}
+
+	filtered, err := req.FilterMetadataBy(t.Context(), "Bob", "Charlie")
+	require.NoError(t, err)
+	_, outputs, err := filtered.InputsAndOutputsNoRecipients(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, 2, outputs.Count())
+
+	filtered, err = req.FilterMetadataBy(t.Context(), "Bob")
+	require.NoError(t, err)
+	_, outputs, err = filtered.InputsAndOutputsNoRecipients(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, 1, outputs.Count())
+}
+
+// ownedOutputsAuthorization returns an authorization service where Bob's outputs belong to
+// wallet "bob-wallet" and charlieWalletID tells how Charlie's outputs are claimed.
+// An empty charlieWalletID with charlieMine set models a script or escrow authorization.
+func ownedOutputsAuthorization(charlieWalletID string, charlieMine bool) *mock.Authorization {
+	auth := &mock.Authorization{}
+	auth.IsMineStub = func(_ context.Context, tok *token2.Token) (string, []string, bool) {
+		switch string(tok.Owner) {
+		case "Bob":
+			return "bob-wallet", nil, true
+		case "Charlie":
+			return charlieWalletID, nil, charlieMine
+		default:
+			return "", nil, false
+		}
+	}
+
+	return auth
+}
+
+// newOwnedOutputsRequest returns a request with one action of type typ paying Bob and Charlie.
+// The metadata of the outputs whose owner is in blanked is absent.
+func newOwnedOutputsRequest(t *testing.T, auth driver.Authorization, typ request.ActionType, blanked ...string) *token.Request {
+	t.Helper()
+	req := token.NewRequest(newFilterMetadataByService(t, auth), "an_anchor")
+	req.Actions.Actions = []*driver.TypedAction{{Type: typ, Raw: []byte("action")}}
+	var issueOutputs []*driver.IssueOutputMetadata
+	var transferOutputs []*driver.TransferOutputMetadata
+	for _, owner := range []string{"Bob", "Charlie"} {
+		if slices.Contains(blanked, owner) {
+			issueOutputs = append(issueOutputs, nil)
+			// A blanked output decodes from the wire as an empty entry.
+			transferOutputs = append(transferOutputs, &driver.TransferOutputMetadata{})
+
+			continue
+		}
+		receivers := []*driver.AuditableIdentity{{Identity: token.Identity(owner), AuditInfo: []byte(owner)}}
+		issueOutputs = append(issueOutputs, &driver.IssueOutputMetadata{OutputMetadata: []byte(owner + "'s output"), Receivers: receivers})
+		transferOutputs = append(transferOutputs, &driver.TransferOutputMetadata{OutputMetadata: []byte(owner + "'s output"), Receivers: receivers})
+	}
+	if typ == request.ActionType_ACTION_TYPE_ISSUE {
+		req.Metadata.Actions = []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: &driver.IssueMetadata{Outputs: issueOutputs}}}
+	} else {
+		req.Metadata.Actions = []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: &driver.TransferMetadata{Outputs: transferOutputs}}}
+	}
+
+	return req
+}
+
+// TestRequest_CheckOwnedOutputsMetadata verifies that a request is refused when the metadata of an
+// output owned by a local owner wallet is missing (issue #2713, receiver side).
+func TestRequest_CheckOwnedOutputsMetadata(t *testing.T) {
+	actionTypes := map[string]request.ActionType{
+		"issue":    request.ActionType_ACTION_TYPE_ISSUE,
+		"transfer": request.ActionType_ACTION_TYPE_TRANSFER,
+	}
+	tests := []struct {
+		name            string
+		charlieWalletID string
+		charlieMine     bool
+		blanked         []string
+		wantErr         string
+	}{
+		{name: "all metadata present", charlieWalletID: "charlie-wallet", charlieMine: true},
+		{name: "owned output blanked", charlieWalletID: "charlie-wallet", charlieMine: true, blanked: []string{"Charlie"}, wantErr: "missing metadata for output [0,1] owned by wallet [charlie-wallet]"},
+		{name: "other owner blanked", blanked: []string{"Charlie"}},
+		{name: "script or escrow output blanked", charlieMine: true, blanked: []string{"Charlie"}},
+		{name: "first output blanked", charlieWalletID: "charlie-wallet", charlieMine: true, blanked: []string{"Bob"}, wantErr: "missing metadata for output [0,0] owned by wallet [bob-wallet]"},
+	}
+	for actionName, typ := range actionTypes {
+		for _, tc := range tests {
+			t.Run(actionName+"/"+tc.name, func(t *testing.T) {
+				req := newOwnedOutputsRequest(t, ownedOutputsAuthorization(tc.charlieWalletID, tc.charlieMine), typ, tc.blanked...)
+				err := req.CheckOwnedOutputsMetadata(t.Context())
+				if tc.wantErr == "" {
+					require.NoError(t, err)
+
+					return
+				}
+				require.ErrorContains(t, err, tc.wantErr)
+			})
+		}
+	}
+}
+
+// TestRequest_CheckOwnedOutputsMetadata_NoActions verifies that a request without actions passes
+// without using the authorization service.
+func TestRequest_CheckOwnedOutputsMetadata_NoActions(t *testing.T) {
+	req := token.NewRequest(newFilterMetadataByService(t, nil), "an_anchor")
+	require.NoError(t, req.CheckOwnedOutputsMetadata(t.Context()))
+}
+
+// TestRequest_CheckOwnedOutputsMetadata_NoAuthorization verifies that the check fails without an
+// authorization service.
+func TestRequest_CheckOwnedOutputsMetadata_NoAuthorization(t *testing.T) {
+	req := newOwnedOutputsRequest(t, nil, request.ActionType_ACTION_TYPE_TRANSFER, "Charlie")
+	require.ErrorContains(t, req.CheckOwnedOutputsMetadata(t.Context()), "no authorization service")
 }

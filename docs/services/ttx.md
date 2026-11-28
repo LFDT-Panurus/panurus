@@ -576,6 +576,8 @@ Once fully endorsed, the transaction metadata is distributed to all recipients s
 
 Each remote node receives the metadata filtered by enrollment ID. Parties that resolve to the same long-term identity share one distribution entry. That entry collects the enrollment IDs of all those parties, so a node that hosts several recipients receives the metadata of all their outputs. Auditors receive the full metadata.
 
+A receiving node checks this before it stores the transaction or sends its ack, in `AcceptView` and `EndorseView`. `Request.CheckOwnedOutputsMetadata` returns an error if an output owned by a local owner wallet has no metadata. Without that metadata, the node cannot store the output. Outputs owned by script or escrow identities (HTLC, multisig, policy) are not checked: a party that is not a receiver of such an output legitimately gets no metadata for it.
+
 ## Finality and Discovery
 
 The `FinalityView` allows applications to wait for a transaction to be committed to the ledger. Internally, Panurus's **Network Service** listens for ledger events. When a transaction reaches finality, the Network Service notifies Panurus, which then updates the local `Transactions DB` and `Tokens DB` to reflect the new state.

@@ -991,6 +991,78 @@ func (r *Request) InputsAndOutputs(ctx context.Context) (*InputStream, *OutputSt
 	return r.inputsAndOutputs(ctx, false, false, false)
 }
 
+// CheckOwnedOutputsMetadata returns an error if the metadata of an output owned by a local owner wallet is missing.
+// Without that metadata, the node cannot store the output.
+// Outputs owned by script or escrow identities are not checked:
+// their metadata can be absent for a party that is not a receiver.
+func (r *Request) CheckOwnedOutputsMetadata(ctx context.Context) error {
+	issues, transfers := r.Actions.GetIssues(), r.Actions.GetTransfers()
+	if len(issues) == 0 && len(transfers) == 0 {
+		return nil
+	}
+	tms := r.TokenService.tms
+	auth := tms.Authorization()
+	if auth == nil {
+		return errors.New("can't check outputs: no authorization service")
+	}
+	meta, err := r.GetMetadata()
+	if err != nil {
+		return err
+	}
+
+	is := tms.IssueService()
+	for i, raw := range issues {
+		issueAction, issueMeta, err := issueActionWithMetadata(is, meta, i, raw)
+		if err != nil {
+			return err
+		}
+		for j, output := range issueAction.GetOutputs() {
+			if !issueMeta.IsOutputAbsent(j) && len(issueMeta.Outputs[j].OutputMetadata) != 0 {
+				continue
+			}
+			if err := checkAbsentOutput(ctx, auth, i, j, output); err != nil {
+				return err
+			}
+		}
+	}
+
+	ts := tms.TransferService()
+	for i, raw := range transfers {
+		transferAction, transferMeta, err := transferActionWithMetadata(ts, meta, i, raw)
+		if err != nil {
+			return err
+		}
+		for j, output := range transferAction.GetOutputs() {
+			if !transferMeta.IsOutputAbsent(j) && len(transferMeta.Outputs[j].OutputMetadata) != 0 {
+				continue
+			}
+			if err := checkAbsentOutput(ctx, auth, i, j, output); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// checkAbsentOutput returns an error if the j-th output of the i-th action, whose metadata is absent,
+// is owned by a local owner wallet.
+// Script and escrow authorizations return an empty wallet ID, so their outputs are not reported.
+func checkAbsentOutput(ctx context.Context, auth driver.Authorization, i, j int, output driver.Output) error {
+	if output == nil {
+		return errors.Errorf("output [%d,%d] is nil", i, j)
+	}
+	owner := output.GetOwner()
+	if len(owner) == 0 {
+		return nil
+	}
+	if walletID, _, mine := auth.IsMine(ctx, &token.Token{Owner: owner}); mine && len(walletID) != 0 {
+		return errors.Errorf("missing metadata for output [%d,%d] owned by wallet [%s]", i, j, walletID)
+	}
+
+	return nil
+}
+
 // InputsAndOutputsNoRecipients returns inputs and outputs without recipient identity information.
 func (r *Request) InputsAndOutputsNoRecipients(ctx context.Context) (*InputStream, *OutputStream, error) {
 	is, os, _, err := r.inputsAndOutputs(ctx, false, false, true)

@@ -39,6 +39,11 @@ func (s *AcceptView) Call(context view.Context) (any, error) {
 		return nil, errors.WithMessagef(ErrInvalidInput, "transaction is nil")
 	}
 
+	// refuse, before storing or acking, a transaction that would lose an output owned by this node
+	if err := s.tx.TokenRequest.CheckOwnedOutputsMetadata(context.Context()); err != nil {
+		return nil, errors.Wrapf(err, "invalid transaction [%s]", s.tx.ID())
+	}
+
 	// store transaction in the token transaction database
 	if err := StoreTransactionRecords(context, s.tx); err != nil {
 		return nil, errors.Wrapf(err, "failed storing transaction records %s", s.tx.ID())
