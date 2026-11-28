@@ -296,7 +296,7 @@ func TestManager_StartAcceptsZeroTransactionTimeoutAsUnbounded(t *testing.T) {
 // have passed this silently. Warn, not a Start() failure: see the doc comment
 // on warnIfLeaseMayExpireMidSweep.
 func TestManager_WarnsWhenTransactionTimeoutMayExceedLeaseDuringSweep(t *testing.T) {
-	logger := &sweepLogger{}
+	logger := &sweepLogger{Logger: logging.MustGetLogger()}
 	cfg := recovery2.Config{
 		Enabled:            true,
 		TTL:                time.Second,
@@ -333,7 +333,7 @@ func TestManager_WarnsWhenTransactionTimeoutMayExceedLeaseDuringSweep(t *testing
 // comment), so if ScanInterval is not comfortably shorter than
 // LeaseDuration, the claim can lapse between sweeps.
 func TestManager_WarnsWhenScanIntervalMayExceedLeaseDuration(t *testing.T) {
-	logger := &sweepLogger{}
+	logger := &sweepLogger{Logger: logging.MustGetLogger()}
 	cfg := recovery2.Config{
 		Enabled:            true,
 		TTL:                time.Second,

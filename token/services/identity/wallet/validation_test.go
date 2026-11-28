@@ -31,7 +31,7 @@ func newService() (*wallet.Service, *dmock.IdentityProvider, *dmock.Deserializer
 	mockDeserializer.MatchIdentityReturns(nil)
 
 	service := wallet.NewService(
-		&logging.MockLogger{},
+		logging.MustGetLogger(),
 		mockIP,
 		mockDeserializer,
 		wallet.RoleRegistries{},

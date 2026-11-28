@@ -153,7 +153,7 @@ func TestExtractTokenIDsAndCheckDuplicates(t *testing.T) {
 
 func TestRetrieveAuditTokens(t *testing.T) {
 	ctx := context.Background()
-	logger := &logging.MockLogger{}
+	logger := logging.MustGetLogger()
 	anchor := driver.TokenRequestAnchor("test-tx")
 
 	// testNumRetries mirrors the production default; testRetryDelay is tiny so the
@@ -348,7 +348,7 @@ func TestRetrieveAuditTokens(t *testing.T) {
 //	go test ./token/core/common/ -run '^$' -bench BenchmarkRetrieveAuditTokens -benchtime=20x
 func BenchmarkRetrieveAuditTokens(b *testing.B) {
 	ctx := context.Background()
-	logger := &logging.MockLogger{}
+	logger := logging.MustGetLogger()
 	anchor := driver.TokenRequestAnchor("bench-tx")
 	id1 := &token.ID{TxId: "tx1", Index: 0}
 	tokenIDs := []*token.ID{id1}

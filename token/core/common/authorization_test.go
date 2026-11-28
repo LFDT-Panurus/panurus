@@ -22,7 +22,7 @@ import (
 )
 
 func TestWalletBasedAuthorization(t *testing.T) {
-	logger := &logging.MockLogger{}
+	logger := logging.MustGetLogger()
 	pp := &mock.PublicParameters{}
 	ws := &mock.WalletService{}
 

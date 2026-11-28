@@ -25,7 +25,7 @@ func TestAnchorInContext(t *testing.T) {
 	anchor := driver.TokenRequestAnchor("hello world")
 	anotherAnchor := driver.TokenRequestAnchor("another anchor")
 	v := NewValidator[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer](
-		&logging.MockLogger{},
+		logging.MustGetLogger(),
 		nil,
 		nil,
 		driver.DefaultResourceLimits(),
@@ -83,7 +83,7 @@ func TestAnchorInContext(t *testing.T) {
 }
 
 func TestValidatorWithCounterfeiter(t *testing.T) {
-	logger := &logging.MockLogger{}
+	logger := logging.MustGetLogger()
 	pp := &dmock.PublicParameters{}
 	des := &dmock.Deserializer{}
 	ad := &dmock.ActionDeserializer[driver.TransferAction, driver.IssueAction]{}
