@@ -11,6 +11,7 @@ SPDX-License-Identifier: Apache-2.0
 package token
 
 import (
+	"bytes"
 	"context"
 	"maps"
 	"slices"
@@ -1478,6 +1479,8 @@ func (r *Request) AuditCheck(ctx context.Context) error {
 
 // AuditRecord returns the complete audit record with inputs, outputs, and metadata.
 // Includes full token details (type, quantity, owner info) for auditing purposes.
+//
+// An input's audit info comes from the request, falling back to the local store.
 func (r *Request) AuditRecord(ctx context.Context) (*AuditRecord, error) {
 	inputs, outputs, attr, err := r.inputsAndOutputs(ctx, true, false, false)
 	if err != nil {
@@ -1512,16 +1515,23 @@ func (r *Request) AuditRecord(ctx context.Context) (*AuditRecord, error) {
 		}
 		in.Quantity = q
 
-		// retrieve the owner's audit info
-		ownerAuditInfo, err := r.TokenService.tms.WalletService().GetAuditInfo(ctx, toks[i].Owner)
+		// in.EnrollmentID, in.RevocationHandler and in.Owner were read off the blob the
+		// request carries (extractTransferInputs), so the record keeps that same blob.
+		localAuditInfo, err := r.TokenService.tms.WalletService().GetAuditInfo(ctx, toks[i].Owner)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed getting audit info for owner [%s]", toks[i].Owner)
 		}
-		// The wallet service only knows the identities registered on this node
-		// and returns nil for the others, so keep the audit info the request
-		// metadata already carries when the local lookup finds nothing.
-		if len(ownerAuditInfo) != 0 {
-			in.OwnerAuditInfo = ownerAuditInfo
+		switch {
+		case len(in.OwnerAuditInfo) == 0:
+			// only an issue action's inputs: a transfer input carrying none fails GetEIDAndRH
+			in.OwnerAuditInfo = localAuditInfo
+		case len(localAuditInfo) != 0 && !bytes.Equal(localAuditInfo, in.OwnerAuditInfo):
+			// warn, never fail: nothing binds the local copy to this request
+			// (docs/services/auditor.md, "Input Attribution")
+			r.TokenService.logger.Warnf(
+				"input [%v] of request [%s]: the audit info carried for owner [%s] differs from the locally stored one, using the carried one",
+				in.Id, r.Anchor, toks[i].Owner,
+			)
 		}
 	}
 
