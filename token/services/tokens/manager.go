@@ -82,10 +82,11 @@ func GetService(sp token.ServiceProvider, tmsID token.TMSID) (*Service, error) {
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get manager service")
 	}
-	if err != nil {
-		return nil, err
+	mgr, ok := s.(*ServiceManager)
+	if !ok {
+		return nil, errors.Errorf("invalid manager service, expected [*ServiceManager], got [%T]", s)
 	}
-	tokens, err := s.(*ServiceManager).ServiceByTMSId(tmsID)
+	tokens, err := mgr.ServiceByTMSId(tmsID)
 	if err != nil {
 		return nil, err
 	}

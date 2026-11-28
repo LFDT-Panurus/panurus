@@ -247,6 +247,13 @@ type TokenStoreTransaction interface {
 	Rollback() error
 }
 
+// TokenInserter is an optional extension of TokenStoreTransaction that reports
+// whether the token row was newly inserted (true) or skipped due to an existing
+// primary-key conflict (false).
+type TokenInserter interface {
+	StoreTokenIfAbsent(ctx context.Context, tr TokenRecord, owners []string) (inserted bool, err error)
+}
+
 // TokenStore defines a database to store token related info
 type TokenStore interface {
 	CertificationStore
