@@ -76,6 +76,30 @@ You can run unit tests using the following make targets:
 -   **Regression Unit Tests**: these tests ensure that recent changes have not reintroduced previously fixed bugs
     or broken existing functionality. `make unit-tests-main` runs them, without the test timeout.
 
+### TMS Provider Cache Regression Tests
+
+The provider review tests for [#2306](https://github.com/LFDT-Panurus/panurus/issues/2306)
+exercise cache consistency during public-parameter updates:
+
+- [`token/core/tms_review_test.go`](../../token/core/tms_review_test.go) exercises both
+  real providers with mocked drivers and vaults. It checks lookups during unloading,
+  cache consistency after an unloading error, preservation of the running service
+  after rejected updates, identical-parameter updates, already-held wrappers, and
+  overlapping initialization callbacks for different TMSs.
+- [`token/provider_review_test.go`](../../token/provider_review_test.go) checks eviction
+  before the underlying update, independence of other TMSs during a stalled update,
+  and concurrent lookups sharing one wrapper after an update.
+
+Run these tests with the race detector and repetition:
+
+```bash
+go test -race ./token ./token/core -run '^(TestTMSReview|TestManagementServiceReview)' -count=10 -timeout=120s
+```
+
+The concurrency tests use channels to hold update phases and observe lookup completion
+or mutex waits before releasing them. Cache replacement does not extend the lifetime
+of wrappers obtained before an update; that limitation has its own regression test.
+
 ### Unit Tests in CI
 
 -   **Pull requests and pushes** ([tests.yml](../../.github/workflows/tests.yml)): the `utest` job runs every

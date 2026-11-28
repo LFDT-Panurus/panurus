@@ -12,9 +12,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/core"
 	"github.com/LFDT-Panurus/panurus/token/core/mock"
@@ -780,6 +783,135 @@ func TestTMSProviderConcurrentGet(t *testing.T) {
 	assert.Equal(t, 1, c.fetcher.FetchCallCount(), "the network must be queried once")
 }
 
+// hangFirstTMS starts building the TMS n1/c1/ns1 with a fetcher that blocks until the test ends,
+// and returns once the fetch has started. See https://github.com/LFDT-Panurus/panurus/issues/2306.
+func hangFirstTMS(t *testing.T, c *ppFallbackContext) {
+	t.Helper()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	hung := &drivermock.PublicParamsFetcher{}
+	hung.FetchStub = func() ([]byte, error) {
+		close(entered)
+		<-release
+
+		return nil, errors.New("released")
+	}
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		close(release)
+		<-done
+	})
+	go func() {
+		defer close(done)
+		opts := newPPFallbackOpts(c, nil)
+		opts.PublicParamsFetcher = hung
+		_, _ = c.provider.GetTokenManagerService(opts)
+	}()
+	<-entered
+}
+
+// secondTMSOpts returns the options of a TMS other than n1/c1/ns1, with its own fetcher.
+func secondTMSOpts(t *testing.T, c *ppFallbackContext, publicParams []byte) driver.ServiceOptions {
+	t.Helper()
+	fetcher := &drivermock.PublicParamsFetcher{}
+	fetcher.FetchReturns(c.pubParams(t, "ok"), nil)
+	opts := newPPFallbackOpts(c, publicParams)
+	opts.Namespace = "ns2"
+	opts.PublicParamsFetcher = fetcher
+
+	return opts
+}
+
+// returnsWithin fails the test if f does not return within a few seconds.
+func returnsWithin(t *testing.T, f func() error) {
+	t.Helper()
+	errCh := make(chan error, 1)
+	go func() { errCh <- f() }()
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "blocked behind the creation of another TMS")
+	}
+}
+
+// TestTMSProviderHungFetchDoesNotBlockOtherTMSs verifies that a hung public parameters fetch for
+// one TMS does not block the creation or the update of another TMS.
+func TestTMSProviderHungFetchDoesNotBlockOtherTMSs(t *testing.T) {
+	t.Run("GetTokenManagerService", func(t *testing.T) {
+		c := newPPFallbackContext(t)
+		hangFirstTMS(t, c)
+		opts := secondTMSOpts(t, c, nil)
+		returnsWithin(t, func() error {
+			_, err := c.provider.GetTokenManagerService(opts)
+
+			return err
+		})
+	})
+	t.Run("Update", func(t *testing.T) {
+		c := newPPFallbackContext(t)
+		hangFirstTMS(t, c)
+		opts := secondTMSOpts(t, c, c.pubParams(t, "ok-update"))
+		returnsWithin(t, func() error {
+			return c.provider.Update(opts)
+		})
+	})
+}
+
+// getWaitsForTMSLock reports whether a goroutine in GetTokenManagerService is waiting for a per-TMS lock.
+func getWaitsForTMSLock() bool {
+	buf := make([]byte, 1<<20)
+	buf = buf[:runtime.Stack(buf, true)]
+	for g := range strings.SplitSeq(string(buf), "\n\n") {
+		if strings.Contains(g, "(*keyedMutex).lock") && strings.Contains(g, "GetTokenManagerService") {
+			return true
+		}
+	}
+
+	return false
+}
+
+// TestTMSProviderConcurrentGetAndUpdate verifies that Get and Update for the same TMS serialise:
+// a Get that waits behind an Update sees the updated service and does not build another one.
+func TestTMSProviderConcurrentGetAndUpdate(t *testing.T) {
+	c := newPPFallbackContext(t)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	updated := &drivermock.TokenManagerService{}
+	var calls atomic.Int32
+	c.driver.NewTokenServiceStub = func(driver.TMSID, []byte) (driver.TokenManagerService, error) {
+		// only the first build (the update) blocks; a build that does not wait for it returns at once.
+		if calls.Add(1) > 1 {
+			return c.tms, nil
+		}
+		close(entered)
+		<-release
+
+		return updated, nil
+	}
+
+	updateOpts := newPPFallbackOpts(c, c.pubParams(t, "ok"))
+	updateErr := make(chan error, 1)
+	go func() { updateErr <- c.provider.Update(updateOpts) }()
+	<-entered
+
+	getRes := make(chan driver.TokenManagerService, 1)
+	go func() {
+		tms, err := c.provider.GetTokenManagerService(newPPFallbackOpts(c, nil))
+		assert.NoError(t, err)
+		getRes <- tms
+	}()
+	// release the update only once the get waits for the per-TMS lock, or has already returned.
+	require.Eventually(t, func() bool {
+		return len(getRes) > 0 || getWaitsForTMSLock()
+	}, 5*time.Second, time.Millisecond)
+	close(release)
+
+	require.NoError(t, <-updateErr)
+	assert.Equal(t, updated, <-getRes)
+	assert.Equal(t, 1, c.driver.NewTokenServiceCallCount(), "the TMS must be instantiated once")
+}
+
 // TestTMSProviderUpdateRejectsUnusablePublicParams pins the boundary between resolving a TMS and
 // updating one: resolution may fall back to another source, an update may not. An update carries
 // the public parameters the TMS is to adopt, so when the driver rejects them the update must
@@ -828,6 +960,35 @@ func TestTMSProviderUpdateKeepsTheCachedServiceOnFailure(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, tms, again, "the cached service must still be the one served")
 	assert.Equal(t, 1, c.driver.NewTokenServiceCallCount(), "the cached service must not be rebuilt")
+}
+
+// TestTMSProviderUpdateSwapsBeforeUnload verifies that a lookup that runs while Update unloads the
+// old service gets the new service, never the one being unloaded.
+func TestTMSProviderUpdateSwapsBeforeUnload(t *testing.T) {
+	c := newPPFallbackContext(t)
+	running := c.pubParams(t, "ok-running")
+	runningDigest := sha256.Sum256(running)
+	ppm := &drivermock.PublicParamsManager{}
+	ppm.PublicParamsHashReturns(runningDigest[:])
+	c.tms.PublicParamsManagerReturns(ppm)
+
+	old, err := c.provider.GetTokenManagerService(newPPFallbackOpts(c, running))
+	require.NoError(t, err)
+	require.Equal(t, c.tms, old)
+
+	updated := &drivermock.TokenManagerService{}
+	c.driver.NewTokenServiceReturns(updated, nil)
+	var duringDone driver.TokenManagerService
+	c.tms.DoneStub = func() error {
+		var err error
+		duringDone, err = c.provider.GetTokenManagerService(newPPFallbackOpts(c, nil))
+
+		return err
+	}
+
+	require.NoError(t, c.provider.Update(newPPFallbackOpts(c, c.pubParams(t, "ok-new"))))
+	require.Equal(t, 1, c.tms.DoneCallCount())
+	assert.Same(t, updated, duringDone, "a lookup during unload must get the new service")
 }
 
 // TestTMSProviderConfigurationFor verifies that the configuration of a TMS can be read without

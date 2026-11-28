@@ -66,8 +66,23 @@ type ManagementServiceProvider struct {
 	selectorManagerProvider     SelectorManagerProvider
 	vaultProvider               VaultProvider
 
+	// lock guards services only. It is never held while a management service is built.
 	lock     sync.RWMutex
 	services map[TMSID]*ManagementService
+	// building serialises the creation and the update of each TMS, one key at a time.
+	building keyedMutex
+}
+
+// keyedMutex hands out one mutex per key. Mutexes are never removed.
+type keyedMutex struct{ m sync.Map }
+
+// lock locks the mutex of key and returns its unlock function.
+func (k *keyedMutex) lock(key any) func() {
+	v, _ := k.m.LoadOrStore(key, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+
+	return mu.Unlock
 }
 
 // NewManagementServiceProvider returns a new instance of ManagementServiceProvider
@@ -107,12 +122,20 @@ func (p *ManagementServiceProvider) GetManagementService(opts ...ServiceOption) 
 	return p.managementService(opts...)
 }
 
-// Update uses the given options to update the public parameters of a given TMS.
-// If the public parameters in the options are identical to those in the current TMS, then nothing happens.
-// If a TMS does not exist for the given options, one is created with the given public parameters.
+// Update updates the public parameters of the given TMS.
+// It evicts the cached management wrapper before updating the underlying TMS, even if the update fails.
+// Subsequent lookups wait for the update and build a wrapper around the currently cached core service.
+// If the public parameters are identical to those in the current TMS, the core service is reused.
+// If a TMS does not exist for the given ID, one is created with the given public parameters.
 func (p *ManagementServiceProvider) Update(tmsID TMSID, val []byte) error {
+	key := tmsID
+	defer p.building.lock(key)()
+
+	// Evict before the core can unload the old service. Keep the cache empty on errors:
+	// an update can fail after replacing the core service, while unloading the old one.
 	p.lock.Lock()
-	defer p.lock.Unlock()
+	delete(p.services, key)
+	p.lock.Unlock()
 
 	p.logger.Infof("update tms [%s] with public params [%s]", tmsID, Hashable(val))
 	err := p.tmsProvider.Update(driver.ServiceOptions{
@@ -124,9 +147,6 @@ func (p *ManagementServiceProvider) Update(tmsID TMSID, val []byte) error {
 	if err != nil {
 		return errors.Wrapf(err, "failed updating tms [%s]", tmsID)
 	}
-
-	// clear cache
-	delete(p.services, tmsID)
 
 	p.logger.Infof("update tms [%s] with public params [%s]...done", tmsID, Hashable(val))
 
@@ -160,8 +180,14 @@ func (p *ManagementServiceProvider) managementService(opts ...ServiceOption) (*M
 
 	p.logger.Debugf("lock to create token manager service for [%s]", key)
 
-	p.lock.Lock()
-	defer p.lock.Unlock()
+	defer p.building.lock(key)()
+
+	p.lock.RLock()
+	service, ok = p.services[key]
+	p.lock.RUnlock()
+	if ok {
+		return service, nil
+	}
 
 	var tokenService driver.TokenManagerService
 	driverOpts := driver.ServiceOptions{
@@ -194,7 +220,9 @@ func (p *ManagementServiceProvider) managementService(opts ...ServiceOption) (*M
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to initialize token management service")
 	}
+	p.lock.Lock()
 	p.services[key] = ms
+	p.lock.Unlock()
 
 	return ms, nil
 }

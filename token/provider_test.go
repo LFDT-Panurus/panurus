@@ -8,7 +8,11 @@ package token
 
 import (
 	"context"
+	"runtime"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/driver/mock"
@@ -292,4 +296,143 @@ func TestManagementServiceProvider_KeysDoNotCollide(t *testing.T) {
 
 	require.ErrorContains(t, err, "not cached")
 	assert.Nil(t, ms)
+}
+
+// hookTMSProvider is a concurrency-safe driver.TokenManagerServiceProvider whose behaviour is set per test.
+type hookTMSProvider struct {
+	get    func(opts driver.ServiceOptions) (driver.TokenManagerService, error)
+	update func(opts driver.ServiceOptions) error
+}
+
+func (h *hookTMSProvider) GetTokenManagerService(opts driver.ServiceOptions) (driver.TokenManagerService, error) {
+	return h.get(opts)
+}
+
+func (h *hookTMSProvider) Update(opts driver.ServiceOptions) error {
+	return h.update(opts)
+}
+
+func (h *hookTMSProvider) ConfigurationFor(network, channel, namespace string) (driver.Configuration, error) {
+	return nil, errors.Errorf("not implemented")
+}
+
+// newHookProvider returns a ManagementServiceProvider over h whose management services can be built.
+func newHookProvider(h *hookTMSProvider) *ManagementServiceProvider {
+	return NewManagementServiceProvider(
+		h,
+		&mockNormalizer{},
+		&mockVaultProvider{vault: &mock.Vault{}},
+		&mockCertificationClientProvider{},
+		&mockSelectorManagerProvider{},
+	)
+}
+
+// newBuildableTMS returns a mock TMS that NewManagementService accepts.
+func newBuildableTMS() *mock.TokenManagerService {
+	tms := &mock.TokenManagerService{}
+	tms.PublicParamsManagerReturns(&mock.PublicParamsManager{})
+
+	return tms
+}
+
+// TestManagementServiceProvider_HungTMSDoesNotBlockOtherTMSs verifies that a TMS whose creation hangs
+// blocks neither the creation nor the update of a different TMS (#2306).
+func TestManagementServiceProvider_HungTMSDoesNotBlockOtherTMSs(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	h := &hookTMSProvider{
+		get: func(opts driver.ServiceOptions) (driver.TokenManagerService, error) {
+			if opts.Namespace == "ns1" {
+				close(entered)
+				<-release
+			}
+
+			return newBuildableTMS(), nil
+		},
+		update: func(driver.ServiceOptions) error { return nil },
+	}
+	p := newHookProvider(h)
+
+	hung := make(chan error, 1)
+	go func() {
+		_, err := p.GetManagementService(WithTMSID(TMSID{Network: "n1", Channel: "c1", Namespace: "ns1"}))
+		hung <- err
+	}()
+	<-entered
+	defer func() {
+		close(release)
+		require.NoError(t, <-hung)
+	}()
+
+	done := make(chan error, 2)
+	go func() {
+		_, err := p.GetManagementService(WithTMSID(TMSID{Network: "n1", Channel: "c1", Namespace: "ns2"}))
+		done <- err
+	}()
+	go func() {
+		done <- p.Update(TMSID{Network: "n1", Channel: "c1", Namespace: "ns3"}, []byte("pp"))
+	}()
+	for range 2 {
+		select {
+		case err := <-done:
+			require.NoError(t, err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("a call for another TMS is blocked behind the hung creation of n1/c1/ns1")
+		}
+	}
+}
+
+// waitForLockWaiter waits until a goroutine running fn is blocked on a sync mutex.
+func waitForLockWaiter(t *testing.T, fn string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		buf := make([]byte, 1<<20)
+		buf = buf[:runtime.Stack(buf, true)]
+		for g := range strings.SplitSeq(string(buf), "\n\n") {
+			if strings.Contains(g, fn) && strings.Contains(g, "[sync.") {
+				return true
+			}
+		}
+
+		return false
+	}, 5*time.Second, time.Millisecond)
+}
+
+// TestManagementServiceProvider_ConcurrentGetBuildsOnce verifies that a caller waiting behind the
+// creation of the same TMS returns the service built by the first caller instead of building another one.
+func TestManagementServiceProvider_ConcurrentGetBuildsOnce(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	h := &hookTMSProvider{
+		get: func(driver.ServiceOptions) (driver.TokenManagerService, error) {
+			if calls.Add(1) == 1 {
+				close(entered)
+				<-release
+			}
+
+			return newBuildableTMS(), nil
+		},
+	}
+	p := newHookProvider(h)
+	id := WithTMSID(TMSID{Network: "n1", Channel: "c1", Namespace: "ns1"})
+
+	results := make(chan *ManagementService, 2)
+	errs := make(chan error, 2)
+	get := func() {
+		ms, err := p.GetManagementService(id)
+		results <- ms
+		errs <- err
+	}
+	go get()
+	<-entered
+	go get()
+	waitForLockWaiter(t, "managementService")
+	close(release)
+
+	first, second := <-results, <-results
+	require.NoError(t, <-errs)
+	require.NoError(t, <-errs)
+	assert.Same(t, first, second)
+	assert.Equal(t, int32(1), calls.Load())
 }
