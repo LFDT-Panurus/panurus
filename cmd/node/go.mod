@@ -8,7 +8,7 @@ replace (
 )
 
 require (
-	github.com/LFDT-Panurus/panurus/integration v0.0.0-00010101000000-000000000000
+	github.com/LFDT-Panurus/panurus/integration v0.27.0
 	github.com/hyperledger-labs/fabric-smart-client v0.29.2
 )
 
@@ -18,7 +18,7 @@ require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2 // indirect
 	github.com/IBM/idemix v0.4.0 // indirect
 	github.com/IBM/mathlib v0.4.0 // indirect
-	github.com/LFDT-Panurus/panurus v0.10.1 // indirect
+	github.com/LFDT-Panurus/panurus v0.28.0 // indirect
 	github.com/Microsoft/go-winio v0.6.4 // indirect
 	github.com/XSAM/otelsql v0.44.0 // indirect
 	github.com/benbjohnson/clock v1.3.5 // indirect

@@ -6,7 +6,7 @@ replace github.com/LFDT-Panurus/panurus => ../../../../..
 
 require (
 	github.com/IBM/mathlib v0.4.0
-	github.com/LFDT-Panurus/panurus v0.0.0-00010101000000-000000000000
+	github.com/LFDT-Panurus/panurus v0.28.0
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
 	github.com/hyperledger-labs/fabric-smart-client v0.29.2
 	github.com/stretchr/testify v1.12.1
