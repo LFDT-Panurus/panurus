@@ -4,7 +4,7 @@ checks: checks-fast checks-heavy
 .PHONY: checks-fast
 # fast, purely textual checks (no compilation) — cheap enough to gate the
 # integration-test matrix on. Run in CI's 'checks' job.
-checks-fast: licensecheck gofmt goimports misspell ineffassign protos-lint buf-format tidy-check unit-tests-check unit-tests-mk-test
+checks-fast: licensecheck gofmt goimports misspell ineffassign protos-lint buf-format tidy-check unit-tests-check unit-tests-mk-test gomod-requires-check gomod-requires-check-test
 
 .PHONY: checks-heavy
 # compile-heavy static analysis (invokes the Go type-checker across all
@@ -176,6 +176,16 @@ BUF_BREAKING_AGAINST ?= .git$(BUF_HASH)branch=main
 protos-breaking:
 	@echo "Checking protobuf backward compatibility against '$(BUF_BREAKING_AGAINST)'..."
 	@buf breaking --against '$(BUF_BREAKING_AGAINST)'
+
+.PHONY: gomod-requires-check
+# check that no go.mod requires a Panurus module at a placeholder version or has a toolchain line
+gomod-requires-check:
+	@./ci/scripts/gomod-requires-check.sh
+
+.PHONY: gomod-requires-check-test
+# test ci/scripts/gomod-requires-check.sh
+gomod-requires-check-test:
+	@./ci/scripts/gomod-requires-check-test.sh
 
 .PHONY: tidy-check
 # check that go modules are tidy (run 'make tidy' to fix)

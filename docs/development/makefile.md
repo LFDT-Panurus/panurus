@@ -66,6 +66,8 @@ These targets help keep your project clean and tidy.
 | Target | Description |
 | :--- | :--- |
 | `make tidy` | Runs `go mod tidy` in all modules to ensure dependencies are clean. |
+| `make gomod-requires-check` | Fails if a `go.mod` requires a Panurus module at a placeholder version (`v0.0.0`, `v0.0.0-00010101000000-...`) or has a `toolchain` line. See [Versioning](versioning.md#internal-requires). Part of `make checks-fast`. |
+| `make gomod-requires-check-test` | Tests `ci/scripts/gomod-requires-check.sh` offline. Part of `make checks-fast`. |
 | `make clean` | cleans up Docker artifacts (containers, volumes, networks) and removes generated test output directories. **Use with caution as it removes Docker volumes.** |
 | `make clean-all-containers` | Removes all running and stopped Docker containers. |
 | `make clean-fabric-peer-images` | Removes Docker images related to Fabric peers. |

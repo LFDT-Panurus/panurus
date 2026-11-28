@@ -117,6 +117,17 @@ While the common practice is one module per repository, Go does support multiple
     -   For `modB`: `git tag modB/v1.2.0`
 -   **Complexity:** This can add complexity to your build and release process. Consider carefully if this structure is necessary.
 
+### Internal requires
+
+Panurus has several modules. When one requires another:
+
+-   Require the last published release of that module, for example `github.com/LFDT-Panurus/panurus v0.28.0` or `github.com/LFDT-Panurus/panurus/integration v0.27.0`.
+-   Keep the local `replace` directive. Builds on `main` use the local code.
+-   Never require `v0.0.0`, `v0.0.0-00010101000000-...` or an unpublished version. A tag publishes the `go.mod` as it is, and consumers cannot resolve these versions.
+-   Do not add a `toolchain` line.
+
+`make gomod-requires-check` (part of `make checks-fast`) enforces the placeholder and `toolchain` rules.
+
 ## 8. General Git Best Practices
 
 While not specific to Go versioning, good Git hygiene supports a clean versioning strategy:
