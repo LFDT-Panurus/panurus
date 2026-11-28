@@ -1162,7 +1162,21 @@ func (s *stubStoreTx) AddTransaction(context.Context, ...dbdriver.TransactionRec
 }
 func (s *stubStoreTx) Commit() error { return nil }
 
-type stubAuditStore struct{ dbdriver.AuditTransactionStore }
+// requests backs GetTokenRequest, keyed by anchor; requestErr, when set, is
+// returned instead.
+type stubAuditStore struct {
+	dbdriver.AuditTransactionStore
+	requests   map[string][]byte
+	requestErr error
+}
+
+func (s *stubAuditStore) GetTokenRequest(_ context.Context, txID string) ([]byte, error) {
+	if s.requestErr != nil {
+		return nil, s.requestErr
+	}
+
+	return s.requests[txID], nil
+}
 
 func (s *stubAuditStore) NewTransactionStoreTransaction() (dbdriver.TransactionStoreTransaction, error) {
 	return &stubStoreTx{}, nil

@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package auditor
 
 import (
+	"bytes"
 	"context"
 	"slices"
 	"sync"
@@ -167,7 +168,11 @@ func (a *Service) Audit(ctx context.Context, tx Transaction) (*token.InputStream
 	}
 	// the record is completed before the enrollment IDs are collected, so that
 	// the locks cover the enrollment ID every input is finally booked under
-	record, err := newRequestWrapper(request, tms).AuditRecord(ctx)
+	wrapper := newRequestWrapper(request, tms)
+	if a.auditDB != nil {
+		wrapper.stored = a.auditDB
+	}
+	record, err := wrapper.AuditRecord(ctx)
 	if err != nil {
 		return nil, nil, errors.WithMessagef(err, "failed getting transaction audit record")
 	}
@@ -294,6 +299,9 @@ func (a *Service) Append(ctx context.Context, tx Transaction) error {
 	}
 	// append request to audit db
 	wrapper := newRequestWrapper(request, tms)
+	if a.auditDB != nil {
+		wrapper.stored = a.auditDB
+	}
 	wrapper.cached = a.cachedAuditRecord(request)
 	if wrapper.cached == nil {
 		record, err := wrapper.AuditRecord(ctx)
@@ -472,9 +480,17 @@ func (a *Service) Check(ctx context.Context) ([]string, error) {
 	return a.checkService.Check(ctx)
 }
 
+// storedRequests reads back the token requests this auditor stored.
+type storedRequests interface {
+	GetTokenRequest(ctx context.Context, txID string) ([]byte, error)
+}
+
 type requestWrapper struct {
 	r   *token.Request
 	tms dep.TokenManagementService
+	// stored, when set, is where the input attribution reads the receive
+	// record of a spent token from (see creditedToEIDAndRH).
+	stored storedRequests
 	// cached, when set, is an already attributed audit record for this
 	// request — the snapshot Audit computed, or the one Append attributed and
 	// locked itself; AuditRecord returns it instead of recomputing it.
@@ -572,10 +588,12 @@ func rejectMultiOwnerActions(record *token.AuditRecord) error {
 // canceled context — fails the audit. An input of an issue action is an
 // upgrade input, and falls back to the enrollment ID the outputs of that same
 // issue action are issued to; an upgrade issued to a composite owner spanning
-// enrollment IDs fails the audit (see issuedToEIDAndRH). An owner that maps to
-// no single enrollment ID leaves its input unattributed rather than booked
-// under a guessed enrollment ID, so a record keeping such an input is not
-// fully attributed on return.
+// enrollment IDs fails the audit (see issuedToEIDAndRH). Any input still left
+// without an enrollment ID is attributed from the receive record of its token
+// this auditor stored, never from the audit info the spender supplied (see
+// creditedToEIDAndRH). An input the receive credited to no single enrollment
+// ID stays unattributed rather than booked under a guessed one, so a record
+// keeping such an input is not fully attributed on return.
 func (r *requestWrapper) completeInputsWithEmptyEID(ctx context.Context, record *token.AuditRecord) error {
 	filter := record.Inputs.ByEnrollmentID("")
 	if filter.Count() == 0 {
@@ -642,11 +660,21 @@ func (r *requestWrapper) completeInputsWithEmptyEID(ctx context.Context, record 
 				return err
 			}
 		}
+		if eID == "" && r.stored != nil {
+			// the audit info the spender supplied resolves to nothing — it may
+			// lack some member's audit info — and, for an upgrade, the issued
+			// outputs name no single enrollment ID, while the receive may have
+			// credited one: debit exactly what was credited
+			eID, rID, err = r.creditedToEIDAndRH(ctx, item)
+			if err != nil {
+				return err
+			}
+		}
 		if eID == "" {
-			// the owner maps to no single enrollment ID — a composite owner,
-			// or one whose audit info is unavailable. Leave the input
-			// unattributed: amount aggregations skip an empty enrollment ID,
-			// whereas a guessed one would be charged to the wrong party.
+			// nothing was credited to a single enrollment ID for this token.
+			// Leave the input unattributed: amount aggregations skip an empty
+			// enrollment ID, whereas a guessed one would be charged to the
+			// wrong party.
 			continue
 		}
 		item.EnrollmentID = eID
@@ -719,6 +747,72 @@ func issuedToEIDAndRH(outputs *token.OutputStream, actionIndex int) (string, str
 	}
 
 	return eID, rH, nil
+}
+
+// creditedToEIDAndRH returns the enrollment ID and revocation handle the
+// receive of the token spent by item was credited to, read from the request
+// this auditor stored for the transaction that created it. It applies the rule
+// ttxdb.Movements credits by: every row of the output must carry the same
+// non-empty enrollment ID, otherwise nothing was credited and empty values are
+// returned. The handle is returned only for a single-row (plain) owner.
+//
+// With no stored request, this auditor credited nothing for the token, and
+// empty values are returned with a warning. A stored request whose outputs
+// the current TMS cannot read, for example after a public-parameter rotation,
+// also returns empty values with a warning: what it credited cannot be
+// recovered, and failing would block a spend that may owe no debit. A stored
+// request that fails to load or unmarshal, has no output for the token, or
+// names an owner other than the vault's fails the audit, as does a canceled
+// context.
+func (r *requestWrapper) creditedToEIDAndRH(ctx context.Context, item *token.Input) (string, string, error) {
+	if item.Id == nil {
+		return "", "", errors.Errorf("input names no token id")
+	}
+	raw, err := r.stored.GetTokenRequest(ctx, item.Id.TxId)
+	if err != nil {
+		return "", "", errors.WithMessagef(err, "failed loading the stored receive record of input [%v]", item.Id)
+	}
+	if raw == nil {
+		logger.WarnfContext(ctx, "input [%v] resolves to no enrollment id and no receive record is stored for it: leaving it unattributed", item.Id)
+
+		return "", "", nil
+	}
+	req, err := r.tms.NewFullRequestFromBytes(raw)
+	if err != nil {
+		return "", "", errors.WithMessagef(err, "failed decoding the stored receive record of input [%v]", item.Id)
+	}
+	outputs, err := req.Outputs(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", "", errors.WithMessagef(err, "failed reading the outputs of the stored receive record of input [%v]", item.Id)
+		}
+		logger.WarnfContext(ctx, "input [%v] resolves to no enrollment id and the current TMS cannot read the outputs of its stored receive record: leaving it unattributed: %v", item.Id, err)
+
+		return "", "", nil
+	}
+	rows := outputs.Filter(func(o *token.Output) bool {
+		return o.Index == item.Id.Index && len(o.Owner) != 0
+	}).Outputs()
+	if len(rows) == 0 {
+		return "", "", errors.Errorf("stored receive record has no output for spent token [%v]", item.Id)
+	}
+	eID := rows[0].EnrollmentID
+	for _, o := range rows {
+		if !bytes.Equal(o.Token.Owner, item.Owner) {
+			return "", "", errors.Errorf("owner of output [%v] in the stored receive record does not match the owner of the spent token", item.Id)
+		}
+		if o.EnrollmentID != eID {
+			eID = ""
+		}
+	}
+	if eID == "" {
+		return "", "", nil
+	}
+	if len(rows) == 1 {
+		return eID, rows[0].RevocationHandler, nil
+	}
+
+	return eID, "", nil
 }
 
 // String returns a string representation of the wrapped token request.
