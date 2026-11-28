@@ -757,13 +757,12 @@ func issuedToEIDAndRH(outputs *token.OutputStream, actionIndex int) (string, str
 // returned. The handle is returned only for a single-row (plain) owner.
 //
 // With no stored request, this auditor credited nothing for the token, and
-// empty values are returned with a warning. A stored request whose outputs
-// the current TMS cannot read, for example after a public-parameter rotation,
-// also returns empty values with a warning: what it credited cannot be
-// recovered, and failing would block a spend that may owe no debit. A stored
-// request that fails to load or unmarshal, has no output for the token, or
-// names an owner other than the vault's fails the audit, as does a canceled
-// context.
+// empty values are returned with a warning. A stored request that fails to
+// load or unmarshal, whose outputs the current TMS cannot read (for example
+// after a public-parameter rotation), that has no output for the token, or
+// that names an owner other than the vault's fails the audit: what was
+// credited cannot be recovered, and passing would leave it undebited. The
+// spender avoids this path by supplying complete audit info.
 func (r *requestWrapper) creditedToEIDAndRH(ctx context.Context, item *token.Input) (string, string, error) {
 	if item.Id == nil {
 		return "", "", errors.Errorf("input names no token id")
@@ -783,12 +782,7 @@ func (r *requestWrapper) creditedToEIDAndRH(ctx context.Context, item *token.Inp
 	}
 	outputs, err := req.Outputs(ctx)
 	if err != nil {
-		if ctx.Err() != nil {
-			return "", "", errors.WithMessagef(err, "failed reading the outputs of the stored receive record of input [%v]", item.Id)
-		}
-		logger.WarnfContext(ctx, "input [%v] resolves to no enrollment id and the current TMS cannot read the outputs of its stored receive record: leaving it unattributed: %v", item.Id, err)
-
-		return "", "", nil
+		return "", "", errors.WithMessagef(err, "failed reading the outputs of the stored receive record of input [%v]", item.Id)
 	}
 	rows := outputs.Filter(func(o *token.Output) bool {
 		return o.Index == item.Id.Index && len(o.Owner) != 0

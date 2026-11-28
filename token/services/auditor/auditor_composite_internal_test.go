@@ -626,9 +626,9 @@ func TestService_Append_Issue2843_UncachedSpendDebitsStoredCredit(t *testing.T) 
 }
 
 // A stored receive record whose outputs the current TMS cannot read — the
-// shape a public-parameter rotation leaves — keeps the input unattributed
-// rather than blocking the spend.
-func TestService_Audit_Issue2843_UnreadableStoredOutputsStayUnattributed(t *testing.T) {
+// shape a public-parameter rotation leaves — fails the audit rather than
+// leaving the credit undebited.
+func TestService_Audit_Issue2843_UnreadableStoredOutputsFail(t *testing.T) {
 	lock, ms, partial := issue2843Lock(t)
 	store := &stubAuditStore{requests: map[string][]byte{}}
 	_, _, err := auditStored(t, store, nil, lock)
@@ -637,9 +637,8 @@ func TestService_Audit_Issue2843_UnreadableStoredOutputsStayUnattributed(t *test
 	spend := compositeTransfer{anchor: "spend", spent: ms, out: dave, outMembers: []party{dave}, known: []party{partial}, spentFrom: "lock"}
 
 	// no history: the spend's TMS no longer decodes the actions of lock
-	record, _, err := auditStored(t, store, nil, spend)
-	require.NoError(t, err)
-	assert.Empty(t, record.Inputs.At(0).EnrollmentID)
+	_, _, err = auditStored(t, store, nil, spend)
+	require.ErrorContains(t, err, "failed reading the outputs of the stored receive record")
 }
 
 // A stored receive record that fails the store's integrity check fails the
@@ -677,8 +676,7 @@ func TestCreditedToEIDAndRH_UnmarshalErrorFails(t *testing.T) {
 	require.ErrorContains(t, err, "failed decoding the stored receive record")
 }
 
-// A canceled context while reading the stored outputs fails the audit
-// instead of leaving the input unattributed.
+// A canceled context while reading the stored outputs fails the audit.
 func TestCreditedToEIDAndRH_CanceledContextFails(t *testing.T) {
 	lock, _, _ := issue2843Lock(t)
 	store := &stubAuditStore{requests: map[string][]byte{}}
