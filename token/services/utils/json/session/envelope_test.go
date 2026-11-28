@@ -15,6 +15,7 @@ import (
 	jsession "github.com/LFDT-Panurus/panurus/token/services/utils/json/session"
 	utilsession "github.com/LFDT-Panurus/panurus/token/services/utils/session"
 	"github.com/LFDT-Panurus/panurus/token/services/utils/session/mock"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -422,4 +423,129 @@ func BenchmarkRoundTrip(b *testing.B) {
 		var dst msg
 		_ = jsession.UnwrapBody(raw, testTypeA, &dst)
 	}
+}
+
+// --- ReceiveAnyTyped ---
+
+type countingCounter struct{ n *float64 }
+
+func (c countingCounter) With(...string) metrics.Counter { return c }
+func (c countingCounter) Add(delta float64)              { *c.n += delta }
+
+type nopHistogram struct{}
+
+//nolint:ireturn // implements metrics.Histogram; the interface fixes the return type
+func (h nopHistogram) With(...string) metrics.Histogram { return h }
+func (nopHistogram) Observe(float64)                    {}
+
+func newCountingMetrics() (*jsession.EnvelopeMetrics, *float64, *float64) {
+	received, errs := new(float64), new(float64)
+
+	return &jsession.EnvelopeMetrics{
+		Sent:     countingCounter{n: new(float64)},
+		Received: countingCounter{n: received},
+		Errors:   countingCounter{n: errs},
+		Size:     nopHistogram{},
+	}, received, errs
+}
+
+func newSessionWith(t *testing.T, raw []byte) *utilsession.S {
+	t.Helper()
+	mockSession := &mock.Session{}
+	ch := make(chan *view.Message, 1)
+	if raw != nil {
+		ch <- &view.Message{Payload: raw, Status: int32(view.OK)}
+	}
+	mockSession.ReceiveReturns(ch)
+	mockSession.InfoReturns(view.SessionInfo{ID: "test"})
+
+	return utilsession.New(mockSession, t.Context(), jsession.JSONMarshaller{})
+}
+
+func TestReceiveAnyTypedWithMetrics_AcceptsAnyType(t *testing.T) {
+	for _, typ := range []string{testTypeA, testTypeB} {
+		raw, err := json.Marshal(jsession.Envelope{Version: jsession.CurrentVersion, Type: typ, Body: json.RawMessage(`{"k":1}`)})
+		require.NoError(t, err)
+		m, received, errs := newCountingMetrics()
+
+		env, err := jsession.ReceiveAnyTypedWithMetrics(newSessionWith(t, raw), time.Second, m)
+		require.NoError(t, err)
+		assert.Equal(t, typ, env.Type)
+		assert.JSONEq(t, `{"k":1}`, string(env.Body))
+		assert.InDelta(t, 1, *received, 0)
+		assert.InDelta(t, 0, *errs, 0)
+	}
+}
+
+func TestReceiveAnyTypedWithMetrics_RejectsInvalidEnvelope(t *testing.T) {
+	cases := map[string]struct {
+		env    jsession.Envelope
+		target error
+	}{
+		"future version": {jsession.Envelope{Version: 99, Type: testTypeA, Body: json.RawMessage(`{}`)}, jsession.ErrVersionMismatch},
+		"empty type":     {jsession.Envelope{Version: jsession.CurrentVersion, Body: json.RawMessage(`{}`)}, nil},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			raw, err := json.Marshal(tc.env)
+			require.NoError(t, err)
+			m, received, errs := newCountingMetrics()
+
+			_, err = jsession.ReceiveAnyTypedWithMetrics(newSessionWith(t, raw), time.Second, m)
+			require.Error(t, err)
+			if tc.target != nil {
+				require.ErrorIs(t, err, tc.target)
+			}
+			assert.InDelta(t, 0, *received, 0)
+			assert.InDelta(t, 1, *errs, 0)
+		})
+	}
+}
+
+func TestReceiveAnyTypedWithMetrics_Timeout(t *testing.T) {
+	_, err := jsession.ReceiveAnyTypedWithMetrics(newSessionWith(t, nil), time.Millisecond, nil)
+	require.ErrorIs(t, err, utilsession.ErrTimeout)
+}
+
+func TestTypedSession_ReceiveAnyTyped(t *testing.T) {
+	raw, err := json.Marshal(jsession.Envelope{Version: jsession.CurrentVersion, Type: testTypeC, Body: json.RawMessage(`{}`)})
+	require.NoError(t, err)
+	ts := &jsession.TypedSession{S: newSessionWith(t, raw)}
+
+	env, err := ts.ReceiveAnyTyped(time.Second)
+	require.NoError(t, err)
+	assert.Equal(t, testTypeC, env.Type)
+}
+
+// FuzzReceiveAnyTypedWithMetrics feeds untrusted bytes to the any-type receive: it must not
+// panic, must return only well-formed envelopes, and must record exactly one metric.
+func FuzzReceiveAnyTypedWithMetrics(f *testing.F) {
+	valid, err := json.Marshal(jsession.Envelope{Version: jsession.CurrentVersion, Type: testTypeA, Body: json.RawMessage(`{"k":"v"}`)})
+	require.NoError(f, err)
+	f.Add(valid)
+	f.Add([]byte{})
+	f.Add(valid[:len(valid)/2])
+	f.Add([]byte(`{"v":99,"t":"x","b":{}}`))
+	f.Add([]byte(`{"v":1,"t":"","b":{}}`))
+	f.Add([]byte(`{"t":"x","b":{}}`))
+	f.Add([]byte(`null`))
+
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		if raw == nil {
+			raw = []byte{} // nil would queue no message
+		}
+		m, received, errs := newCountingMetrics()
+		env, err := jsession.ReceiveAnyTypedWithMetrics(newSessionWith(t, raw), time.Second, m)
+		if err != nil {
+			require.Nil(t, env)
+			require.InDelta(t, 1, *errs, 0)
+			require.InDelta(t, 0, *received, 0)
+
+			return
+		}
+		require.Equal(t, jsession.CurrentVersion, env.Version)
+		require.NotEmpty(t, env.Type)
+		require.InDelta(t, 1, *received, 0)
+		require.InDelta(t, 0, *errs, 0)
+	})
 }

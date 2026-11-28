@@ -22,6 +22,8 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/ttx"
 	mock2 "github.com/LFDT-Panurus/panurus/token/services/ttx/dep/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep/tokenapi"
+	jsession "github.com/LFDT-Panurus/panurus/token/services/utils/json/session"
+	utilsession "github.com/LFDT-Panurus/panurus/token/services/utils/session"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/endpoint"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
@@ -48,6 +50,8 @@ type TestEndorseViewContextInput struct {
 	ExtraTransferSender token.Identity
 	// SignatureRequests, when set, queues one request per listed signer instead of one.
 	SignatureRequests []token.Identity
+	// QueueNothing leaves the session channel empty; the test feeds it via ch.
+	QueueNothing bool
 }
 
 type TestEndorseViewContext struct {
@@ -57,6 +61,8 @@ type TestEndorseViewContext struct {
 	storageProvider *mock2.StorageProvider
 	storage         *mock2.Storage
 	session         *mock2.Session
+	ch              chan *view.Message
+	txRaw           []byte
 }
 
 func newTestEndorseViewContext(t *testing.T, input *TestEndorseViewContextInput) *TestEndorseViewContext {
@@ -207,7 +213,9 @@ func newTestEndorseViewContext(t *testing.T, input *TestEndorseViewContextInput)
 	//  CancelledContext=false, SigRequestOnly=true:
 	//    → only sig-request queued; phase-2 blocks until timer fires (not useful in
 	//      unit tests, reserved for live testing).
-	if len(input.SignatureRequests) != 0 {
+	if input.QueueNothing {
+		// the test feeds the channel itself
+	} else if len(input.SignatureRequests) != 0 {
 		for _, signer := range input.SignatureRequests {
 			ch <- &view.Message{
 				Payload: mustEnvelopeBytes(t, ttx.TypeSignatureRequest, &ttx.SignatureRequest{Signer: signer}),
@@ -221,7 +229,7 @@ func newTestEndorseViewContext(t *testing.T, input *TestEndorseViewContextInput)
 			Payload: mustEnvelopeBytes(t, ttx.TypeSignatureRequest, signatureRequest),
 		}
 	}
-	if !input.CancelledContext && !input.SigRequestOnly {
+	if !input.CancelledContext && !input.SigRequestOnly && !input.QueueNothing {
 		// then the transaction
 		ch <- &view.Message{
 			Payload: mustEnvelopeBytes(t, ttx.TypeTransaction, &ttx.TransactionPayload{Raw: txRaw}),
@@ -238,6 +246,8 @@ func newTestEndorseViewContext(t *testing.T, input *TestEndorseViewContextInput)
 		storage:         storage,
 		storageProvider: storageProvider,
 		session:         session,
+		ch:              ch,
+		txRaw:           txRaw,
 	}
 
 	return c
@@ -550,4 +560,65 @@ func TestEndorseView_SameSignerAcrossIssueAndTransfer(t *testing.T) {
 		require.NoError(t, json.Unmarshal(mustUnwrapBody(t, msg, ttx.TypeSignature), &payload))
 		assert.Equal(t, []byte("a_token_sigma"), payload.Signature, "signature %d", i)
 	}
+}
+
+// Each request arrives within the budget, but together they exceed it: the collection must time out.
+func TestEndorseView_SignatureCollectionSharesOneDeadline(t *testing.T) {
+	testCtx := newTestEndorseViewContext(t, &TestEndorseViewContextInput{
+		ExtraTransferSender: token.Identity("a_sender"),
+		QueueNothing:        true,
+	})
+	const budget = time.Second
+	gap := 600 * time.Millisecond
+	msgs := [][]byte{
+		mustEnvelopeBytes(t, ttx.TypeSignatureRequest, &ttx.SignatureRequest{Signer: token.Identity("an_issuer")}),
+		mustEnvelopeBytes(t, ttx.TypeSignatureRequest, &ttx.SignatureRequest{Signer: token.Identity("a_sender")}),
+		mustEnvelopeBytes(t, ttx.TypeTransaction, &ttx.TransactionPayload{Raw: testCtx.txRaw}),
+	}
+	go func() {
+		for _, msg := range msgs {
+			select {
+			case <-time.After(gap):
+			case <-t.Context().Done():
+				return
+			}
+			testCtx.ch <- &view.Message{Payload: msg}
+		}
+	}()
+
+	v := ttx.NewEndorseView(testCtx.tx)
+	ttx.SetEndorseViewReceiveBudget(v, budget)
+	_, err := v.Call(testCtx.ctx)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ttx.ErrHandlingSignatureRequests)
+	require.ErrorIs(t, err, utilsession.ErrTimeout)
+	// only the first request was answered
+	assert.Equal(t, 1, testCtx.session.SendCallCount())
+}
+
+// A message that is neither a request nor the distributed transaction is a signature-request failure.
+func TestEndorseView_UnexpectedMessageTypeDuringCollection(t *testing.T) {
+	testCtx := newTestEndorseViewContext(t, &TestEndorseViewContextInput{QueueNothing: true})
+	testCtx.ch <- &view.Message{
+		Payload: mustEnvelopeBytes(t, ttx.TypeSignature, &ttx.SignaturePayload{Signature: []byte("a_sigma")}),
+	}
+
+	_, err := ttx.NewEndorseView(testCtx.tx).Call(testCtx.ctx)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ttx.ErrHandlingSignatureRequests)
+	require.ErrorIs(t, err, jsession.ErrTypeMismatch)
+	assert.Equal(t, 0, testCtx.session.SendCallCount())
+}
+
+// The mismatch error counts outstanding requests, not distinct signers.
+func TestEndorseView_MismatchReportsOutstandingCount(t *testing.T) {
+	testCtx := newTestEndorseViewContext(t, &TestEndorseViewContextInput{
+		ExtraTransferSender: token.Identity("a_sender"),
+		SignatureRequests:   []token.Identity{token.Identity("an_issuer"), token.Identity("a_stranger")},
+	})
+
+	_, err := ttx.NewEndorseView(testCtx.tx).Call(testCtx.ctx)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ttx.ErrSignerIdentityMismatch)
+	assert.Contains(t, err.Error(), "[1] still pending")
 }

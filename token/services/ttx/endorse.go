@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/driver"
@@ -33,6 +34,8 @@ type EndorseView struct {
 	// set when signature collection consumed the distribution message; receiveTransaction
 	// takes it from here rather than reading the session again
 	pendingMessage *jsession.Envelope
+	// receiveBudget bounds the whole signature collection; zero means DefaultReceiveTransactionTimeout
+	receiveBudget time.Duration
 }
 
 // NewEndorseView returns an instance of the EndorseView embedding the passed transaction.
@@ -88,6 +91,12 @@ func (s *EndorseView) Call(context view.Context) (any, error) {
 	return s.tx, nil
 }
 
+// SigFanOutTimeout bounded how long the endorser waited for each signature request.
+//
+// Deprecated: EndorseView no longer uses it. Signature collection is bounded by
+// DefaultReceiveTransactionTimeout.
+const SigFanOutTimeout = 1 * time.Minute
+
 // handleSignatureRequests processes the signature requests for the transaction this view has been constructed with.
 // It expects to deal with messages coming from CollectEndorsementsView.
 func (s *EndorseView) handleSignatureRequests(context view.Context) error {
@@ -113,8 +122,14 @@ func (s *EndorseView) handleSignatureRequests(context view.Context) error {
 	for _, signerIdentity := range requiredSigners {
 		pending[signerIdentity.UniqueID()]++
 	}
+	// one deadline for the whole collection, so N requests cannot take N budgets
+	budget := s.receiveBudget
+	if budget == 0 {
+		budget = DefaultReceiveTransactionTimeout
+	}
+	deadline := time.Now().Add(budget)
 	for i := range requiredSigners {
-		more, err := s.handleSignatureRequestFor(context, typedSession, i, pending, tokenRequestToSign)
+		more, err := s.handleSignatureRequestFor(context, typedSession, i, pending, deadline, tokenRequestToSign)
 		if err != nil {
 			return err
 		}
@@ -127,26 +142,30 @@ func (s *EndorseView) handleSignatureRequests(context view.Context) error {
 }
 
 // handleSignatureRequestFor answers one signature request, reporting whether more may follow.
-func (s *EndorseView) handleSignatureRequestFor(context view.Context, typedSession *jsession.TypedSession, i int, pending map[string]int, tokenRequestToSign []byte) (bool, error) {
+func (s *EndorseView) handleSignatureRequestFor(context view.Context, typedSession *jsession.TypedSession, i int, pending map[string]int, deadline time.Time, tokenRequestToSign []byte) (bool, error) {
 	signatureRequest := &SignatureRequest{}
 
 	if i == 0 && s.tx.FromSignatureRequest != nil {
 		signatureRequest = s.tx.FromSignatureRequest
 	} else {
 		logger.DebugfContext(context.Context(), "receiving signature request...")
-		// The whole budget, not a shorter per-request deadline: the initiator may send
-		// fewer requests (WithPolicySigners), making this the receive that takes the
-		// distributed transaction, which is allowed the full budget to arrive.
-		env, err := typedSession.ReceiveAnyTyped(DefaultReceiveTransactionTimeout)
+		// The remaining collection budget, not a shorter per-request deadline: the initiator
+		// may send fewer requests (WithPolicySigners), making this the receive that takes
+		// the distributed transaction.
+		env, err := typedSession.ReceiveAnyTyped(time.Until(deadline))
 		if err != nil {
 			return false, errors.Wrap(err, "failed reading signature request")
 		}
-		// the initiator moved on to distribution: fewer requests than expected, not a timeout
-		if env.Type != TypeSignatureRequest {
+		switch env.Type {
+		case TypeSignatureRequest:
+		case TypeTransaction, TypeTransactionResponse:
+			// the initiator moved on to distribution: fewer requests than expected, not a timeout
 			logger.DebugfContext(context.Context(), "signature collection ended early with a [%s] message, no further requests expected", env.Type)
 			s.pendingMessage = env
 
 			return false, nil
+		default:
+			return false, errors.Join(errors.Errorf("unexpected message type [%s]", env.Type), jsession.ErrTypeMismatch)
 		}
 		if err := json.Unmarshal(env.Body, signatureRequest); err != nil {
 			return false, errors.Wrap(err, "failed unmarshalling signature request")
@@ -155,11 +174,16 @@ func (s *EndorseView) handleSignatureRequestFor(context view.Context, typedSessi
 
 	signerIdentity := signatureRequest.Signer
 	if pending[signerIdentity.UniqueID()] <= 0 {
+		outstanding := 0
+		for _, n := range pending {
+			outstanding += n
+		}
+
 		return false, errors.Wrapf(
 			ErrSignerIdentityMismatch,
 			"signature request's signer [%s] is not an outstanding required signer, [%d] still pending",
 			signerIdentity,
-			len(pending),
+			outstanding,
 		)
 	}
 	pending[signerIdentity.UniqueID()]--
@@ -207,14 +231,7 @@ func (s *EndorseView) nextTransaction(context view.Context) (*Transaction, error
 	}
 	s.pendingMessage = nil
 
-	if env.Type != TypeTransaction && env.Type != TypeTransactionResponse {
-		return nil, errors.Join(errors.Errorf("unexpected message type [%s]", env.Type), jsession.ErrTypeMismatch)
-	}
-	var payload TransactionPayload
-	if err := json.Unmarshal(env.Body, &payload); err != nil {
-		return nil, errors.Wrap(err, "failed unmarshalling transaction payload")
-	}
-	tx, err := NewTransactionFromBytes(context, payload.Raw)
+	tx, err := transactionFromEnvelope(context, env)
 	if err != nil {
 		return nil, err
 	}

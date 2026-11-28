@@ -67,11 +67,18 @@ func (f *ReceiveTransactionView) Call(context view.Context) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	logger.DebugfContext(context.Context(), "ReceiveTransactionView: received %s, len [%d][%s]", env.Type, len(env.Body), utils.Hashable(env.Body))
+
+	return transactionFromEnvelope(context, env)
+}
+
+// transactionFromEnvelope decodes a TypeTransaction, TypeTransactionResponse, or
+// TypeSignatureRequest envelope into a transaction.
+func transactionFromEnvelope(context view.Context, env *jsession.Envelope) (*Transaction, error) {
 	if len(env.Body) == 0 {
 		return nil, errors.Errorf("received empty envelope body")
 	}
-
-	logger.DebugfContext(context.Context(), "ReceiveTransactionView: received %s, len [%d][%s]", env.Type, len(env.Body), utils.Hashable(env.Body))
 
 	switch env.Type {
 	case TypeTransaction, TypeTransactionResponse:

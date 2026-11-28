@@ -611,7 +611,10 @@ signature verification around it fall outside that window.
 **Invariant:** `responder receive > 2 x signature phase + audit + approval`
 
 The responder reads signature requests under this same budget: that receive may be the one
-that takes the distributed transaction, so it cannot carry a shorter deadline.
+that takes the distributed transaction, so it cannot carry a shorter deadline. The budget is
+one deadline for the whole collection, not one per request, so N requests cannot extend the
+wait to N budgets. Only a transaction envelope ends collection early; any other type fails
+with `ErrHandlingSignatureRequests`.
 
 | Leg | Constant | Value |
 |---|---|---|
