@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	maps0 "maps"
 	"math"
+	"slices"
 	"sync"
 	"time"
 
@@ -36,8 +37,9 @@ type distributionListEntry struct {
 	IsMe     bool
 	LongTerm view.Identity
 	ID       view.Identity
-	EID      string
-	Auditor  bool
+	// EIDs lists the enrollment IDs of the remote parties that share LongTerm.
+	EIDs    []string
+	Auditor bool
 }
 
 //go:generate counterfeiter -o dep/mock/external_wallet_signer.go -fake-name ExternalWalletSigner . ExternalWalletSigner
@@ -594,34 +596,9 @@ func (c *CollectEndorsementsView) distributeTxToParties(context view.Context, di
 	}
 
 	// Marshal the payload for each remote party on this goroutine.
-	// If the party is an auditor, then send the full set of metadata.
-	// Otherwise, filter the metadata by Enrollment ID.
-	logger.DebugfContext(context.Context(), "start distributing to %d parties", len(finalDistributionList))
-	remote := make([]distributionListEntry, 0, len(finalDistributionList))
-	payloads := make([][]byte, 0, len(finalDistributionList))
-	for i, entry := range finalDistributionList {
-		// If it is me, no need to open a remote connection. Just store the envelope locally.
-		if entry.IsMe && !entry.Auditor {
-			logger.DebugfContext(context.Context(), "tx [%d] is me [%s], endorse locally", i, entry.ID)
-
-			continue
-		}
-		logger.DebugfContext(context.Context(), "tx [%d] is not me [%s:%s], ask endorse", i, entry.ID, entry.EID)
-
-		var txRaw []byte
-		var err error
-		if entry.Auditor {
-			logger.DebugfContext(context.Context(), "This is an auditor [%s], send the full set of metadata", entry.ID)
-			txRaw, err = c.tx.Bytes(context.Context())
-		} else {
-			logger.DebugfContext(context.Context(), "This is not an auditor [%s], send the filtered metadata", entry.ID)
-			txRaw, err = c.tx.Bytes(context.Context(), entry.EID)
-		}
-		if err != nil {
-			return errors.Wrap(err, "failed marshalling transaction content")
-		}
-		remote = append(remote, entry)
-		payloads = append(payloads, txRaw)
+	remote, payloads, err := c.marshalPayloads(context.Context(), finalDistributionList)
+	if err != nil {
+		return err
 	}
 
 	// TODO:
@@ -632,12 +609,12 @@ func (c *CollectEndorsementsView) distributeTxToParties(context view.Context, di
 	// the acks are recorded on this goroutine from the collected answers.
 	sigmas, err := fanOut(context.Context(), len(remote), AnswerCollectionTimeout, func(i int) ([]byte, error) {
 		entry := &remote[i]
-		logger.DebugfContext(context.Context(), "Distribute to %s", entry.EID)
+		logger.DebugfContext(context.Context(), "Distribute to %v", entry.EIDs)
 		sigma, err := c.distributeTxToParty(context, entry, payloads[i])
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed distribute evn of tx [%s] to party [%s:%s]", c.tx.ID(), entry.EID, entry.ID)
+			return nil, errors.Wrapf(err, "failed distribute evn of tx [%s] to party [%v:%s]", c.tx.ID(), entry.EIDs, entry.ID)
 		}
-		logger.DebugfContext(context.Context(), "Done distributing to %s", entry.EID)
+		logger.DebugfContext(context.Context(), "Done distributing to %v", entry.EIDs)
 
 		return sigma, nil
 	})
@@ -651,6 +628,45 @@ func (c *CollectEndorsementsView) distributeTxToParties(context view.Context, di
 	}
 
 	return nil
+}
+
+// marshalPayloads returns the remote entries of distributionList and the payload to send to each.
+// An auditor receives the full set of metadata.
+// Any other party receives the metadata filtered by its enrollment IDs.
+func (c *CollectEndorsementsView) marshalPayloads(ctx context.Context, distributionList []distributionListEntry) ([]distributionListEntry, [][]byte, error) {
+	logger.DebugfContext(ctx, "start distributing to %d parties", len(distributionList))
+	remote := make([]distributionListEntry, 0, len(distributionList))
+	payloads := make([][]byte, 0, len(distributionList))
+	for i, entry := range distributionList {
+		// If it is me, no need to open a remote connection. Just store the envelope locally.
+		if entry.IsMe && !entry.Auditor {
+			logger.DebugfContext(ctx, "tx [%d] is me [%s], endorse locally", i, entry.ID)
+
+			continue
+		}
+		logger.DebugfContext(ctx, "tx [%d] is not me [%s:%v], ask endorse", i, entry.ID, entry.EIDs)
+
+		var txRaw []byte
+		var err error
+		if entry.Auditor {
+			logger.DebugfContext(ctx, "This is an auditor [%s], send the full set of metadata", entry.ID)
+			txRaw, err = c.tx.Bytes(ctx)
+		} else {
+			logger.DebugfContext(ctx, "This is not an auditor [%s], send the filtered metadata", entry.ID)
+			// Bytes with no enrollment ID returns the full metadata: never send it to a non-auditor.
+			if len(entry.EIDs) == 0 {
+				return nil, nil, errors.Errorf("no enrollment ID for party [%s]", entry.ID)
+			}
+			txRaw, err = c.tx.Bytes(ctx, entry.EIDs...)
+		}
+		if err != nil {
+			return nil, nil, errors.Wrap(err, "failed marshalling transaction content")
+		}
+		remote = append(remote, entry)
+		payloads = append(payloads, txRaw)
+	}
+
+	return remote, payloads, nil
 }
 
 // distributeTxToParty sends the transaction to a single party, waits for their acknowledgment,
@@ -771,6 +787,7 @@ func resolveLongTermIdentity(context view.Context, party view.Identity, isMe boo
 
 // addPartyToDistributionList resolves party's long-term identity and, if not already present in
 // distributionListCompressed, appends a new (non-auditor) entry for it.
+// If a remote non-auditor entry has the same long-term identity, it adds party's enrollment ID to that entry.
 func (c *CollectEndorsementsView) addPartyToDistributionList(context view.Context, party view.Identity, mine collections.Set[string], distributionListCompressed []distributionListEntry) ([]distributionListEntry, error) {
 	// For each party in the distribution list:
 	// - check if it is me
@@ -794,28 +811,49 @@ func (c *CollectEndorsementsView) addPartyToDistributionList(context view.Contex
 	}
 	logger.DebugfContext(context.Context(), "searching for long term identity [%s]", longTermIdentity)
 
-	for _, entry := range distributionListCompressed {
-		if longTermIdentity.Equal(entry.LongTerm) {
+	for i := range distributionListCompressed {
+		entry := &distributionListCompressed[i]
+		if !longTermIdentity.Equal(entry.LongTerm) {
+			continue
+		}
+		// The same remote node can host owners with different enrollment IDs:
+		// it must receive the metadata of all of them.
+		if isMe || entry.IsMe || entry.Auditor {
 			logger.DebugfContext(context.Context(), "skip adding [%s] to distribution list, already added", party)
 
 			return distributionListCompressed, nil
 		}
+		eID, err := c.tx.TokenService().WalletManager().GetEnrollmentID(context.Context(), party)
+		if err != nil {
+			// The node is already in the list, as before #2713.
+			logger.DebugfContext(context.Context(), "skip adding [%s] to distribution list, already added, no enrollment ID: %s", party, err)
+
+			return distributionListCompressed, nil
+		}
+		if !slices.Contains(entry.EIDs, eID) {
+			logger.DebugfContext(context.Context(), "adding enrollment ID of [%s] to distribution list entry [%s]", party, entry.ID)
+			entry.EIDs = append(entry.EIDs, eID)
+		}
+
+		return distributionListCompressed, nil
 	}
 
-	logger.DebugfContext(context.Context(), "adding [%s] to distribution list", party)
-	eID := ""
+	var eIDs []string
 	if !isMe {
-		eID, err = c.tx.TokenService().WalletManager().GetEnrollmentID(context.Context(), party)
+		eID, err := c.tx.TokenService().WalletManager().GetEnrollmentID(context.Context(), party)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed getting enrollment ID for [%s]", party.UniqueID())
 		}
+		eIDs = []string{eID}
 	}
+
+	logger.DebugfContext(context.Context(), "adding [%s] to distribution list", party)
 
 	return append(distributionListCompressed, distributionListEntry{
 		IsMe:     isMe,
 		LongTerm: longTermIdentity,
 		ID:       party,
-		EID:      eID,
+		EIDs:     eIDs,
 		Auditor:  false,
 	}), nil
 }
