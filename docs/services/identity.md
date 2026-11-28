@@ -482,6 +482,7 @@ Standard PKIX identities.
 *   **Encoding**:
     - `TypedIdentity` payload: Raw X.509 certificate bytes.
     - Audit Info: JSON.
+*   **Audit Info Matching**: The audit info matches a certificate when `EID` equals the certificate's common name (left of any `@`) and `RH` equals the base64 SHA-256 of its PKIX public key.
 *   **Usage**: Ideal for infrastructure components (nodes, services) or scenarios where anonymity is not required.
 *   **Implementation**: `token/services/identity/x509`.
 

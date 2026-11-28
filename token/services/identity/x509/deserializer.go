@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package x509
 
 import (
+	"bytes"
 	"context"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
@@ -31,11 +32,14 @@ func (a *AuditMatcherDeserializer) GetAuditInfoMatcher(ctx context.Context, owne
 		return nil, errors.Wrapf(err, "failed to unmarshal")
 	}
 
-	return &AuditInfoMatcher{EnrollmentID: ai.EID}, nil
+	return &AuditInfoMatcher{EnrollmentID: ai.EID, RevocationHandle: ai.RH}, nil
 }
 
+// AuditInfoMatcher matches an x509 identity against the enrollment ID and
+// revocation handle of its audit info.
 type AuditInfoMatcher struct {
-	EnrollmentID string
+	EnrollmentID     string
+	RevocationHandle []byte
 }
 
 func (a *AuditInfoMatcher) Match(_ context.Context, id []byte) error {
@@ -45,6 +49,13 @@ func (a *AuditInfoMatcher) Match(_ context.Context, id []byte) error {
 	}
 	if eid != a.EnrollmentID {
 		return errors.Errorf("expected [%s], got [%s]", a.EnrollmentID, eid)
+	}
+	rh, err := crypto.GetRevocationHandle(id)
+	if err != nil {
+		return errors.Wrap(err, "failed to get revocation handle")
+	}
+	if !bytes.Equal(rh, a.RevocationHandle) {
+		return errors.Errorf("revocation handle mismatch for enrollment ID [%s]", eid)
 	}
 
 	return nil

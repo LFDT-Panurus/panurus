@@ -12,6 +12,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/actions"
 	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/setup"
 	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/driver/mock"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/stretchr/testify/require"
 )
@@ -39,7 +40,7 @@ func buildRedeemAuditContext(t *testing.T, issuers []driver.Identity, approvingI
 
 	metadata := &driver.TransferMetadata{
 		Inputs: []*driver.TransferInputMetadata{
-			{TokenID: tokenID},
+			{TokenID: tokenID, Senders: []*driver.AuditableIdentity{{Identity: inputToken.Owner, AuditInfo: []byte("alice-audit-info")}}},
 		},
 		Outputs: []*driver.TransferOutputMetadata{
 			{},
@@ -53,6 +54,7 @@ func buildRedeemAuditContext(t *testing.T, issuers []driver.Identity, approvingI
 	return &AuditContext{
 		PP:                   pp,
 		TokenRequestMetadata: &driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
+		Deserializer:         &mock.Deserializer{},
 		AuditTokens:          map[string]*token.Token{tokenID.String(): inputToken},
 		TransferAction:       action,
 		ActionIndex:          0,

@@ -98,10 +98,19 @@ func TestAuditMatcherDeserializer(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotNil(t, matcher)
 
-		// Test the matcher
+		// A certificate with the same EID but another key does not match the revocation handle.
 		certPEM := crypto.GenerateTestCertWithCN(t, "user123")
 		err = matcher.Match(ctx, certPEM)
+		require.ErrorContains(t, err, "revocation handle mismatch")
+
+		// The audit info a key manager builds for the certificate matches it.
+		rh, err := crypto.GetRevocationHandle(certPEM)
 		require.NoError(t, err)
+		auditInfoBytes, err = (&AuditInfo{EID: "user123", RH: rh}).Bytes()
+		require.NoError(t, err)
+		matcher, err = des.GetAuditInfoMatcher(ctx, nil, auditInfoBytes)
+		require.NoError(t, err)
+		require.NoError(t, matcher.Match(ctx, certPEM))
 	})
 
 	t.Run("Invalid AuditInfo", func(t *testing.T) {
@@ -117,12 +126,29 @@ func TestAuditInfoMatcher(t *testing.T) {
 	// Test success when matching an id based on a certificate with a given common name
 	// against AuditInfo with the same EID
 	t.Run("Matching EnrollmentID", func(t *testing.T) {
+		certPEM := crypto.GenerateTestCertWithCN(t, "user123")
+		rh, err := crypto.GetRevocationHandle(certPEM)
+		require.NoError(t, err)
 		matcher := &AuditInfoMatcher{
-			EnrollmentID: "user123",
+			EnrollmentID:     "user123",
+			RevocationHandle: rh,
+		}
+		err = matcher.Match(ctx, certPEM)
+		require.NoError(t, err)
+	})
+
+	// Test failure when the EID matches but the revocation handle belongs to another key
+	t.Run("Non-Matching RevocationHandle", func(t *testing.T) {
+		other := crypto.GenerateTestCertWithCN(t, "user123")
+		rh, err := crypto.GetRevocationHandle(other)
+		require.NoError(t, err)
+		matcher := &AuditInfoMatcher{
+			EnrollmentID:     "user123",
+			RevocationHandle: rh,
 		}
 		certPEM := crypto.GenerateTestCertWithCN(t, "user123")
-		err := matcher.Match(ctx, certPEM)
-		require.NoError(t, err)
+		err = matcher.Match(ctx, certPEM)
+		require.ErrorContains(t, err, "revocation handle mismatch for enrollment ID [user123]")
 	})
 
 	// Test failure when matching an id based on a certificate with a given common name

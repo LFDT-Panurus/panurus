@@ -1523,6 +1523,18 @@ func (r *Request) AuditRecord(ctx context.Context) (*AuditRecord, error) {
 		if len(ownerAuditInfo) != 0 {
 			in.OwnerAuditInfo = ownerAuditInfo
 		}
+
+		// Resolve the enrollment ID and revocation handle again from the stored
+		// owner and the audit info kept above, not from the metadata sender.
+		if in.ActionType == request.ActionType_ACTION_TYPE_TRANSFER {
+			eID, rID, err := r.TokenService.tms.WalletService().GetEIDAndRH(ctx, toks[i].Owner, in.OwnerAuditInfo)
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed getting enrollment id and revocation handle for input [%d]", i)
+			}
+			in.Owner = toks[i].Owner
+			in.EnrollmentID = eID
+			in.RevocationHandler = rID
+		}
 	}
 
 	return &AuditRecord{

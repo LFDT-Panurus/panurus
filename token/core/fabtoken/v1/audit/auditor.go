@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package audit
 
 import (
+	"bytes"
 	"context"
 	"slices"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/setup"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -165,6 +167,15 @@ func TransferAuditValidate() ValidateTransferAuditFunc {
 			return errors.Wrapf(err, "token type validation failed for transfer action")
 		}
 
+		// Bind each input's sender, and so the enrollment ID the auditor debits, to the
+		// spent token's owner, as zkatdlog does.
+		if auditCtx.Deserializer == nil {
+			return errors.Errorf("deserializer is nil")
+		}
+		if err := validateTransferInputs(ctx, auditCtx.Deserializer, action.Inputs, metadata.Inputs, auditCtx.AuditTokens, auditCtx.PP.Precision()); err != nil {
+			return errors.Wrapf(err, "transfer action inputs do not match metadata")
+		}
+
 		// For redeems, validate that the issuer who approved the redeem is one of the
 		// issuers listed in the public parameters, mirroring the chaincode validator's own
 		// membership check (TransferSignatureValidate) and the equivalent audit-time check
@@ -186,4 +197,76 @@ func TransferAuditValidate() ValidateTransferAuditFunc {
 
 		return nil
 	}
+}
+
+// validateTransferInputs checks that every input's metadata names exactly one sender. The sender
+// must be the owner of the spent token, both in the action and in the auditor's own copy of the
+// token, and its audit info must match that owner. The action input's type and quantity must
+// equal those of the stored token.
+func validateTransferInputs(
+	ctx context.Context,
+	des driver.Deserializer,
+	inputs []*actions.TransferActionInput,
+	inputsMetadata []*driver.TransferInputMetadata,
+	auditTokens map[string]*token.Token,
+	precision uint64,
+) error {
+	if len(inputs) != len(inputsMetadata) {
+		return errors.Errorf("expected [%d] input metadata, got [%d]", len(inputs), len(inputsMetadata))
+	}
+	for i, in := range inputs {
+		if in == nil || in.ID == nil || in.Input == nil {
+			return errors.Errorf("input at index [%d] is nil", i)
+		}
+		md := inputsMetadata[i]
+		if md == nil {
+			return errors.Errorf("metadata for input at index [%d] is nil", i)
+		}
+		if len(md.Senders) != 1 {
+			return errors.Errorf("input metadata at index [%d] must have exactly one sender, found [%d]", i, len(md.Senders))
+		}
+		sender := md.Senders[0]
+		if sender == nil {
+			return errors.Errorf("sender at index [%d] is nil", i)
+		}
+		if md.TokenID == nil || !md.TokenID.Equal(*in.ID) {
+			return errors.Errorf("token ID mismatch at input [%d]", i)
+		}
+		owner := in.Input.Owner
+		if len(owner) == 0 {
+			return errors.Errorf("input at index [%d] has an empty owner", i)
+		}
+		if !bytes.Equal(sender.Identity, owner) {
+			return errors.Errorf("sender identity at index [%d] does not match token owner", i)
+		}
+		auditToken, ok := auditTokens[md.TokenID.String()]
+		if !ok || auditToken == nil {
+			return errors.Errorf("input token at index [%d] not found in audit tokens", i)
+		}
+		if !bytes.Equal(auditToken.Owner, owner) {
+			return errors.Errorf("token owner at index [%d] does not match the stored token owner", i)
+		}
+		if in.Input.Type != auditToken.Type {
+			return errors.Errorf("token type at index [%d] does not match the stored token type", i)
+		}
+		q, err := token.ToQuantity(in.Input.Quantity, precision)
+		if err != nil {
+			return errors.Wrapf(err, "invalid quantity for input at index [%d]", i)
+		}
+		storedQ, err := token.ToQuantity(auditToken.Quantity, precision)
+		if err != nil {
+			return errors.Wrapf(err, "invalid stored quantity for input at index [%d]", i)
+		}
+		if q.Cmp(storedQ) != 0 {
+			return errors.Errorf("token quantity at index [%d] does not match the stored token quantity", i)
+		}
+		if len(sender.AuditInfo) == 0 {
+			return errors.Errorf("sender at index [%d] has empty audit info", i)
+		}
+		if err := des.MatchIdentity(ctx, owner, sender.AuditInfo); err != nil {
+			return errors.Wrapf(err, "sender audit info at index [%d] does not match token owner", i)
+		}
+	}
+
+	return nil
 }
