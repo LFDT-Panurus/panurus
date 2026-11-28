@@ -73,6 +73,13 @@ These targets help keep your project clean and tidy.
 | `make lint-auto-fix` | Runs `golangci-lint` and automatically fixes issues where possible. |
 | `make govulncheck` | Scans dependencies for known, reachable vulnerabilities with `govulncheck`. Findings listed in `ci/govulncheck-allowlist.txt` don't fail the build. |
 
+## Release
+
+| Target | Description |
+| :--- | :--- |
+| `make tag-release VERSION=vX.Y.Z [DRY=1] [SIGN=1]` | Creates an annotated tag for every module in `GO_MODULES` at `HEAD`, and prints the `git push --atomic` command that publishes them. It never pushes. See [Tagging a Panurus release](versioning.md#tagging-a-panurus-release). |
+| `make tag-release-test` | Tests `ci/scripts/tag-release.sh` offline, in a throwaway repository (`ci/scripts/tag-release-test.sh`). Part of `make checks-fast`. |
+
 ## Tools Generation
 
 | Target | Description |

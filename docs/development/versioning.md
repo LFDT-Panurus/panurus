@@ -117,6 +117,22 @@ While the common practice is one module per repository, Go does support multiple
     -   For `modB`: `git tag modB/v1.2.0`
 -   **Complexity:** This can add complexity to your build and release process. Consider carefully if this structure is necessary.
 
+### Tagging a Panurus release
+
+Panurus tags every module in lockstep with `make tag-release` (`ci/scripts/tag-release.sh`):
+
+```bash
+make tag-release VERSION=v0.29.0 DRY=1   # run every check, print the tags, create nothing
+make tag-release VERSION=v0.29.0 SIGN=1  # create signed, annotated tags at HEAD
+git push --atomic origin v0.29.0 integration/v0.29.0 ...   # the exact command the script prints
+```
+
+-   **Module list:** the script tags the modules in `GO_MODULES` (`Makefile`). The root module gets `vX.Y.Z`; every other module gets `<dir>/vX.Y.Z`. It fails if a `go.mod` tracked by git is not in `GO_MODULES`, or if a module in `GO_MODULES` has no tracked `go.mod`. Untracked `go.mod` files, for example in nested worktrees, are ignored.
+-   **Untagged modules:** `tools` is never tagged. `cmd/profiler` is not tagged until it is added to `GO_MODULES`. Both are listed in `UNTAGGED_MODULES` in the script.
+-   **Checks:** the version must match `vMAJOR.MINOR.PATCH` or `vMAJOR.MINOR.PATCH-rc.N`. Tracked files must have no uncommitted changes. No tag may exist locally or on `origin` (`git ls-remote --tags`). The script creates no tag if a check fails, and deletes the tags it created if a later tag fails.
+-   **Tags:** every tag is annotated, with the message `<module path> <version>`. `SIGN=1` (`--sign`) signs them with `git tag -s` and your git signing configuration (`user.signingkey`, `gpg.format`). Without it the script warns that the tags are unsigned.
+-   **Publishing:** the script never pushes. Push the exact list it prints with `git push --atomic`, never `git push --tags`: `--tags` pushes every local tag, and GitHub sends no push event when more than 3 tags are pushed at once.
+
 ## 8. General Git Best Practices
 
 While not specific to Go versioning, good Git hygiene supports a clean versioning strategy:

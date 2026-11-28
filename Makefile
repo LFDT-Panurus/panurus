@@ -341,8 +341,13 @@ list-dep-modules:
 #########################
 
 .PHONY: tag-release
-tag-release: ## Create git tags for all modules at HEAD. Usage: make tag-release VERSION=v0.13.0 [DRY=1]
+tag-release: ## Create annotated git tags for all GO_MODULES at HEAD. Usage: make tag-release VERSION=v0.13.0 [DRY=1] [SIGN=1]
 ifndef VERSION
 	$(error VERSION is required. Usage: make tag-release VERSION=v0.13.0)
 endif
-	./ci/scripts/tag-release.sh $(if $(DRY),--dry) $(VERSION)
+	./ci/scripts/tag-release.sh $(if $(DRY),--dry) $(if $(SIGN),--sign) $(VERSION)
+
+.PHONY: tag-release-test
+# test ci/scripts/tag-release.sh offline, in a throwaway repository
+tag-release-test:
+	./ci/scripts/tag-release-test.sh
