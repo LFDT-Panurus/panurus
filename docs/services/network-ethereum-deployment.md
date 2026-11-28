@@ -160,9 +160,9 @@ Four things are easy to get wrong here:
   counting toward a quorum.
 - **`conflictGrace` is not a tuning knob to raise for safety.** It bounds how long the recovery sweep
   waits, after first observing that a transaction's input is already spent on chain, before recording
-  it as `Invalid` — see "Condemning on evidence, not just on elapsed time" in
-  [network-ethereum.md](./network-ethereum.md). A value above `finality.timeout` is not rejected but is
-  effectively dead: the age gate always condemns first at that point.
+  it as `Invalid` (see "Condemning on evidence" in
+  [network-ethereum.md](./network-ethereum.md)). A value above `finality.timeout` is not rejected, but
+  the sweep clamps it to the timeout.
 
 ## Step 4 - Verify the deployment
 
