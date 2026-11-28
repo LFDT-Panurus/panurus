@@ -176,6 +176,12 @@ func TestCircuitBreaker_BenignErrorsNotCounted(t *testing.T) {
 		cb.RecordResult(identity.ErrUnresolvableIdentity)
 	}
 	assert.Equal(t, observability.StateClosed, cb.State())
+
+	// Untrusted identities are caller input, not operational failures
+	for range 10 {
+		cb.RecordResult(errors.Wrap(identity.ErrUntrustedIdentity, "forged owner"))
+	}
+	assert.Equal(t, observability.StateClosed, cb.State())
 	require.NoError(t, cb.Allow())
 
 	// Benign context cancellation and deadline exceeded should not trip breaker

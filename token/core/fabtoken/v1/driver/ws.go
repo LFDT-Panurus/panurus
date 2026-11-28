@@ -7,6 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 package driver
 
 import (
+	"context"
+
 	"github.com/LFDT-Panurus/panurus/token/core"
 	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
 	v2 "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/setup"
@@ -14,6 +16,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/config"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/deserializer"
+	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/membership"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/role"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/wallet"
@@ -43,6 +46,17 @@ func (d BaseWalletServiceFactory) newWalletService(
 	metricsProvider metrics.Provider,
 ) (*wallet.Service, error) {
 	tmsID := tmsConfig.ID()
+	fabPP, ok := pp.(*v2.PublicParams)
+	if !ok {
+		return nil, errors.Errorf("invalid public parameters type [%T]", pp)
+	}
+	if len(fabPP.X509OwnerRoots) == 0 {
+		logger.Warnf("public parameters carry no x509 owner roots: x509 owner identities are not checked against a CA, any node can claim any enrollment ID")
+	}
+	eidrh, err := NewEIDRHDeserializer(fabPP)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed to create enrollment ID deserializer")
+	}
 
 	deserializerManager := deserializer.NewTypedSignerDeserializerMultiplex()
 	identityDB, err := storageProvider.IdentityStore(tmsID)
@@ -60,7 +74,7 @@ func (d BaseWalletServiceFactory) newWalletService(
 		return nil, errors.WithMessagef(err, "failed to create identity config")
 	}
 	identityProvider := identity.NewProvider(
-		logger.Named("identity"), identityDB, deserializerManager, binder, NewEIDRHDeserializer(), identityMetrics,
+		logger.Named("identity"), identityDB, deserializerManager, binder, eidrh, identityMetrics,
 	)
 	identityProvider.SetSignerRouter(signerRouter)
 
@@ -80,6 +94,9 @@ func (d BaseWalletServiceFactory) newWalletService(
 	newRole, err := roleFactory.NewRole(identity.OwnerRole, false, nil, x509.NewKeyManagerProvider(identityConfig, keyStore, ignoreRemote))
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to create owner role")
+	}
+	if len(fabPP.X509OwnerRoots) != 0 {
+		warnUntrustedOwners(context.Background(), logger, newRole, eidrh)
 	}
 	roles := role.NewRoles()
 	roles.Register(identity.OwnerRole, newRole)
@@ -105,7 +122,10 @@ func (d BaseWalletServiceFactory) newWalletService(
 		return nil, errors.Wrapf(err, "failed to get identity storage provider")
 	}
 	signerRouter.SetConfIDResolver(walletDB)
-	deserializer := NewDeserializer()
+	deserializer, err := NewDeserializer(fabPP)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed to create deserializer")
+	}
 	ws := wallet.NewService(
 		logger,
 		identityProvider,
@@ -114,6 +134,33 @@ func (d BaseWalletServiceFactory) newWalletService(
 	)
 
 	return ws, nil
+}
+
+// warnUntrustedOwners logs a warning for each local owner identity that fails the x509 owner checks of eidrh.
+func warnUntrustedOwners(ctx context.Context, logger logging.Logger, owners idriver.Role, eidrh *EIDRHDeserializer) {
+	ids, err := owners.IdentityIDs()
+	if err != nil {
+		logger.Warnf("failed to list local owner identities: %v", err)
+
+		return
+	}
+	for _, id := range ids {
+		info, err := owners.GetIdentityInfo(ctx, id)
+		if err != nil {
+			logger.Warnf("failed to get local owner identity [%s]: %v", id, err)
+
+			continue
+		}
+		ownerID, auditInfo, err := info.Get(ctx)
+		if err != nil {
+			logger.Warnf("failed to get local owner identity [%s]: %v", id, err)
+
+			continue
+		}
+		if _, err := eidrh.GetEnrollmentID(ctx, ownerID, auditInfo); err != nil {
+			logger.Warnf("local owner identity [%s] fails the x509 owner checks of the public parameters: %v", id, err)
+		}
+	}
 }
 
 // WalletServiceFactory is a factory for fabtoken wallet services.

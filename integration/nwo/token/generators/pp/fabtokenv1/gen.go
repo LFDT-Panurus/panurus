@@ -8,8 +8,11 @@ package fabtokenv1
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strconv"
 
+	cryptogen "github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/fabtokenv1"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
 	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/setup"
 	"github.com/LFDT-Panurus/panurus/token/driver"
@@ -43,6 +46,10 @@ func (f *FabTokenPublicParamsGenerator) Generate(tms *topology.TMS, wallets *top
 		return nil, err
 	}
 
+	if err := addOwnerRoots(pp, args); err != nil {
+		return nil, err
+	}
+
 	keyStore := x509.NewKeyStore(kvs.NewTrackedMemory())
 	if err := addAuditors(pp, tms, wallets, keyStore); err != nil {
 		return nil, err
@@ -62,7 +69,7 @@ func (f *FabTokenPublicParamsGenerator) Generate(tms *topology.TMS, wallets *top
 }
 
 // precisionFromArgs returns the precision passed as the second generator argument (the first is
-// empty), or setup.DefaultPrecision when the generator was not given exactly two arguments.
+// the owner CA directory, see addOwnerRoots), or setup.DefaultPrecision when the generator was not given exactly two arguments.
 func precisionFromArgs(args []any) (uint64, error) {
 	if len(args) != 2 {
 		return setup.DefaultPrecision, nil
@@ -77,6 +84,28 @@ func precisionFromArgs(args []any) (uint64, error) {
 	}
 
 	return precision, nil
+}
+
+// addOwnerRoots sets the owner roots of pp to the owner CA certificate in the directory passed as first
+// generator argument, if that directory is set and contains it.
+func addOwnerRoots(pp *setup.PublicParams, args []any) error {
+	if len(args) == 0 {
+		return nil
+	}
+	dir, ok := args[0].(string)
+	if !ok || len(dir) == 0 {
+		return nil
+	}
+	certPEM, err := os.ReadFile(filepath.Join(dir, cryptogen.OwnerCACertFileName))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return errors.Wrapf(err, "failed to read owner CA certificate in [%s]", dir)
+	}
+	pp.X509OwnerRoots = [][]byte{certPEM}
+
+	return nil
 }
 
 // addAuditors adds to pp the identity of the TMS's first auditor, taken from the auditor wallets.

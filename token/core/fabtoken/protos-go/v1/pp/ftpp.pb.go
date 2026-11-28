@@ -47,9 +47,12 @@ type PublicParameters struct {
 	QuantityPrecision uint64 `protobuf:"varint,6,opt,name=quantity_precision,json=quantityPrecision,proto3" json:"quantity_precision,omitempty"`
 	// metadata stores arbitrary application-specific or extension data.
 	// Keys should follow reverse-DNS naming (e.g., "com.example.myapp.field") to avoid collisions.
-	Metadata      map[string][]byte `protobuf:"bytes,7,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Metadata map[string][]byte `protobuf:"bytes,7,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// x509_owner_certificates holds the CA certificates that x509 owner identities must chain to.
+	// If absent or with no roots, x509 owner identities are not checked against a CA.
+	X509OwnerCertificates *X509OwnerCertificates `protobuf:"bytes,8,opt,name=x509_owner_certificates,json=x509OwnerCertificates,proto3" json:"x509_owner_certificates,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *PublicParameters) Reset() {
@@ -131,11 +134,74 @@ func (x *PublicParameters) GetMetadata() map[string][]byte {
 	return nil
 }
 
+func (x *PublicParameters) GetX509OwnerCertificates() *X509OwnerCertificates {
+	if x != nil {
+		return x.X509OwnerCertificates
+	}
+	return nil
+}
+
+// X509OwnerCertificates contains the CA certificates that x509 owner identities must chain to.
+// Each entry is a single PEM-encoded CERTIFICATE block.
+type X509OwnerCertificates struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// roots are the trusted root CA certificates
+	Roots [][]byte `protobuf:"bytes,1,rep,name=roots,proto3" json:"roots,omitempty"`
+	// intermediates are optional intermediate CA certificates, each chaining to a root
+	Intermediates [][]byte `protobuf:"bytes,2,rep,name=intermediates,proto3" json:"intermediates,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *X509OwnerCertificates) Reset() {
+	*x = X509OwnerCertificates{}
+	mi := &file_token_core_fabtoken_protos_v1_ftpp_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *X509OwnerCertificates) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*X509OwnerCertificates) ProtoMessage() {}
+
+func (x *X509OwnerCertificates) ProtoReflect() protoreflect.Message {
+	mi := &file_token_core_fabtoken_protos_v1_ftpp_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use X509OwnerCertificates.ProtoReflect.Descriptor instead.
+func (*X509OwnerCertificates) Descriptor() ([]byte, []int) {
+	return file_token_core_fabtoken_protos_v1_ftpp_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *X509OwnerCertificates) GetRoots() [][]byte {
+	if x != nil {
+		return x.Roots
+	}
+	return nil
+}
+
+func (x *X509OwnerCertificates) GetIntermediates() [][]byte {
+	if x != nil {
+		return x.Intermediates
+	}
+	return nil
+}
+
 var File_token_core_fabtoken_protos_v1_ftpp_proto protoreflect.FileDescriptor
 
 const file_token_core_fabtoken_protos_v1_ftpp_proto_rawDesc = "" +
 	"\n" +
-	"(token/core/fabtoken/protos/v1/ftpp.proto\x12\x19panurus.token.fabtoken.v1\x1a#token/driver/protos/v1/common.proto\"\xca\x03\n" +
+	"(token/core/fabtoken/protos/v1/ftpp.proto\x12\x19panurus.token.fabtoken.v1\x1a#token/driver/protos/v1/common.proto\"\xb4\x04\n" +
 	"\x10PublicParameters\x12*\n" +
 	"\x11token_driver_name\x18\x01 \x01(\tR\x0ftokenDriverName\x120\n" +
 	"\x14token_driver_version\x18\x02 \x01(\rR\x12tokenDriverVersion\x12;\n" +
@@ -143,10 +209,14 @@ const file_token_core_fabtoken_protos_v1_ftpp_proto_rawDesc = "" +
 	"\aissuers\x18\x04 \x03(\v2!.panurus.token.driver.v1.IdentityR\aissuers\x12\x1b\n" +
 	"\tmax_token\x18\x05 \x01(\x04R\bmaxToken\x12-\n" +
 	"\x12quantity_precision\x18\x06 \x01(\x04R\x11quantityPrecision\x12U\n" +
-	"\bmetadata\x18\a \x03(\v29.panurus.token.fabtoken.v1.PublicParameters.MetadataEntryR\bmetadata\x1a;\n" +
+	"\bmetadata\x18\a \x03(\v29.panurus.token.fabtoken.v1.PublicParameters.MetadataEntryR\bmetadata\x12h\n" +
+	"\x17x509_owner_certificates\x18\b \x01(\v20.panurus.token.fabtoken.v1.X509OwnerCertificatesR\x15x509OwnerCertificates\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01BEZCgithub.com/LFDT-Panurus/panurus/token/core/fabtoken/protos-go/v1/ppb\x06proto3"
+	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"S\n" +
+	"\x15X509OwnerCertificates\x12\x14\n" +
+	"\x05roots\x18\x01 \x03(\fR\x05roots\x12$\n" +
+	"\rintermediates\x18\x02 \x03(\fR\rintermediatesBEZCgithub.com/LFDT-Panurus/panurus/token/core/fabtoken/protos-go/v1/ppb\x06proto3"
 
 var (
 	file_token_core_fabtoken_protos_v1_ftpp_proto_rawDescOnce sync.Once
@@ -160,21 +230,23 @@ func file_token_core_fabtoken_protos_v1_ftpp_proto_rawDescGZIP() []byte {
 	return file_token_core_fabtoken_protos_v1_ftpp_proto_rawDescData
 }
 
-var file_token_core_fabtoken_protos_v1_ftpp_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_token_core_fabtoken_protos_v1_ftpp_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_token_core_fabtoken_protos_v1_ftpp_proto_goTypes = []any{
-	(*PublicParameters)(nil), // 0: panurus.token.fabtoken.v1.PublicParameters
-	nil,                      // 1: panurus.token.fabtoken.v1.PublicParameters.MetadataEntry
-	(*v1.Identity)(nil),      // 2: panurus.token.driver.v1.Identity
+	(*PublicParameters)(nil),      // 0: panurus.token.fabtoken.v1.PublicParameters
+	(*X509OwnerCertificates)(nil), // 1: panurus.token.fabtoken.v1.X509OwnerCertificates
+	nil,                           // 2: panurus.token.fabtoken.v1.PublicParameters.MetadataEntry
+	(*v1.Identity)(nil),           // 3: panurus.token.driver.v1.Identity
 }
 var file_token_core_fabtoken_protos_v1_ftpp_proto_depIdxs = []int32{
-	2, // 0: panurus.token.fabtoken.v1.PublicParameters.auditor:type_name -> panurus.token.driver.v1.Identity
-	2, // 1: panurus.token.fabtoken.v1.PublicParameters.issuers:type_name -> panurus.token.driver.v1.Identity
-	1, // 2: panurus.token.fabtoken.v1.PublicParameters.metadata:type_name -> panurus.token.fabtoken.v1.PublicParameters.MetadataEntry
-	3, // [3:3] is the sub-list for method output_type
-	3, // [3:3] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	3, // 0: panurus.token.fabtoken.v1.PublicParameters.auditor:type_name -> panurus.token.driver.v1.Identity
+	3, // 1: panurus.token.fabtoken.v1.PublicParameters.issuers:type_name -> panurus.token.driver.v1.Identity
+	2, // 2: panurus.token.fabtoken.v1.PublicParameters.metadata:type_name -> panurus.token.fabtoken.v1.PublicParameters.MetadataEntry
+	1, // 3: panurus.token.fabtoken.v1.PublicParameters.x509_owner_certificates:type_name -> panurus.token.fabtoken.v1.X509OwnerCertificates
+	4, // [4:4] is the sub-list for method output_type
+	4, // [4:4] is the sub-list for method input_type
+	4, // [4:4] is the sub-list for extension type_name
+	4, // [4:4] is the sub-list for extension extendee
+	0, // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_token_core_fabtoken_protos_v1_ftpp_proto_init() }
@@ -188,7 +260,7 @@ func file_token_core_fabtoken_protos_v1_ftpp_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_token_core_fabtoken_protos_v1_ftpp_proto_rawDesc), len(file_token_core_fabtoken_protos_v1_ftpp_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

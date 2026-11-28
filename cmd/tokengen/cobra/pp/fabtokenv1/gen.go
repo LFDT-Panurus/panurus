@@ -36,6 +36,10 @@ var (
 	Version uint32
 	// Extras allows the caller to add extra parameters to the public parameters.
 	Extras []string
+	// X509OwnerRoots is the list of PEM files or directories with the root CA certificates of x509 owners.
+	X509OwnerRoots []string
+	// X509OwnerIntermediates is the list of PEM files or directories with the intermediate CA certificates of x509 owners.
+	X509OwnerIntermediates []string
 )
 
 // Cmd returns the Cobra Command for FabToken public parameters generation.
@@ -48,6 +52,8 @@ func Cmd() *cobra.Command {
 	flags.StringSliceVarP(&Issuers, "issuers", "s", nil, "list of issuer MSP directories containing the corresponding issuer certificate")
 	flags.Uint32VarP(&Version, "version", "v", 0, "allows the caller of tokengen to override the version number put in the public params")
 	flags.StringArrayVarP(&Extras, "extra", "x", []string{}, "extra data in key=value format, where value is the path to a file containing the data to load and store in the key")
+	flags.StringSliceVar(&X509OwnerRoots, "x509-owner-roots", nil, "list of PEM files or directories of PEM files with the root CA certificates of x509 owners")
+	flags.StringSliceVar(&X509OwnerIntermediates, "x509-owner-intermediates", nil, "list of PEM files or directories of PEM files with the intermediate CA certificates of x509 owners")
 
 	return cobraCommand
 }
@@ -63,10 +69,12 @@ var cobraCommand = &cobra.Command{
 		// Parsing of the command line is done so silence cmd usage
 		cmd.SilenceUsage = true
 		raw, err := Gen(&GeneratorArgs{
-			OutputDir:         OutputDir,
-			GenerateCCPackage: GenerateCCPackage,
-			Issuers:           Issuers,
-			Auditors:          Auditors,
+			OutputDir:              OutputDir,
+			GenerateCCPackage:      GenerateCCPackage,
+			Issuers:                Issuers,
+			Auditors:               Auditors,
+			X509OwnerRoots:         X509OwnerRoots,
+			X509OwnerIntermediates: X509OwnerIntermediates,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to generate public parameters")
@@ -93,6 +101,10 @@ type GeneratorArgs struct {
 	Issuers []string
 	// Auditors is the list of auditor MSP directories containing the corresponding auditor certificate.
 	Auditors []string
+	// X509OwnerRoots is the list of PEM files or directories with the root CA certificates of x509 owners.
+	X509OwnerRoots []string
+	// X509OwnerIntermediates is the list of PEM files or directories with the intermediate CA certificates of x509 owners.
+	X509OwnerIntermediates []string
 }
 
 // Gen generates the public parameters for the FabToken driver.
@@ -110,6 +122,16 @@ func Gen(args *GeneratorArgs) ([]byte, error) {
 		return nil, err
 	}
 
+	// load x509 owner CA certificates
+	pp.X509OwnerRoots, err = common.LoadCertificates(args.X509OwnerRoots)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed loading x509 owner roots")
+	}
+	pp.X509OwnerIntermediates, err = common.LoadCertificates(args.X509OwnerIntermediates)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed loading x509 owner intermediates")
+	}
+
 	// load extras
 	pp.ExtraData, err = common.LoadExtras(Extras)
 	if err != nil {
@@ -124,6 +146,10 @@ func Gen(args *GeneratorArgs) ([]byte, error) {
 	// warn in case no issuers are specified
 	if len(pp.Issuers()) == 0 {
 		fmt.Println("No issuers specified. The public parameters allow anyone to create tokens.")
+	}
+	// warn in case no x509 owner roots are specified
+	if len(pp.X509OwnerRoots) == 0 {
+		fmt.Println("No x509 owner roots specified. The public parameters accept any x509 owner certificate.")
 	}
 
 	// Store Public Params

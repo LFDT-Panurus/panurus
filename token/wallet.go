@@ -167,7 +167,8 @@ func (wm *WalletManager) GetRevocationHandle(ctx context.Context, identity Ident
 // the identity is used instead; when that is empty too, the identity carries
 // no audit info here and empty values are returned without an error. A
 // decoding failure carries identity.ErrUnresolvableIdentity, put there by the
-// identity layer; an audit-info storage failure does not.
+// identity layer; an audit-info storage failure and an untrusted identity
+// (identity.ErrUntrustedIdentity) do not.
 func (wm *WalletManager) GetEIDAndRH(ctx context.Context, identity Identity, auditInfo []byte) (string, string, error) {
 	if len(auditInfo) == 0 {
 		var err error

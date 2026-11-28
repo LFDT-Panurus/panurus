@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric/commands"
 	ftopology "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric/topology"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc/node"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
@@ -108,6 +110,9 @@ type CryptoMaterialGenerator struct {
 	EventuallyTimeout time.Duration
 	ColorIndex        int
 	Builder           *components.Builder
+
+	// ownersMu serializes the owner CA setup and the owner MSP issuance.
+	ownersMu sync.Mutex
 }
 
 func NewCryptoMaterialGenerator(tokenPlatform generators.TokenPlatform, builder api.Builder) *CryptoMaterialGenerator {
@@ -118,8 +123,22 @@ func NewCryptoMaterialGenerator(tokenPlatform generators.TokenPlatform, builder 
 	}
 }
 
+// Setup creates, or loads if present, the owner CA of the TMS and returns its directory.
+// Owner identities are issued by this CA, and the public parameters list it as owner root.
 func (d *CryptoMaterialGenerator) Setup(tms *topology.TMS) (string, error) {
-	return "", nil
+	d.ownersMu.Lock()
+	defer d.ownersMu.Unlock()
+
+	dir := d.ownerCADir(tms)
+	if err := setupOwnerCA(dir, "owner-ca."+tms.ID()); err != nil {
+		return "", err
+	}
+
+	return dir, nil
+}
+
+func (d *CryptoMaterialGenerator) ownerCADir(tms *topology.TMS) string {
+	return filepath.Join(d.TokenPlatform.TokenDir(), "crypto", tms.ID(), ownerCADirName)
 }
 
 func (d *CryptoMaterialGenerator) GenerateCertifierIdentities(tms *topology.TMS, n *node.Node, certifiers ...string) []topology.Identity {
@@ -177,8 +196,13 @@ func (d *CryptoMaterialGenerator) Generate(tms *topology.TMS, n *node.Node, wall
 			{Name: orgName, Organization: orgName},
 		},
 	}
-	d.GenerateCryptoConfig(output, l)
-	d.GenerateArtifacts(output)
+	if wallet == "owners" {
+		// owners are issued by the owner CA of the TMS, so they chain to the owner roots of the public parameters
+		gomega.Expect(d.issueOwners(tms, output, domain, names)).NotTo(gomega.HaveOccurred())
+	} else {
+		d.GenerateCryptoConfig(output, l)
+		d.GenerateArtifacts(output)
+	}
 
 	var identities []topology.Identity
 	for i, name := range names {
@@ -234,6 +258,22 @@ func (d *CryptoMaterialGenerator) Generate(tms *topology.TMS, n *node.Node, wall
 	}
 
 	return identities
+}
+
+// issueOwners writes, for each name, an owner MSP issued by the owner CA of tms.
+func (d *CryptoMaterialGenerator) issueOwners(tms *topology.TMS, output, domain string, names []string) error {
+	d.ownersMu.Lock()
+	defer d.ownersMu.Unlock()
+
+	for _, name := range names {
+		cn := fmt.Sprintf("%s@%s", name, domain)
+		mspDir := filepath.Join(output, "peerOrganizations", domain, "users", cn, "msp")
+		if err := issueOwnerMSP(d.ownerCADir(tms), mspDir, cn, "ca."+domain+"-cert.pem"); err != nil {
+			return errors.WithMessagef(err, "failed generating owner identity [%s]", name)
+		}
+	}
+
+	return nil
 }
 
 func (d *CryptoMaterialGenerator) GenerateCryptoConfig(output string, layout *Layout) {

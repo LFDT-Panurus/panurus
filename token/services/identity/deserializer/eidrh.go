@@ -68,6 +68,7 @@ func (e *EIDRHDeserializer) GetEIDAndRH(ctx context.Context, identity driver.Ide
 // A decoding failure — an identity that does not unmarshal, a type with no
 // deserializer, audit info the deserializer rejects — carries
 // identity.ErrUnresolvableIdentity along with its cause.
+// A failed trust check carries identity.ErrUntrustedIdentity only.
 func (e *EIDRHDeserializer) DeserializeAuditInfo(ctx context.Context, id driver.Identity, auditInfo []byte) (driver2.AuditInfo, error) {
 	if len(auditInfo) == 0 {
 		return nil, errors.Errorf("nil audit info")
@@ -84,6 +85,9 @@ func (e *EIDRHDeserializer) DeserializeAuditInfo(ctx context.Context, id driver.
 		return nil, errors.Wrapf(identity.ErrUnresolvableIdentity, "no deserializer found for [%v]", si.Type)
 	}
 	res, err := d.DeserializeAuditInfo(ctx, si.Identity, auditInfo)
+	if errors.Is(err, identity.ErrUntrustedIdentity) {
+		return nil, errors.WithMessagef(err, "untrusted identity of type [%v]", si.Type)
+	}
 	if err != nil {
 		return nil, errors.WithMessagef(errors.Join(identity.ErrUnresolvableIdentity, err), "failed to deserialize audit info for identity type [%v]", si.Type)
 	}

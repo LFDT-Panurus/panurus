@@ -63,3 +63,60 @@ func GenerateTestCert(t *testing.T) ([]byte, *ecdsa.PrivateKey) {
 
 	return generateTestCertWithCNAndKey(t, "test.example.com")
 }
+
+// TestCertificate is a test certificate with its key and PEM encoding.
+type TestCertificate struct {
+	Cert *x509.Certificate
+	Key  *ecdsa.PrivateKey
+	PEM  []byte
+}
+
+// NewTestCATemplate returns a CA certificate template with the given CommonName.
+func NewTestCATemplate(cn string) *x509.Certificate {
+	return &x509.Certificate{
+		Subject:               pkix.Name{CommonName: cn},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+}
+
+// NewTestLeafTemplate returns a non-CA certificate template with the given CommonName.
+func NewTestLeafTemplate(cn string) *x509.Certificate {
+	return &x509.Certificate{
+		Subject:               pkix.Name{CommonName: cn},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+	}
+}
+
+// NewTestCertificate creates a certificate from template with a fresh P-256 key and a random serial.
+// It is signed by parent, or self-signed if parent is nil.
+func NewTestCertificate(tb testing.TB, template *x509.Certificate, parent *TestCertificate) *TestCertificate {
+	tb.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(tb, err)
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 127))
+	require.NoError(tb, err)
+	tmpl := *template
+	tmpl.SerialNumber = serial
+
+	issuer, signer := &tmpl, priv
+	if parent != nil {
+		issuer, signer = parent.Cert, parent.Key
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &tmpl, issuer, &priv.PublicKey, signer)
+	require.NoError(tb, err)
+	cert, err := x509.ParseCertificate(der)
+	require.NoError(tb, err)
+
+	return &TestCertificate{
+		Cert: cert,
+		Key:  priv,
+		PEM:  pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
+	}
+}

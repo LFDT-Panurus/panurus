@@ -22,7 +22,10 @@ func (d *IdentityDeserializer) DeserializeVerifier(ctx context.Context, id drive
 	return crypto.DeserializeVerifier(id)
 }
 
-type AuditMatcherDeserializer struct{}
+type AuditMatcherDeserializer struct {
+	// Checker, if set, makes the matchers check the owner certificate chain and bind the audit info to it.
+	Checker *OwnerChainChecker
+}
 
 func (a *AuditMatcherDeserializer) GetAuditInfoMatcher(ctx context.Context, owner driver.Identity, auditInfo []byte) (driver.Matcher, error) {
 	ai := &AuditInfo{}
@@ -31,14 +34,19 @@ func (a *AuditMatcherDeserializer) GetAuditInfoMatcher(ctx context.Context, owne
 		return nil, errors.Wrapf(err, "failed to unmarshal")
 	}
 
-	return &AuditInfoMatcher{EnrollmentID: ai.EID}, nil
+	return &AuditInfoMatcher{EnrollmentID: ai.EID, revocationHandle: ai.RH, checker: a.Checker}, nil
 }
 
 type AuditInfoMatcher struct {
-	EnrollmentID string
+	EnrollmentID     string
+	revocationHandle []byte
+	checker          *OwnerChainChecker
 }
 
 func (a *AuditInfoMatcher) Match(_ context.Context, id []byte) error {
+	if a.checker != nil {
+		return a.checker.bind(id, a.EnrollmentID, a.revocationHandle)
+	}
 	eid, err := crypto.GetEnrollmentID(id)
 	if err != nil {
 		return errors.Wrap(err, "failed to get enrollment ID")
@@ -50,15 +58,34 @@ func (a *AuditInfoMatcher) Match(_ context.Context, id []byte) error {
 	return nil
 }
 
-type AuditInfoDeserializer struct{}
+type AuditInfoDeserializer struct {
+	// Checker, if set, makes DeserializeAuditInfo check the owner certificate chain and bind the audit info to it.
+	Checker *OwnerChainChecker
+}
 
 func (a *AuditInfoDeserializer) DeserializeAuditInfo(ctx context.Context, identity driver.Identity, raw []byte) (idriver.AuditInfo, error) {
-	ai := &AuditInfo{}
-	err := ai.FromBytes(raw)
+	if a.Checker == nil {
+		ai := &AuditInfo{}
+		if err := ai.FromBytes(raw); err != nil {
+			return nil, errors.Wrapf(err, "failed to unmarshal")
+		}
+		logger.DebugfContext(ctx, "audit info [%s]", string(raw))
+
+		return ai, nil
+	}
+	// check the certificate first, so an untrusted owner fails as such whatever its audit info
+	cert, err := a.Checker.check(identity)
 	if err != nil {
+		return nil, err
+	}
+	ai := &AuditInfo{}
+	if err := ai.FromBytes(raw); err != nil {
 		return nil, errors.Wrapf(err, "failed to unmarshal")
 	}
 	logger.DebugfContext(ctx, "audit info [%s]", string(raw))
+	if err := bindCert(cert, ai.EID, ai.RH); err != nil {
+		return nil, err
+	}
 
 	return ai, nil
 }

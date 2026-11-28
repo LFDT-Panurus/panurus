@@ -13,6 +13,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/json"
+	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/setup"
 	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/boolpolicy"
@@ -25,6 +26,15 @@ import (
 // is registered as its own component deserializer for multisig, boolpolicy and htlc. That
 // self-registration is what makes the recursion unbounded in principle, so the bound has to be
 // proven against the assembled multiplex and not only against the individual deserializers.
+
+// newNoRootsDeserializer returns a deserializer for public parameters without x509 owner roots.
+func newNoRootsDeserializer(tb testing.TB) *Deserializer {
+	tb.Helper()
+	des, err := NewDeserializer(&setup.PublicParams{})
+	require.NoError(tb, err)
+
+	return des
+}
 
 func wrapMultisig(t *testing.T, ids ...token.Identity) token.Identity {
 	t.Helper()
@@ -64,7 +74,7 @@ func wrapHTLC(t *testing.T, sender, recipient token.Identity) token.Identity {
 // than walked. This is the shape from the report: the cheapest bytes per level, so the deepest
 // recursion for a given identity size.
 func TestGetOwnerVerifier_RejectsDeeplyNestedMultisig(t *testing.T) {
-	des := NewDeserializer()
+	des := newNoRootsDeserializer(t)
 
 	id := token.Identity("leaf")
 	for range 512 {
@@ -83,7 +93,7 @@ func TestGetOwnerVerifier_RejectsDeeplyNestedMultisig(t *testing.T) {
 // third and the size grows exponentially in the number of them. 24 levels is already far past any
 // configurable bound.
 func TestGetOwnerVerifier_RejectsDeeplyNestedMixedTypes(t *testing.T) {
-	des := NewDeserializer()
+	des := newNoRootsDeserializer(t)
 
 	id := token.Identity("leaf")
 	for i := range 24 {
@@ -104,7 +114,7 @@ func TestGetOwnerVerifier_RejectsDeeplyNestedMixedTypes(t *testing.T) {
 // A composite identity that fans out far more widely than the limit must be rejected before any
 // component is deserialized, since depth alone does not bound fan-out.
 func TestGetOwnerVerifier_RejectsWideFanOut(t *testing.T) {
-	des := NewDeserializer()
+	des := newNoRootsDeserializer(t)
 
 	ids := make([]token.Identity, 4096)
 	for k := range ids {
@@ -122,7 +132,7 @@ func TestGetOwnerVerifier_RejectsWideFanOut(t *testing.T) {
 // available here, so the descent is expected to reach the leaf and fail there. What matters is that
 // it is *not* rejected as over-nested, which is what proves the bound does not fire on real shapes.
 func TestGetOwnerVerifier_AllowsRealisticNesting(t *testing.T) {
-	des := NewDeserializer()
+	des := newNoRootsDeserializer(t)
 
 	// policy over multisig over a leaf identity - three levels, the deepest shape described as
 	// realistic in the report
@@ -142,7 +152,7 @@ func TestGetOwnerVerifier_AllowsRealisticNesting(t *testing.T) {
 // The nesting is shallower than in the verifier case because each level base64-encodes the level
 // below it in JSON, so the size grows exponentially. 24 levels is far past any configurable bound.
 func TestMatchIdentity_RejectsDeeplyNestedIdentity(t *testing.T) {
-	des := NewDeserializer()
+	des := newNoRootsDeserializer(t)
 
 	id := token.Identity("leaf")
 	auditInfo := []byte("leaf-audit-info")
@@ -192,7 +202,7 @@ func FuzzOwnerVerifierNoPanic(f *testing.F) {
 		f.Add(deep[:len(deep)/2])
 	}
 
-	des := NewDeserializer()
+	des := newNoRootsDeserializer(f)
 	f.Fuzz(func(t *testing.T, raw []byte) {
 		// the contract is only that this returns; a verifier or an error are both fine
 		_, _ = des.GetOwnerVerifier(context.Background(), raw)

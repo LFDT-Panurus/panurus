@@ -378,3 +378,58 @@ func TestSetupIssuersAndAuditors(t *testing.T) {
 		assert.Contains(t, err.Error(), "failed to get issuer identity")
 	})
 }
+
+// TestLoadCertificates tests the LoadCertificates function.
+func TestLoadCertificates(t *testing.T) {
+	dir := t.TempDir()
+	cert1 := generateTestCertificate(t)
+	cert2 := generateTestCertificate(t)
+	certsDir := filepath.Join(dir, "cacerts")
+	require.NoError(t, os.MkdirAll(certsDir, 0750))
+	require.NoError(t, os.WriteFile(filepath.Join(certsDir, "a.pem"), cert1, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(certsDir, "b.pem"), cert2, 0600))
+	file := filepath.Join(dir, "single.pem")
+	require.NoError(t, os.WriteFile(file, cert1, 0600))
+	bad := filepath.Join(dir, "bad.pem")
+	require.NoError(t, os.WriteFile(bad, append(append([]byte{}, cert1...), cert2...), 0600))
+	emptyDir := filepath.Join(dir, "empty")
+	require.NoError(t, os.MkdirAll(emptyDir, 0750))
+
+	t.Run("no_paths", func(t *testing.T) {
+		certs, err := LoadCertificates(nil)
+		require.NoError(t, err)
+		assert.Empty(t, certs)
+	})
+
+	t.Run("file_and_dir", func(t *testing.T) {
+		certs, err := LoadCertificates([]string{file, certsDir})
+		require.NoError(t, err)
+		assert.Equal(t, [][]byte{cert1, cert1, cert2}, certs)
+	})
+
+	t.Run("missing_path", func(t *testing.T) {
+		_, err := LoadCertificates([]string{filepath.Join(dir, "missing")})
+		require.Error(t, err)
+	})
+
+	t.Run("file_with_two_certificates", func(t *testing.T) {
+		_, err := LoadCertificates([]string{bad})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "extra content")
+	})
+
+	t.Run("empty_dir", func(t *testing.T) {
+		_, err := LoadCertificates([]string{emptyDir})
+		require.Error(t, err)
+	})
+
+	t.Run("dir_with_invalid_entry", func(t *testing.T) {
+		mixedDir := filepath.Join(dir, "mixed")
+		require.NoError(t, os.MkdirAll(mixedDir, 0750))
+		require.NoError(t, os.WriteFile(filepath.Join(mixedDir, "a.pem"), cert1, 0600))
+		require.NoError(t, os.WriteFile(filepath.Join(mixedDir, "bundle.pem"), append(append([]byte{}, cert1...), cert2...), 0600))
+		_, err := LoadCertificates([]string{mixedDir})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "extra content")
+	})
+}

@@ -138,6 +138,44 @@ func GetCertificatesFromDir(dir string) ([][]byte, error) {
 	return content, nil
 }
 
+// LoadCertificates returns the PEM-encoded certificates found at the given paths.
+// Each path is either a file with exactly one PEM certificate or a directory of such files.
+// Unlike GetCertificatesFromDir, any entry of a directory that is not such a file is an error.
+func LoadCertificates(paths []string) ([][]byte, error) {
+	var certs [][]byte
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to stat %s", path)
+		}
+		if !info.IsDir() {
+			content, err := ReadSingleCertificateFromFile(path)
+			if err != nil {
+				return nil, err
+			}
+			certs = append(certs, content)
+
+			continue
+		}
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return nil, errors.Wrapf(err, "could not read directory %s", path)
+		}
+		if len(entries) == 0 {
+			return nil, errors.Errorf("no certificates found in %s", path)
+		}
+		for _, e := range entries {
+			content, err := ReadSingleCertificateFromFile(filepath.Join(path, e.Name()))
+			if err != nil {
+				return nil, errors.WithMessagef(err, "failed to load certificates from %s", path)
+			}
+			certs = append(certs, content)
+		}
+	}
+
+	return certs, nil
+}
+
 // LoadExtras parses strings in the format "key=file_path" and returns a map
 // where keys are the extracted keys and values are the file contents as []byte.
 func LoadExtras(extraFiles []string) (map[string][]byte, error) {

@@ -31,4 +31,16 @@ message PublicParameters {
   // metadata stores arbitrary application-specific or extension data.
   // Keys should follow reverse-DNS naming (e.g., "com.example.myapp.field") to avoid collisions.
   map<string, bytes> metadata = 7;
+  // x509_owner_certificates holds the CA certificates that x509 owner identities must chain to.
+  // If absent or with no roots, x509 owner identities are not checked against a CA.
+  X509OwnerCertificates x509_owner_certificates = 8;
+}
+
+// X509OwnerCertificates contains the CA certificates that x509 owner identities must chain to.
+// Each entry is a single PEM-encoded CERTIFICATE block.
+message X509OwnerCertificates {
+  // roots are the trusted root CA certificates
+  repeated bytes roots = 1;
+  // intermediates are optional intermediate CA certificates, each chaining to a root
+  repeated bytes intermediates = 2;
 }

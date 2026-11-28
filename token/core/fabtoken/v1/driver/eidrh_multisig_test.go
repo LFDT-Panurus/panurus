@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/driver"
+	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/setup"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/multisig"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/x509"
@@ -32,7 +33,8 @@ func TestEIDRHDeserializer_MultisigResolvesCommonEID(t *testing.T) {
 	m0, ai0 := member("cert-zero", "alice")
 	m1, ai1 := member("cert-one", "alice")
 	m2, ai2 := member("cert-two", "bob")
-	eidrh := driver.NewEIDRHDeserializer()
+	eidrh, err := driver.NewEIDRHDeserializer(&setup.PublicParams{})
+	require.NoError(t, err)
 
 	shared, err := multisig.WrapIdentities(m0, m1)
 	require.NoError(t, err)

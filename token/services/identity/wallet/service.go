@@ -208,8 +208,9 @@ func (s *Service) RegisterRecipientIdentity(ctx context.Context, data *tdriver.R
 	// structure, enrollment ID / revocation handle) is intentionally not performed here:
 	// it is technology-specific and belongs to the driver deserializers, which MatchIdentity
 	// dispatches to below. How strong that downstream check is varies by driver — for idemix
-	// it is a cryptographic proof, for x509 only an EID/CommonName consistency check over an
-	// unvalidated certificate — so it is not a proof of ownership for every driver. Call
+	// it is a cryptographic proof, for x509 only an EID/CommonName consistency check over a
+	// certificate that is chain-checked only when the public parameters carry x509 owner
+	// roots — so it is not a proof of ownership for every driver. Call
 	// sites that need one layer it on separately (see ttx.verifyRecipientAttestation).
 	if err := validateBasicStructure(data); err != nil {
 		return errors.Wrap(err, "basic structure validation failed")
