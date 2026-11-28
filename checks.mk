@@ -4,7 +4,7 @@ checks: checks-fast checks-heavy
 .PHONY: checks-fast
 # fast, purely textual checks (no compilation) — cheap enough to gate the
 # integration-test matrix on. Run in CI's 'checks' job.
-checks-fast: licensecheck gofmt goimports misspell ineffassign protos-lint buf-format tidy-check unit-tests-check unit-tests-mk-test
+checks-fast: licensecheck gofmt goimports misspell ineffassign protos-lint buf-format tidy-check unit-tests-check unit-tests-mk-test tag-release-test
 
 .PHONY: checks-heavy
 # compile-heavy static analysis (invokes the Go type-checker across all
